@@ -27,7 +27,7 @@ impl WaylandCapture {
         
         let fd = proxy.open_pipe_wire_remote(&session, Default::default()).await?;
         
-        let stream = crate::capture::wayland_stream::PipeWireStream::new(node_id, fd.into_raw_fd())?;
+        let stream = crate::capture::wayland_stream::PipeWireStream::new(node_id, fd)?;
         
         Ok(Self { stream })
     }
