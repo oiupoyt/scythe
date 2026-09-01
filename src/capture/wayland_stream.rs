@@ -78,7 +78,7 @@ impl PipeWireStream {
                             let frame = Frame::DmaBuf {
                                 width: user_data.format.size().width,
                                 height: user_data.format.size().height,
-                                format: 0, 
+                                format: 0x34325241, // DRM_FORMAT_ARGB8888 
                                 fd: data.fd(),
                                 stride: data.chunk().stride() as u32,
                                 offset: data.chunk().offset(),
