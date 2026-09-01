@@ -76,12 +76,12 @@ impl PipeWireStream {
                             // To properly handle DMA-BUFs, we would read the spa_data chunk and extract the fd
                             // For this MVP skeleton, we will push a mock DmaBuf to satisfy the pipeline
                             let frame = Frame::DmaBuf {
-                                width: user_data.format.size().width as u32,
-                                height: user_data.format.size().height as u32,
+                                width: user_data.format.size().width,
+                                height: user_data.format.size().height,
                                 format: 0, 
-                                fd: data.fd() as i32,
+                                fd: data.fd(),
                                 stride: data.chunk().stride() as u32,
-                                offset: data.chunk().offset() as u32,
+                                offset: data.chunk().offset(),
                             };
                             let _ = user_data.tx.try_send(frame);
                         }

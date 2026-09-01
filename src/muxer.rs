@@ -7,7 +7,7 @@ pub struct Muxer {
 }
 
 impl Muxer {
-    pub fn new(path: &str, codec_ctx: *mut AVCodecContext) -> Result<Self, String> {
+    pub unsafe fn new(path: &str, codec_ctx: *mut AVCodecContext) -> Result<Self, String> {
         unsafe {
             let path_cstr = CString::new(path).unwrap();
             let mut fmt_ctx: *mut AVFormatContext = std::ptr::null_mut();
@@ -27,8 +27,8 @@ impl Muxer {
                 return Err("Failed to copy codec parameters".into());
             }
             
-            if ((*(*fmt_ctx).oformat).flags & AVFMT_NOFILE as i32) == 0 {
-                let ret = avio_open(&mut (*fmt_ctx).pb, path_cstr.as_ptr(), AVIO_FLAG_WRITE as i32);
+            if ((*(*fmt_ctx).oformat).flags & AVFMT_NOFILE) == 0 {
+                let ret = avio_open(&mut (*fmt_ctx).pb, path_cstr.as_ptr(), AVIO_FLAG_WRITE);
                 if ret < 0 {
                     return Err("Failed to open file".into());
                 }
@@ -73,7 +73,7 @@ impl Muxer {
 impl Drop for Muxer {
     fn drop(&mut self) {
         unsafe {
-            if ((*(*self.fmt_ctx).oformat).flags & AVFMT_NOFILE as i32) == 0 {
+            if ((*(*self.fmt_ctx).oformat).flags & AVFMT_NOFILE) == 0 {
                 avio_closep(&mut (*self.fmt_ctx).pb);
             }
             avformat_free_context(self.fmt_ctx);

@@ -1,7 +1,6 @@
 use crate::capture::{Frame, FrameSource};
 use ashpd::desktop::screencast::{CursorMode, Screencast, SourceType};
 use ashpd::desktop::PersistMode;
-use std::os::unix::io::{RawFd, IntoRawFd};
 
 pub struct WaylandCapture {
     stream: crate::capture::wayland_stream::PipeWireStream,

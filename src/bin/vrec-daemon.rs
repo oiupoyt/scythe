@@ -72,7 +72,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 
                 if start_idx < drain.len() {
                     let codec_ctx = codec_ctx_ptr as *mut ffmpeg_next::ffi::AVCodecContext;
-                    let mut muxer = Muxer::new("output.mp4", codec_ctx).unwrap();
+                    let mut muxer = unsafe { Muxer::new("output.mp4", codec_ctx).unwrap() };
                     for p in drain.into_iter().skip(start_idx) {
                         let _ = muxer.write_packet(&p);
                     }
@@ -110,8 +110,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 if stream.read_exact(&mut len_buf).is_ok() {
                     let len = u32::from_le_bytes(len_buf) as usize;
                     let mut payload = vec![0u8; len];
-                    if stream.read_exact(&mut payload).is_ok() {
-                        if let Ok(cmd) = serde_json::from_slice::<Command>(&payload) {
+                    if stream.read_exact(&mut payload).is_ok()
+                        && let Ok(cmd) = serde_json::from_slice::<Command>(&payload) {
                             match cmd {
                                 Command::SaveReplay => {
                                     let _ = trigger_tx.try_send(());
@@ -122,7 +122,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                 _ => {}
                             }
                         }
-                    }
                 }
             }
             Err(err) => {

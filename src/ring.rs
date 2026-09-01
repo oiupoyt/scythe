@@ -1,5 +1,3 @@
-use ringbuf::traits::{Producer, Consumer, Split};
-use ringbuf::HeapRb;
 use ffmpeg_next::ffi::*;
 
 pub struct Packet {
@@ -16,7 +14,7 @@ impl Packet {
     
     pub fn is_keyframe(&self) -> bool {
         unsafe {
-            ((*self.ptr).flags & AV_PKT_FLAG_KEY as i32) != 0
+            ((*self.ptr).flags & AV_PKT_FLAG_KEY) != 0
         }
     }
 }
