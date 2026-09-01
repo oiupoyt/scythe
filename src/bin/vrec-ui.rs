@@ -48,17 +48,16 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let receiver = GlobalHotKeyEvent::receiver();
     loop {
-        if let Ok(event) = receiver.recv()
-            && event.state == global_hotkey::HotKeyState::Pressed {
+        if let Ok(event) = receiver.recv() {
+            if event.state == global_hotkey::HotKeyState::Pressed {
                 if event.id == save_hotkey.id() {
                     println!("Hotkey triggered! Sending SaveReplay command to daemon...");
                     let _ = send_command(Command::SaveReplay);
                 } else if event.id == menu_hotkey.id() {
                     println!("Alt+Z triggered! Opening GUI Overlay...");
-                    if env::var("XDG_SESSION_TYPE").unwrap_or_else(|_| "x11".to_string()).to_lowercase() != "wayland" {
-                        vrec::overlay::show_saved_overlay();
-                    }
+                    vrec::overlay::show_saved_overlay();
                 }
             }
+        }
     }
 }
