@@ -1,0 +1,13 @@
+[package]
+name = "vrec"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ashpd = "0.13.13"
+libc = "0.2.189"
+memmap2 = "0.9.11"
+minifb = "0.28.0"
+pipewire = "0.10.1"
+tokio = { version = "1.53.1", features = ["rt", "macros", "rt-multi-thread"] }
+xcb = { version = "1.7.1", features = ["shm", "xfixes"] }
