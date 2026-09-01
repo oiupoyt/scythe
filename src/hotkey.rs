@@ -3,7 +3,7 @@ use crossbeam_channel::Sender;
 
 pub fn run_hotkey_listener(trigger_tx: Sender<()>) -> Result<(), Box<dyn std::error::Error>> {
     let manager = GlobalHotKeyManager::new()?;
-    let hotkey = HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyR);
+    let hotkey = HotKey::new(Some(Modifiers::ALT), Code::KeyZ);
     manager.register(hotkey)?;
 
     println!("Registered global hotkey Ctrl+Shift+R to trigger replay save.");

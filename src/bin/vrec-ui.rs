@@ -35,24 +35,29 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
     
     let manager = GlobalHotKeyManager::new().unwrap();
-    let hotkey = HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyR);
+    let save_hotkey = HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyR);
+    let menu_hotkey = HotKey::new(Some(Modifiers::ALT), Code::KeyZ);
     
-    if let Err(e) = manager.register(hotkey) {
+    if let Err(e) = manager.register(save_hotkey) {
         eprintln!("Failed to register global hotkey! Wayland compositor might be blocking it: {}", e);
         eprintln!("Fallback: running without global hotkey. Send commands via socket manually.");
     } else {
-        println!("Registered global hotkey Ctrl+Shift+R to trigger replay save.");
+        manager.register(menu_hotkey).unwrap();
+        println!("Registered global hotkeys:\n - Ctrl+Shift+R (Save Replay)\n - Alt+Z (Open GUI Menu)");
     }
 
     let receiver = GlobalHotKeyEvent::receiver();
     loop {
         if let Ok(event) = receiver.recv()
-            && event.id == hotkey.id() && event.state == global_hotkey::HotKeyState::Pressed {
-                println!("Hotkey triggered! Sending SaveReplay command to daemon...");
-                if let Err(e) = send_command(Command::SaveReplay) {
-                    eprintln!("Failed to communicate with daemon: {}", e);
-                } else if env::var("XDG_SESSION_TYPE").unwrap_or_else(|_| "x11".to_string()).to_lowercase() != "wayland" {
-                    vrec::overlay::show_saved_overlay();
+            && event.state == global_hotkey::HotKeyState::Pressed {
+                if event.id == save_hotkey.id() {
+                    println!("Hotkey triggered! Sending SaveReplay command to daemon...");
+                    let _ = send_command(Command::SaveReplay);
+                } else if event.id == menu_hotkey.id() {
+                    println!("Alt+Z triggered! Opening GUI Overlay...");
+                    if env::var("XDG_SESSION_TYPE").unwrap_or_else(|_| "x11".to_string()).to_lowercase() != "wayland" {
+                        vrec::overlay::show_saved_overlay();
+                    }
                 }
             }
     }
