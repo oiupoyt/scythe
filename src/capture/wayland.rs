@@ -9,7 +9,7 @@ pub struct WaylandCapture {
 }
 
 impl WaylandCapture {
-    pub async fn new() -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn new() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let proxy = Screencast::new().await?;
         let session = proxy.create_session(Default::default()).await?;
         
@@ -36,7 +36,7 @@ impl WaylandCapture {
 }
 
 impl FrameSource for WaylandCapture {
-    fn next_frame(&mut self) -> Result<Frame, Box<dyn std::error::Error>> {
+    fn next_frame(&mut self) -> Result<Frame, Box<dyn std::error::Error + Send + Sync>> {
         Err("Wayland/Pipewire frame extraction not fully implemented yet".into())
     }
 }

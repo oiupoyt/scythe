@@ -5,7 +5,7 @@ pub struct DebugWindow {
 }
 
 impl DebugWindow {
-    pub fn new(width: usize, height: usize) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(width: usize, height: usize) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let window = Window::new(
             "vrec debug capture",
             width,
@@ -15,7 +15,7 @@ impl DebugWindow {
         Ok(Self { window })
     }
 
-    pub fn update(&mut self, buffer: &[u32], width: usize, height: usize) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn update(&mut self, buffer: &[u32], width: usize, height: usize) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.window.update_with_buffer(buffer, width, height)?;
         Ok(())
     }

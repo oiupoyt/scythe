@@ -9,7 +9,7 @@ pub struct X11Capture {
 }
 
 impl X11Capture {
-    pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let (conn, screen_num) = Connection::connect(None)?;
         let setup = conn.get_setup();
         let screen = setup.roots().nth(screen_num as usize).ok_or("No screen found")?;
@@ -24,7 +24,7 @@ impl X11Capture {
 }
 
 impl FrameSource for X11Capture {
-    fn next_frame(&mut self) -> Result<Frame, Box<dyn std::error::Error>> {
+    fn next_frame(&mut self) -> Result<Frame, Box<dyn std::error::Error + Send + Sync>> {
         let cookie = self.conn.send_request(&x::GetImage {
             format: x::ImageFormat::ZPixmap,
             drawable: x::Drawable::Window(self.root),

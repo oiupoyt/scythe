@@ -72,7 +72,12 @@ impl VaapiEncoder {
         }
     }
 
-    pub fn encode_frame(&mut self, frame: &Frame) -> Result<(), String> {
+    pub fn codec_ctx(&self) -> *mut AVCodecContext {
+        self.codec_ctx
+    }
+
+    pub fn encode_frame(&mut self, frame: &Frame) -> Result<Vec<crate::ring::Packet>, String> {
+        let mut packets = Vec::new();
         unsafe {
             match frame {
                 Frame::Raw { width, height, stride: in_stride, data } => {
@@ -125,8 +130,9 @@ impl VaapiEncoder {
                     if avcodec_send_frame(self.codec_ctx, hw_frame) >= 0 {
                         let mut pkt = av_packet_alloc();
                         while avcodec_receive_packet(self.codec_ctx, pkt) >= 0 {
-                            println!("VAAPI: encoded packet of size {}", (*pkt).size);
-                            av_packet_unref(pkt);
+                            let new_pkt = av_packet_alloc();
+                            av_packet_move_ref(new_pkt, pkt);
+                            packets.push(crate::ring::Packet::new(new_pkt));
                         }
                         av_packet_free(&mut pkt);
                     }
@@ -139,7 +145,7 @@ impl VaapiEncoder {
                 }
             }
         }
-        Ok(())
+        Ok(packets)
     }
 }
 

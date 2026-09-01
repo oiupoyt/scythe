@@ -23,6 +23,6 @@ pub enum Frame {
     },
 }
 
-pub trait FrameSource {
-    fn next_frame(&mut self) -> Result<Frame, Box<dyn std::error::Error>>;
+pub trait FrameSource: Send {
+    fn next_frame(&mut self) -> Result<Frame, Box<dyn std::error::Error + Send + Sync>>;
 }
