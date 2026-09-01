@@ -53,10 +53,6 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     println!("Hotkey triggered! Sending SaveReplay command to daemon...");
                     if let Err(e) = send_command(Command::SaveReplay) {
                         eprintln!("Failed to communicate with daemon: {}", e);
-                    } else {
-                        if env::var("XDG_SESSION_TYPE").unwrap_or_else(|_| "x11".to_string()).to_lowercase() != "wayland" {
-                            vrec::overlay::show_saved_overlay();
-                        }
                     }
                 }
             }
