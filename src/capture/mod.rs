@@ -2,6 +2,8 @@ use std::os::unix::io::RawFd;
 
 pub mod wayland;
 pub mod x11;
+#[cfg(target_os = "windows")]
+pub mod windows;
 
 #[derive(Debug)]
 pub enum Frame {
@@ -20,6 +22,11 @@ pub enum Frame {
         height: u32,
         stride: u32,
         data: Vec<u8>,
+    },
+    /// Zero-copy DirectX 11 Texture handle. Used by Windows DXGI capture.
+    #[cfg(target_os = "windows")]
+    D3D11Texture {
+        handle: usize, // Placeholder for ID3D11Texture2D raw pointer
     },
 }
 

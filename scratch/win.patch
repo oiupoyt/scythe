@@ -1,0 +1,23 @@
+--- src/capture/mod.rs
++++ src/capture/mod.rs
+@@ -2,6 +2,8 @@
+ 
+ pub mod wayland;
+ pub mod x11;
++#[cfg(target_os = "windows")]
++pub mod windows;
+ 
+ #[derive(Debug)]
+ pub enum Frame {
+@@ -19,6 +21,11 @@
+         stride: u32,
+         data: Vec<u8>,
+     },
++    /// Zero-copy DirectX 11 Texture handle. Used by Windows DXGI capture.
++    #[cfg(target_os = "windows")]
++    D3D11Texture {
++        handle: usize, // Placeholder for ID3D11Texture2D raw pointer
++    },
+ }
+ 
+ pub trait FrameSource: Send {

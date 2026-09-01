@@ -143,6 +143,10 @@ impl VaapiEncoder {
                 Frame::DmaBuf { width: _, height: _, format: _, fd, stride: _, offset: _ } => {
                     println!("VAAPI: Mock encoding DMA-BUF frame (Wayland zero-copy). FD: {}", fd);
                 }
+                #[cfg(target_os = "windows")]
+                Frame::D3D11Texture { handle } => {
+                    println!("D3D11: Mock encoding D3D11 texture (Windows zero-copy). Handle: {}", handle);
+                }
             }
         }
         Ok(packets)
