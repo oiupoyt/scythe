@@ -1,19 +1,15 @@
-pub mod capture;
-pub mod encoder;
-pub mod ring;
-pub mod muxer;
-pub mod hotkey;
-pub mod debug;
-
-use capture::{Frame, FrameSource};
-use encoder::VaapiEncoder;
-use ring::Packet;
-use muxer::Muxer;
+use vrec::capture::{Frame, FrameSource};
+use vrec::encoder::VaapiEncoder;
+use vrec::ring::Packet;
+use vrec::muxer::Muxer;
+use vrec::ipc::Command;
 use ringbuf::HeapRb;
 use ringbuf::traits::{RingBuffer, Consumer};
 use crossbeam_channel::bounded;
 use std::thread;
 use std::env;
+use std::os::unix::net::UnixListener;
+use std::io::Read;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -22,10 +18,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let mut source: Box<dyn FrameSource> = if session_type.to_lowercase() == "wayland" {
         println!("Initializing Wayland capture...");
-        Box::new(capture::wayland::WaylandCapture::new().await?)
+        Box::new(vrec::capture::wayland::WaylandCapture::new().await?)
     } else {
         println!("Initializing X11 capture...");
-        Box::new(capture::x11::X11Capture::new()?)
+        Box::new(vrec::capture::x11::X11Capture::new()?)
     };
 
     let first_frame = source.next_frame()?;
@@ -34,15 +30,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Frame::DmaBuf { width, height, .. } => (*width, *height),
     };
 
-    // 1. Channels
     let (frame_tx, frame_rx) = bounded::<Frame>(5);
     let (trigger_tx, trigger_rx) = bounded::<()>(1);
     let (mux_tx, mux_rx) = bounded::<Vec<Packet>>(1);
     
-    // Send first frame to encoder thread
     let _ = frame_tx.send(first_frame);
 
-    // Capture thread
     let capture_tx = frame_tx.clone();
     thread::spawn(move || {
         loop {
@@ -60,17 +53,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
     });
 
-    // 3. Encoder Thread
     thread::spawn(move || {
         let mut encoder = VaapiEncoder::new(width, height).expect("Failed to init encoder");
-        let codec_ctx_ptr = encoder.codec_ctx() as usize; // Send raw pointer safely
+        let codec_ctx_ptr = encoder.codec_ctx() as usize; 
         
-        let mut ring = HeapRb::<Packet>::new(3600); // 60 seconds at 60fps
+        let mut ring = HeapRb::<Packet>::new(3600);
 
-        // Muxer Thread spawned inside here so it shares lifetime conceptually, 
-        // though we use mux_rx.
         thread::spawn(move || {
-            while let Ok(mut drain) = mux_rx.recv() {
+            while let Ok(drain) = mux_rx.recv() {
                 println!("Saving replay to output.mp4...");
                 let mut start_idx = 0;
                 for (i, p) in drain.iter().enumerate() {
@@ -94,7 +84,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             }
         });
 
-        // Encoder loop
         while let Ok(frame) = frame_rx.recv() {
             if let Ok(packets) = encoder.encode_frame(&frame) {
                 for pkt in packets {
@@ -102,19 +91,44 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 }
             }
             
-            // Check for trigger
             if trigger_rx.try_recv().is_ok() {
-                // Clone all packets to send to muxer
                 let drain = ring.iter().cloned().collect::<Vec<_>>();
                 let _ = mux_tx.try_send(drain);
             }
         }
     });
 
-    // 5. Hotkey listener
-    println!("Starting hotkey listener...");
-    if let Err(e) = hotkey::run_hotkey_listener(trigger_tx) {
-        eprintln!("Failed to start hotkey listener: {}", e);
+    let socket_path = format!("{}/vrec.sock", env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string()));
+    let _ = std::fs::remove_file(&socket_path); 
+    let listener = UnixListener::bind(&socket_path)?;
+    println!("Daemon listening on IPC socket: {}", socket_path);
+
+    for stream in listener.incoming() {
+        match stream {
+            Ok(mut stream) => {
+                let mut len_buf = [0u8; 4];
+                if stream.read_exact(&mut len_buf).is_ok() {
+                    let len = u32::from_le_bytes(len_buf) as usize;
+                    let mut payload = vec![0u8; len];
+                    if stream.read_exact(&mut payload).is_ok() {
+                        if let Ok(cmd) = serde_json::from_slice::<Command>(&payload) {
+                            match cmd {
+                                Command::SaveReplay => {
+                                    let _ = trigger_tx.try_send(());
+                                },
+                                Command::StopDaemon => {
+                                    break;
+                                },
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                eprintln!("Socket error: {}", err);
+            }
+        }
     }
 
     Ok(())

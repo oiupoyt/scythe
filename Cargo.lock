@@ -1485,6 +1485,8 @@ dependencies = [
  "mp4",
  "pipewire",
  "ringbuf",
+ "serde",
+ "serde_json",
  "tokio",
  "xcb",
 ]
