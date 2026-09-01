@@ -1,6 +1,7 @@
 use std::os::unix::io::RawFd;
 
 pub mod wayland;
+pub mod wayland_stream;
 pub mod x11;
 #[cfg(target_os = "windows")]
 pub mod windows;

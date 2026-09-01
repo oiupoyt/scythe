@@ -1,0 +1,30 @@
+--- src/capture/wayland.rs
++++ src/capture/wayland.rs
+@@ -4,8 +4,7 @@
+ use ashpd::desktop::screencast::{Screencast, CursorMode, PersistMode, SourceType};
+ use std::os::unix::io::RawFd;
+ 
+ pub struct WaylandCapture {
+-    fd: RawFd,
+-    node_id: u32,
++    stream: crate::capture::wayland_stream::PipeWireStream,
+ }
+ 
+@@ -37,13 +36,13 @@
+             node_id = stream.node_id();
+         }
+ 
+-        Ok(Self { fd, node_id })
++        let stream = crate::capture::wayland_stream::PipeWireStream::new(node_id, fd)?;
++        Ok(Self { stream })
+     }
+ }
+ 
+ impl FrameSource for WaylandCapture {
+     fn next_frame(&mut self) -> Result<Frame, Box<dyn std::error::Error + Send + Sync>> {
+-        // Wait, Wayland capture requires a pipewire stream running in a background thread to yield buffers.
+-        // For Phase 1, we are mocking this out until Phase 2 is built.
+-        Ok(Frame::DmaBuf { width: 1920, height: 1080, format: 0, fd: self.fd, stride: 0, offset: 0 })
++        self.stream.receiver.recv().map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+     }
+ }

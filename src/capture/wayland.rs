@@ -4,8 +4,7 @@ use ashpd::desktop::PersistMode;
 use std::os::unix::io::{RawFd, IntoRawFd};
 
 pub struct WaylandCapture {
-    fd: RawFd,
-    node_id: u32,
+    stream: crate::capture::wayland_stream::PipeWireStream,
 }
 
 impl WaylandCapture {
@@ -28,15 +27,14 @@ impl WaylandCapture {
         
         let fd = proxy.open_pipe_wire_remote(&session, Default::default()).await?;
         
-        Ok(Self {
-            fd: fd.into_raw_fd(),
-            node_id,
-        })
+        let stream = crate::capture::wayland_stream::PipeWireStream::new(node_id, fd.into_raw_fd())?;
+        
+        Ok(Self { stream })
     }
 }
 
 impl FrameSource for WaylandCapture {
     fn next_frame(&mut self) -> Result<Frame, Box<dyn std::error::Error + Send + Sync>> {
-        Err("Wayland/Pipewire frame extraction not fully implemented yet".into())
+        self.stream.next_frame()
     }
 }
