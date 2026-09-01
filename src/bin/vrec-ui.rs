@@ -4,7 +4,7 @@ use std::io::Write;
 use std::env;
 use global_hotkey::{GlobalHotKeyManager, hotkey::{HotKey, Modifiers, Code}, GlobalHotKeyEvent};
 
-fn send_command(cmd: Command) -> Result<(), Box<dyn std::error::Error>> {
+fn send_command(cmd: Command) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let socket_path = format!("{}/vrec.sock", env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string()));
     let mut stream = UnixStream::connect(&socket_path)?;
     let payload = serde_json::to_vec(&cmd)?;
@@ -15,6 +15,20 @@ fn send_command(cmd: Command) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let args: Vec<String> = env::args().collect();
+    if args.len() > 1 {
+        match args[1].as_str() {
+            "--save" => {
+                return send_command(Command::SaveReplay).map_err(|e| e.into());
+            }
+            "--menu" => {
+                vrec::overlay::show_saved_overlay();
+                return Ok(());
+            }
+            _ => {}
+        }
+    }
+
     println!("Starting vrec UI/Hotkey process...");
     
     let session_type = env::var("XDG_SESSION_TYPE").unwrap_or_else(|_| "x11".to_string());
