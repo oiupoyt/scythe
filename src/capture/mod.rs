@@ -12,7 +12,7 @@ pub enum Frame {
     DmaBuf {
         width: u32,
         height: u32,
-        format: u32,
+        format: u32, modifier: u64,
         fd: RawFd,
         stride: u32,
         offset: u32,

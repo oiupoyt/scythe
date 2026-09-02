@@ -140,13 +140,13 @@ impl VaapiEncoder {
                     av_frame_free(&mut nv12_frame);
                     av_frame_free(&mut bgra_frame);
                 }
-                Frame::DmaBuf { width: dma_width, height: dma_height, format, fd, stride, offset } => {
+                Frame::DmaBuf { width: dma_width, height: dma_height, format, modifier, fd, stride, offset } => {
                     let mut drm_desc = AVDRMFrameDescriptor {
                         nb_objects: 1,
                         objects: [AVDRMObjectDescriptor {
                             fd: *fd,
                             size: 0, // usually ignored or mapped by driver
-                            format_modifier: 0, // DRM_FORMAT_MOD_LINEAR (or read from PipeWire format)
+                            format_modifier: *modifier,
                         }, std::mem::zeroed(), std::mem::zeroed(), std::mem::zeroed()],
                         nb_layers: 1,
                         layers: [AVDRMLayerDescriptor {
