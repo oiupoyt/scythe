@@ -63,8 +63,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut config = vrec::config::VrecConfig::load();
         let mut ring = HeapRb::<Packet>::new((config.replay_duration_sec * 60).max(60) as usize);
         let mut normal_muxer: Option<Muxer> = None;
-        let mut normal_recording = false;
-        let mut normal_waiting_keyframe = false;
 
         thread::spawn(move || {
             while let Ok(drain) = mux_rx.recv() {
@@ -112,10 +110,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         }
                     },
                     Command::StartRecording => {
-                        if config.record_enabled && !normal_recording {
-                            normal_recording = true;
-                            normal_waiting_keyframe = true;
-                            println!("StartRecording requested, waiting for keyframe...");
+                        if config.record_enabled && normal_muxer.is_none() {
+                            let codec_ctx = codec_ctx_ptr as *mut ffmpeg_next::ffi::AVCodecContext;
+                            let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+                            let name = format!("record_{}.mp4", ts);
+                            normal_muxer = unsafe { Muxer::new(&name, codec_ctx).ok() };
+                            println!("Started normal recording to {}", name);
                         }
                     },
                     Command::StopRecording => {
@@ -123,7 +123,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                             let _ = m.finalize();
                             println!("Stopped normal recording.");
                         }
-                        normal_recording = false;
                     },
                     _ => {}
                 }
@@ -134,23 +133,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     if config.replay_enabled {
                         ring.push_overwrite(pkt.clone());
                     }
-                    if normal_recording {
-                        if normal_waiting_keyframe {
-                            if pkt.is_keyframe() {
-                                normal_waiting_keyframe = false;
-                                let codec_ctx = codec_ctx_ptr as *mut ffmpeg_next::ffi::AVCodecContext;
-                                let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
-                                let name = format!("record_{}.mp4", ts);
-                                normal_muxer = unsafe { Muxer::new(&name, codec_ctx).ok() };
-                                println!("Started normal recording to {}", name);
-                            }
-                        }
-                        
-                        if !normal_waiting_keyframe {
-                            if let Some(muxer) = normal_muxer.as_mut() {
-                                let _ = muxer.write_packet(&pkt);
-                            }
-                        }
+                    if let Some(muxer) = normal_muxer.as_mut() {
+                        let _ = muxer.write_packet(&pkt);
                     }
                 }
             }
