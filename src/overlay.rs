@@ -2,6 +2,8 @@ use gtk::prelude::*;
 use gtk::{Application, ApplicationWindow, Label, CssProvider, StyleContext};
 use gtk_layer_shell::{LayerShell, Layer};
 use std::time::Duration;
+use crate::config::VrecConfig;
+use crate::settings_ui;
 
 pub fn show_notification_overlay() {
     let app = Application::builder()
@@ -21,7 +23,6 @@ pub fn show_notification_overlay() {
         window.set_layer_shell_margin(gtk_layer_shell::Edge::Top, 40);
         window.set_anchor(gtk_layer_shell::Edge::Top, true);
         
-        // Make it transparent and borderless
         let css_provider = CssProvider::new();
         let css = r#"
             window {
@@ -46,7 +47,6 @@ pub fn show_notification_overlay() {
 
         window.show_all();
 
-        // Close after 2 seconds
         let window_clone = window.clone();
         glib::timeout_add_local(Duration::from_secs(2), move || {
             window_clone.close();
@@ -63,6 +63,8 @@ pub fn show_menu_overlay() {
         .build();
 
     app.connect_activate(|app| {
+        let config = VrecConfig::load();
+        
         let window = ApplicationWindow::builder()
             .application(app)
             .default_width(700)
@@ -76,7 +78,6 @@ pub fn show_menu_overlay() {
         window.set_layer_shell_margin(gtk_layer_shell::Edge::Top, 100);
         window.set_anchor(gtk_layer_shell::Edge::Top, true);
 
-        // Main layout
         let main_box = gtk::Box::new(gtk::Orientation::Horizontal, 20);
         main_box.set_margin_start(20);
         main_box.set_margin_end(20);
@@ -84,26 +85,43 @@ pub fn show_menu_overlay() {
         main_box.set_margin_bottom(20);
         main_box.set_halign(gtk::Align::Center);
         
-        // 1. Replay Box
         let replay_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
-        let replay_btn = gtk::Button::with_label("Instant Replay\n🟢 ON");
+        let replay_label = if config.replay_enabled { "Instant Replay\n🟢 ON" } else { "Instant Replay\n⚪ OFF" };
+        let replay_btn = gtk::Button::with_label(replay_label);
         replay_btn.set_size_request(200, 100);
         let replay_settings_btn = gtk::Button::with_label("⚙️ Replay Settings");
+        
+        let cfg_clone1 = config.clone();
+        replay_settings_btn.connect_clicked(move |_| {
+            settings_ui::open_replay_settings(&cfg_clone1);
+        });
+        
         replay_box.pack_start(&replay_btn, true, true, 0);
         replay_box.pack_start(&replay_settings_btn, false, false, 0);
 
-        // 2. Record Box
         let record_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
-        let record_btn = gtk::Button::with_label("Recording\n⚪ OFF");
+        let record_label = if config.record_enabled { "Recording\n🔴 ON" } else { "Recording\n⚪ OFF" };
+        let record_btn = gtk::Button::with_label(record_label);
         record_btn.set_size_request(200, 100);
         let record_settings_btn = gtk::Button::with_label("⚙️ Record Settings");
+        
+        let cfg_clone2 = config.clone();
+        record_settings_btn.connect_clicked(move |_| {
+            settings_ui::open_record_settings(&cfg_clone2);
+        });
+        
         record_box.pack_start(&record_btn, true, true, 0);
         record_box.pack_start(&record_settings_btn, false, false, 0);
 
-        // 3. Settings Box
         let settings_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
         let gen_settings_btn = gtk::Button::with_label("General Settings");
         gen_settings_btn.set_size_request(200, 50);
+        
+        let cfg_clone3 = config.clone();
+        gen_settings_btn.connect_clicked(move |_| {
+            settings_ui::open_general_settings(&cfg_clone3);
+        });
+
         let close_btn = gtk::Button::with_label("❌ Close Menu");
         close_btn.set_size_request(200, 50);
         
@@ -123,7 +141,34 @@ pub fn show_menu_overlay() {
             window_clone.close();
         });
 
-        // Add CSS styling
+        // Toggle buttons logic (just UI for now, backend IPC will be needed to actually toggle daemon state)
+        let btn_cfg_1 = config.clone();
+        let replay_btn_clone = replay_btn.clone();
+        replay_btn.connect_clicked(move |_| {
+            let mut cfg = VrecConfig::load();
+            cfg.replay_enabled = !cfg.replay_enabled;
+            cfg.save().unwrap();
+            if cfg.replay_enabled {
+                replay_btn_clone.set_label("Instant Replay\n🟢 ON");
+            } else {
+                replay_btn_clone.set_label("Instant Replay\n⚪ OFF");
+            }
+        });
+
+        let btn_cfg_2 = config.clone();
+        let record_btn_clone = record_btn.clone();
+        record_btn.connect_clicked(move |_| {
+            let mut cfg = VrecConfig::load();
+            cfg.record_enabled = !cfg.record_enabled;
+            cfg.save().unwrap();
+            if cfg.record_enabled {
+                record_btn_clone.set_label("Recording\n🔴 ON");
+            } else {
+                record_btn_clone.set_label("Recording\n⚪ OFF");
+            }
+        });
+
+
         let css_provider = CssProvider::new();
         let css = r#"
             window {

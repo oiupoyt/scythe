@@ -5,3 +5,5 @@ pub mod muxer;
 pub mod hotkey;
 pub mod ipc;
 pub mod overlay;
+pub mod config;
+pub mod settings_ui;
