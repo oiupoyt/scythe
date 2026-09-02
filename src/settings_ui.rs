@@ -37,7 +37,7 @@ pub fn open_replay_settings(config_in: &VrecConfig) {
         if let Ok(val) = bitrate_entry.text().parse() {
             cfg.replay_bitrate_kbps = val;
         }
-        let _ = cfg.save();
+        let _ = cfg.save(); VrecConfig::notify_daemon_reload();
         window_clone.close();
     });
 
@@ -70,7 +70,7 @@ pub fn open_record_settings(config_in: &VrecConfig) {
         if let Ok(val) = bitrate_entry.text().parse() {
             cfg.record_bitrate_kbps = val;
         }
-        let _ = cfg.save();
+        let _ = cfg.save(); VrecConfig::notify_daemon_reload();
         window_clone.close();
     });
 
@@ -139,7 +139,7 @@ pub fn open_general_settings(config_in: &VrecConfig) {
         cfg.language = lang_entry.text().to_string();
         cfg.menu_hotkey = menu_hk_entry.text().to_string();
         cfg.save_hotkey = save_hk_entry.text().to_string();
-        let _ = cfg.save();
+        let _ = cfg.save(); VrecConfig::notify_daemon_reload();
         window_clone.close();
     });
 

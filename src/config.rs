@@ -66,4 +66,18 @@ impl VrecConfig {
         fs::write(path, data)?;
         Ok(())
     }
+
+    pub fn notify_daemon_reload() {
+        use std::env;
+        use std::os::unix::net::UnixStream;
+        use std::io::Write;
+        let socket_path = format!("{}/vrec.sock", env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string()));
+        if let Ok(mut stream) = UnixStream::connect(&socket_path) {
+            if let Ok(payload) = serde_json::to_vec(&crate::ipc::Command::ReloadConfig) {
+                let len_buf = (payload.len() as u32).to_le_bytes();
+                let _ = stream.write_all(&len_buf);
+                let _ = stream.write_all(&payload);
+            }
+        }
+    }
 }

@@ -147,7 +147,7 @@ pub fn show_menu_overlay() {
         replay_btn.connect_clicked(move |_| {
             let mut cfg = VrecConfig::load();
             cfg.replay_enabled = !cfg.replay_enabled;
-            cfg.save().unwrap();
+            cfg.save().unwrap(); VrecConfig::notify_daemon_reload();
             if cfg.replay_enabled {
                 replay_btn_clone.set_label("Instant Replay\n🟢 ON");
             } else {
@@ -160,7 +160,7 @@ pub fn show_menu_overlay() {
         record_btn.connect_clicked(move |_| {
             let mut cfg = VrecConfig::load();
             cfg.record_enabled = !cfg.record_enabled;
-            cfg.save().unwrap();
+            cfg.save().unwrap(); VrecConfig::notify_daemon_reload();
             if cfg.record_enabled {
                 record_btn_clone.set_label("Recording\n🔴 ON");
             } else {
