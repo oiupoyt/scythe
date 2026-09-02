@@ -240,12 +240,13 @@ impl AudioEncoder {
 
             let codec_ctx = avcodec_alloc_context3(codec);
             (*codec_ctx).sample_rate = sample_rate;
+            (*codec_ctx).time_base = AVRational { num: 1, den: sample_rate };
             (*codec_ctx).ch_layout.nb_channels = channels;
             // AAC requires FLTP (planar float)
             (*codec_ctx).sample_fmt = AVSampleFormat::AV_SAMPLE_FMT_FLTP;
             (*codec_ctx).bit_rate = 192_000;
             // For older ffmpeg compatibility:
-            (*codec_ctx).channel_layout = if channels == 2 { AV_CH_LAYOUT_STEREO } else { AV_CH_LAYOUT_MONO } as u64;
+            av_channel_layout_default(&mut (*codec_ctx).ch_layout, channels);
 
             let ret = avcodec_open2(codec_ctx, codec, std::ptr::null_mut());
             if ret < 0 {
@@ -253,15 +254,18 @@ impl AudioEncoder {
             }
 
             // Create SwrContext to convert from interleaved F32 (AV_SAMPLE_FMT_FLT) to planar F32 (AV_SAMPLE_FMT_FLTP)
-            let mut swr_ctx = swr_alloc();
-            av_opt_set_int(swr_ctx as _, c"in_channel_layout".as_ptr(), (*codec_ctx).channel_layout as i64, 0);
-            av_opt_set_int(swr_ctx as _, c"in_sample_rate".as_ptr(), sample_rate as i64, 0);
-            av_opt_set_sample_fmt(swr_ctx as _, c"in_sample_fmt".as_ptr(), AVSampleFormat::AV_SAMPLE_FMT_FLT, 0);
-            
-            av_opt_set_int(swr_ctx as _, c"out_channel_layout".as_ptr(), (*codec_ctx).channel_layout as i64, 0);
-            av_opt_set_int(swr_ctx as _, c"out_sample_rate".as_ptr(), sample_rate as i64, 0);
-            av_opt_set_sample_fmt(swr_ctx as _, c"out_sample_fmt".as_ptr(), AVSampleFormat::AV_SAMPLE_FMT_FLTP, 0);
-            
+            let mut swr_ctx: *mut SwrContext = std::ptr::null_mut();
+            swr_alloc_set_opts2(
+                &mut swr_ctx,
+                &(*codec_ctx).ch_layout,
+                AVSampleFormat::AV_SAMPLE_FMT_FLTP,
+                sample_rate,
+                &(*codec_ctx).ch_layout,
+                AVSampleFormat::AV_SAMPLE_FMT_FLT,
+                sample_rate,
+                0,
+                std::ptr::null_mut()
+            );
             swr_init(swr_ctx);
 
             let frame_size = (*codec_ctx).frame_size;
@@ -291,7 +295,7 @@ impl AudioEncoder {
             let mut in_frame = av_frame_alloc();
             (*in_frame).nb_samples = nb_samples;
             (*in_frame).format = AVSampleFormat::AV_SAMPLE_FMT_FLT as i32;
-            (*in_frame).channel_layout = (*self.codec_ctx).channel_layout;
+            (*in_frame).ch_layout = (*self.codec_ctx).ch_layout;
             (*in_frame).sample_rate = (*self.codec_ctx).sample_rate;
             av_frame_get_buffer(in_frame, 0);
             
@@ -302,7 +306,7 @@ impl AudioEncoder {
             let mut out_frame = av_frame_alloc();
             (*out_frame).nb_samples = nb_samples;
             (*out_frame).format = AVSampleFormat::AV_SAMPLE_FMT_FLTP as i32;
-            (*out_frame).channel_layout = (*self.codec_ctx).channel_layout;
+            (*out_frame).ch_layout = (*self.codec_ctx).ch_layout;
             (*out_frame).sample_rate = (*self.codec_ctx).sample_rate;
             av_frame_get_buffer(out_frame, 0);
 
@@ -324,7 +328,7 @@ impl AudioEncoder {
                 let mut enc_frame = av_frame_alloc();
                 (*enc_frame).nb_samples = self.frame_size;
                 (*enc_frame).format = AVSampleFormat::AV_SAMPLE_FMT_FLTP as i32;
-                (*enc_frame).channel_layout = (*self.codec_ctx).channel_layout;
+                (*enc_frame).ch_layout = (*self.codec_ctx).ch_layout;
                 (*enc_frame).sample_rate = (*self.codec_ctx).sample_rate;
                 av_frame_get_buffer(enc_frame, 0);
 

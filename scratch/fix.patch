@@ -1,0 +1,29 @@
+--- src/capture/audio.rs
++++ src/capture/audio.rs
+@@ -11,7 +11,7 @@
+         let device = host.default_input_device().ok_or("No audio input device available")?;
+         
+         let config = device.default_input_config()?;
+-        let sample_rate = config.sample_rate().0;
++        let sample_rate = config.sample_rate().0; // will fix this with sed
+         let channels = config.channels();
+         
+         println!("Audio capture initialized: {} Hz, {} channels", sample_rate, channels);
+@@ -21,7 +21,7 @@
+         let stream = match config.sample_format() {
+             cpal::SampleFormat::F32 => {
+                 device.build_input_stream(
+-                    &stream_config,
++                    stream_config.clone(),
+                     move |data: &[f32], _: &_| {
+                         let _ = sender.try_send(data.to_vec());
+                     },
+@@ -31,7 +31,7 @@
+             }
+             cpal::SampleFormat::I16 => {
+                 device.build_input_stream(
+-                    &stream_config,
++                    stream_config,
+                     move |data: &[i16], _: &_| {
+                         let f32_data: Vec<f32> = data.iter().map(|&s| s as f32 / i16::MAX as f32).collect();
+                         let _ = sender.try_send(f32_data);

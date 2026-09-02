@@ -12,6 +12,14 @@ impl Packet {
         Self { ptr }
     }
     
+    pub fn stream_index(&self) -> i32 {
+        unsafe { (*self.ptr).stream_index }
+    }
+    
+    pub fn set_stream_index(&mut self, idx: i32) {
+        unsafe { (*self.ptr).stream_index = idx; }
+    }
+    
     pub fn is_keyframe(&self) -> bool {
         unsafe {
             ((*self.ptr).flags & AV_PKT_FLAG_KEY) != 0
