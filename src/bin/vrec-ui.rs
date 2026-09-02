@@ -1,18 +1,6 @@
-use vrec::ipc::Command;
-use std::os::unix::net::UnixStream;
-use std::io::Write;
+use vrec::ipc::{Command, send_command};
 use std::env;
 use global_hotkey::{GlobalHotKeyManager, hotkey::{HotKey, Modifiers, Code}, GlobalHotKeyEvent};
-
-fn send_command(cmd: Command) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let socket_path = format!("{}/vrec.sock", env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string()));
-    let mut stream = UnixStream::connect(&socket_path)?;
-    let payload = serde_json::to_vec(&cmd)?;
-    let len_buf = (payload.len() as u32).to_le_bytes();
-    stream.write_all(&len_buf)?;
-    stream.write_all(&payload)?;
-    Ok(())
-}
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let args: Vec<String> = env::args().collect();
@@ -20,7 +8,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         match args[1].as_str() {
             "--save" => {
                 vrec::overlay::show_notification_overlay();
-                return send_command(Command::SaveReplay).map_err(|e| e.into());
+                return send_command(Command::SaveReplay).map_err(|e| e);
             }
             "--menu" => {
                 vrec::overlay::show_menu_overlay();
@@ -63,8 +51,8 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let receiver = GlobalHotKeyEvent::receiver();
     loop {
-        if let Ok(event) = receiver.recv() {
-            if event.state == global_hotkey::HotKeyState::Pressed {
+        if let Ok(event) = receiver.recv()
+            && event.state == global_hotkey::HotKeyState::Pressed {
                 if event.id == save_hotkey.id() {
                     println!("Hotkey triggered! Sending SaveReplay command to daemon...");
                     vrec::overlay::show_notification_overlay();
@@ -74,6 +62,5 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     vrec::overlay::show_menu_overlay();
                 }
             }
-        }
     }
 }

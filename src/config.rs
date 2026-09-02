@@ -47,13 +47,11 @@ impl VrecConfig {
 
     pub fn load() -> Self {
         let path = Self::config_path();
-        if path.exists() {
-            if let Ok(data) = fs::read_to_string(path) {
-                if let Ok(config) = serde_json::from_str(&data) {
+        if path.exists()
+            && let Ok(data) = fs::read_to_string(path)
+                && let Ok(config) = serde_json::from_str(&data) {
                     return config;
                 }
-            }
-        }
         Self::default()
     }
 
@@ -72,12 +70,11 @@ impl VrecConfig {
         use std::os::unix::net::UnixStream;
         use std::io::Write;
         let socket_path = format!("{}/vrec.sock", env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string()));
-        if let Ok(mut stream) = UnixStream::connect(&socket_path) {
-            if let Ok(payload) = serde_json::to_vec(&crate::ipc::Command::ReloadConfig) {
+        if let Ok(mut stream) = UnixStream::connect(&socket_path)
+            && let Ok(payload) = serde_json::to_vec(&crate::ipc::Command::ReloadConfig) {
                 let len_buf = (payload.len() as u32).to_le_bytes();
                 let _ = stream.write_all(&len_buf);
                 let _ = stream.write_all(&payload);
             }
-        }
     }
 }

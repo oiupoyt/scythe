@@ -4,7 +4,7 @@ use vrec::ring::Packet;
 use vrec::muxer::Muxer;
 use vrec::ipc::Command;
 use ringbuf::HeapRb;
-use ringbuf::traits::{RingBuffer, Consumer};
+use ringbuf::traits::{RingBuffer, Consumer, Observer};
 use crossbeam_channel::bounded;
 use std::thread;
 use std::env;
@@ -31,7 +31,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     };
 
     let (frame_tx, frame_rx) = bounded::<Frame>(5);
-    let (trigger_tx, trigger_rx) = bounded::<()>(1);
+    let (cmd_tx, cmd_rx) = bounded::<Command>(10);
     let (mux_tx, mux_rx) = bounded::<Vec<Packet>>(1);
     
     let _ = frame_tx.send(first_frame);
@@ -57,11 +57,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut encoder = VaapiEncoder::new(width, height).expect("Failed to init encoder");
         let codec_ctx_ptr = encoder.codec_ctx() as usize; 
         
-        let mut ring = HeapRb::<Packet>::new(3600);
+        let mut config = vrec::config::VrecConfig::load();
+        let mut ring = HeapRb::<Packet>::new((config.replay_duration_sec * 60).max(60) as usize);
+        let mut normal_muxer: Option<Muxer> = None;
 
         thread::spawn(move || {
             while let Ok(drain) = mux_rx.recv() {
-                println!("Saving replay to output.mp4...");
+                let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+                let name = format!("replay_{}.mp4", ts);
+                println!("Saving replay to {}...", name);
                 let mut start_idx = 0;
                 for (i, p) in drain.iter().enumerate() {
                     if p.is_keyframe() {
@@ -72,7 +76,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 
                 if start_idx < drain.len() {
                     let codec_ctx = codec_ctx_ptr as *mut ffmpeg_next::ffi::AVCodecContext;
-                    let mut muxer = unsafe { Muxer::new("output.mp4", codec_ctx).unwrap() };
+                    let mut muxer = unsafe { Muxer::new(&name, codec_ctx).unwrap() };
                     for p in drain.into_iter().skip(start_idx) {
                         let _ = muxer.write_packet(&p);
                     }
@@ -85,15 +89,51 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         });
 
         while let Ok(frame) = frame_rx.recv() {
-            if let Ok(packets) = encoder.encode_frame(&frame) {
-                for pkt in packets {
-                    ring.push_overwrite(pkt);
+            while let Ok(cmd) = cmd_rx.try_recv() {
+                match cmd {
+                    Command::ReloadConfig => {
+                        config = vrec::config::VrecConfig::load();
+                        println!("Daemon config reloaded!");
+                        let new_capacity = (config.replay_duration_sec * 60).max(60) as usize;
+                        if ring.capacity().get() != new_capacity {
+                            ring = HeapRb::<Packet>::new(new_capacity);
+                            println!("Replay buffer resized to {} frames.", new_capacity);
+                        }
+                    },
+                    Command::SaveReplay => {
+                        if config.replay_enabled {
+                            let drain = ring.iter().cloned().collect::<Vec<_>>();
+                            let _ = mux_tx.try_send(drain);
+                        }
+                    },
+                    Command::StartRecording => {
+                        if config.record_enabled && normal_muxer.is_none() {
+                            let codec_ctx = codec_ctx_ptr as *mut ffmpeg_next::ffi::AVCodecContext;
+                            let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+                            let name = format!("record_{}.mp4", ts);
+                            normal_muxer = unsafe { Muxer::new(&name, codec_ctx).ok() };
+                            println!("Started normal recording to {}", name);
+                        }
+                    },
+                    Command::StopRecording => {
+                        if let Some(mut m) = normal_muxer.take() {
+                            let _ = m.finalize();
+                            println!("Stopped normal recording.");
+                        }
+                    },
+                    _ => {}
                 }
             }
-            
-            if trigger_rx.try_recv().is_ok() {
-                let drain = ring.iter().cloned().collect::<Vec<_>>();
-                let _ = mux_tx.try_send(drain);
+
+            if let Ok(packets) = encoder.encode_frame(&frame) {
+                for pkt in packets {
+                    if config.replay_enabled {
+                        ring.push_overwrite(pkt.clone());
+                    }
+                    if let Some(muxer) = normal_muxer.as_mut() {
+                        let _ = muxer.write_packet(&pkt);
+                    }
+                }
             }
         }
     });
@@ -113,13 +153,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     if stream.read_exact(&mut payload).is_ok()
                         && let Ok(cmd) = serde_json::from_slice::<Command>(&payload) {
                             match cmd {
-                                Command::SaveReplay => {
-                                    let _ = trigger_tx.try_send(());
-                                },
                                 Command::StopDaemon => {
                                     break;
                                 },
-                                _ => {}
+                                other => {
+                                    let _ = cmd_tx.try_send(other);
+                                }
                             }
                         }
                 }

@@ -15,9 +15,23 @@ fn send_command(cmd: Command) -> Result<(), Box<dyn std::error::Error + Send + S
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let args: Vec<String> = env::args().collect();
+    if args.len() > 1 {
+        match args[1].as_str() {
+            "--save" => {
+                vrec::overlay::show_notification_overlay();
+                return send_command(Command::SaveReplay).map_err(|e| e.into());
+            }
+            "--menu" => {
+                vrec::overlay::show_menu_overlay();
+                return Ok(());
+            }
+            _ => {}
+        }
+    }
+
     println!("Starting vrec UI/Hotkey process...");
     
-    // Check session type
     let session_type = env::var("XDG_SESSION_TYPE").unwrap_or_else(|_| "x11".to_string());
     let desktop = env::var("XDG_CURRENT_DESKTOP").unwrap_or_else(|_| "".to_string()).to_lowercase();
     
@@ -26,34 +40,38 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     
     if session_type.to_lowercase() == "wayland" {
         if is_gnome || is_kde {
-            println!("WARNING: wlr-layer-shell unsupported on GNOME/KDE Wayland. Degrading to hotkey-only mode.");
-            println!("Note: Global hotkeys may also fail to register on some Wayland compositors.");
+            println!("WARNING: Wayland native layer shell used. Ensure your compositor allows it.");
+            println!("Note: Global hotkeys may fail to register on Wayland compositors.");
         } else {
-            println!("wlroots-based compositor detected. (wlr-layer-shell overlay would be spawned here).");
+            println!("wlroots-based compositor detected.");
         }
     } else {
-        println!("X11 session detected. (X11 override-redirect overlay would be spawned here).");
+        println!("X11 session detected.");
     }
     
-    let manager = GlobalHotKeyManager::new()?;
-    let hotkey = HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyR);
+    let manager = GlobalHotKeyManager::new().unwrap();
+    let save_hotkey = HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyR);
+    let menu_hotkey = HotKey::new(Some(Modifiers::ALT), Code::KeyZ);
     
-    if let Err(e) = manager.register(hotkey) {
+    if let Err(e) = manager.register(save_hotkey) {
         eprintln!("Failed to register global hotkey! Wayland compositor might be blocking it: {}", e);
         eprintln!("Fallback: running without global hotkey. Send commands via socket manually.");
     } else {
-        println!("Registered global hotkey Ctrl+Shift+R to trigger replay save.");
+        manager.register(menu_hotkey).unwrap();
+        println!("Registered global hotkeys:\n - Ctrl+Shift+R (Save Replay)\n - Alt+Z (Open GUI Menu)");
     }
 
     let receiver = GlobalHotKeyEvent::receiver();
     loop {
         if let Ok(event) = receiver.recv() {
-            if event.id == hotkey.id() {
-                if event.state == global_hotkey::HotKeyState::Pressed {
+            if event.state == global_hotkey::HotKeyState::Pressed {
+                if event.id == save_hotkey.id() {
                     println!("Hotkey triggered! Sending SaveReplay command to daemon...");
-                    if let Err(e) = send_command(Command::SaveReplay) {
-                        eprintln!("Failed to communicate with daemon: {}", e);
-                    }
+                    vrec::overlay::show_notification_overlay();
+                    let _ = send_command(Command::SaveReplay);
+                } else if event.id == menu_hotkey.id() {
+                    println!("Alt+Z triggered! Opening GUI Menu Overlay...");
+                    vrec::overlay::show_menu_overlay();
                 }
             }
         }

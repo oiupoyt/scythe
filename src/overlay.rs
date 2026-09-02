@@ -142,7 +142,7 @@ pub fn show_menu_overlay() {
         });
 
         // Toggle buttons logic (just UI for now, backend IPC will be needed to actually toggle daemon state)
-        let btn_cfg_1 = config.clone();
+        let _btn_cfg_1 = config.clone();
         let replay_btn_clone = replay_btn.clone();
         replay_btn.connect_clicked(move |_| {
             let mut cfg = VrecConfig::load();
@@ -155,16 +155,19 @@ pub fn show_menu_overlay() {
             }
         });
 
-        let btn_cfg_2 = config.clone();
+        let _btn_cfg_2 = config.clone();
         let record_btn_clone = record_btn.clone();
         record_btn.connect_clicked(move |_| {
             let mut cfg = VrecConfig::load();
             cfg.record_enabled = !cfg.record_enabled;
-            cfg.save().unwrap(); VrecConfig::notify_daemon_reload();
+            cfg.save().unwrap();
+            VrecConfig::notify_daemon_reload();
             if cfg.record_enabled {
                 record_btn_clone.set_label("Recording\n🔴 ON");
+                let _ = crate::ipc::send_command(crate::ipc::Command::StartRecording);
             } else {
                 record_btn_clone.set_label("Recording\n⚪ OFF");
+                let _ = crate::ipc::send_command(crate::ipc::Command::StopRecording);
             }
         });
 
