@@ -19,10 +19,11 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if args.len() > 1 {
         match args[1].as_str() {
             "--save" => {
+                vrec::overlay::show_notification_overlay();
                 return send_command(Command::SaveReplay).map_err(|e| e.into());
             }
             "--menu" => {
-                vrec::overlay::show_saved_overlay();
+                vrec::overlay::show_menu_overlay();
                 return Ok(());
             }
             _ => {}
@@ -39,13 +40,13 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     
     if session_type.to_lowercase() == "wayland" {
         if is_gnome || is_kde {
-            println!("WARNING: wlr-layer-shell unsupported on GNOME/KDE Wayland. Degrading to hotkey-only mode.");
-            println!("Note: Global hotkeys may also fail to register on some Wayland compositors.");
+            println!("WARNING: Wayland native layer shell used. Ensure your compositor allows it.");
+            println!("Note: Global hotkeys may fail to register on Wayland compositors.");
         } else {
-            println!("wlroots-based compositor detected. (wlr-layer-shell overlay would be spawned here).");
+            println!("wlroots-based compositor detected.");
         }
     } else {
-        println!("X11 session detected. (X11 override-redirect overlay would be spawned here).");
+        println!("X11 session detected.");
     }
     
     let manager = GlobalHotKeyManager::new().unwrap();
@@ -66,10 +67,11 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             if event.state == global_hotkey::HotKeyState::Pressed {
                 if event.id == save_hotkey.id() {
                     println!("Hotkey triggered! Sending SaveReplay command to daemon...");
+                    vrec::overlay::show_notification_overlay();
                     let _ = send_command(Command::SaveReplay);
                 } else if event.id == menu_hotkey.id() {
-                    println!("Alt+Z triggered! Opening GUI Overlay...");
-                    vrec::overlay::show_saved_overlay();
+                    println!("Alt+Z triggered! Opening GUI Menu Overlay...");
+                    vrec::overlay::show_menu_overlay();
                 }
             }
         }
