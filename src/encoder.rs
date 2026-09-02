@@ -220,3 +220,141 @@ impl Drop for VaapiEncoder {
         }
     }
 }
+
+pub struct AudioEncoder {
+    codec_ctx: *mut AVCodecContext,
+    swr_ctx: *mut SwrContext,
+    next_pts: i64,
+    frame_size: i32,
+    channels: i32,
+    fifo: *mut AVAudioFifo,
+}
+
+impl AudioEncoder {
+    pub fn new(sample_rate: i32, channels: i32) -> Result<Self, String> {
+        unsafe {
+            let codec = avcodec_find_encoder(AVCodecID::AV_CODEC_ID_AAC);
+            if codec.is_null() {
+                return Err("AAC encoder not found".into());
+            }
+
+            let codec_ctx = avcodec_alloc_context3(codec);
+            (*codec_ctx).sample_rate = sample_rate;
+            (*codec_ctx).ch_layout.nb_channels = channels;
+            // AAC requires FLTP (planar float)
+            (*codec_ctx).sample_fmt = AVSampleFormat::AV_SAMPLE_FMT_FLTP;
+            (*codec_ctx).bit_rate = 192_000;
+            // For older ffmpeg compatibility:
+            (*codec_ctx).channel_layout = if channels == 2 { AV_CH_LAYOUT_STEREO } else { AV_CH_LAYOUT_MONO } as u64;
+
+            let ret = avcodec_open2(codec_ctx, codec, std::ptr::null_mut());
+            if ret < 0 {
+                return Err("Failed to open AAC encoder".into());
+            }
+
+            // Create SwrContext to convert from interleaved F32 (AV_SAMPLE_FMT_FLT) to planar F32 (AV_SAMPLE_FMT_FLTP)
+            let mut swr_ctx = swr_alloc();
+            av_opt_set_int(swr_ctx as _, c"in_channel_layout".as_ptr(), (*codec_ctx).channel_layout as i64, 0);
+            av_opt_set_int(swr_ctx as _, c"in_sample_rate".as_ptr(), sample_rate as i64, 0);
+            av_opt_set_sample_fmt(swr_ctx as _, c"in_sample_fmt".as_ptr(), AVSampleFormat::AV_SAMPLE_FMT_FLT, 0);
+            
+            av_opt_set_int(swr_ctx as _, c"out_channel_layout".as_ptr(), (*codec_ctx).channel_layout as i64, 0);
+            av_opt_set_int(swr_ctx as _, c"out_sample_rate".as_ptr(), sample_rate as i64, 0);
+            av_opt_set_sample_fmt(swr_ctx as _, c"out_sample_fmt".as_ptr(), AVSampleFormat::AV_SAMPLE_FMT_FLTP, 0);
+            
+            swr_init(swr_ctx);
+
+            let frame_size = (*codec_ctx).frame_size;
+            let fifo = av_audio_fifo_alloc(AVSampleFormat::AV_SAMPLE_FMT_FLTP, channels, 1024 * 10);
+
+            Ok(Self {
+                codec_ctx,
+                swr_ctx,
+                next_pts: 0,
+                frame_size,
+                channels,
+                fifo,
+            })
+        }
+    }
+
+    pub fn codec_ctx(&self) -> *mut AVCodecContext {
+        self.codec_ctx
+    }
+
+    pub fn encode_pcm(&mut self, data: &[f32]) -> Result<Vec<crate::ring::Packet>, String> {
+        let mut packets = Vec::new();
+        unsafe {
+            let nb_samples = data.len() as i32 / self.channels;
+            
+            // Allocate input frame (interleaved FLT)
+            let mut in_frame = av_frame_alloc();
+            (*in_frame).nb_samples = nb_samples;
+            (*in_frame).format = AVSampleFormat::AV_SAMPLE_FMT_FLT as i32;
+            (*in_frame).channel_layout = (*self.codec_ctx).channel_layout;
+            (*in_frame).sample_rate = (*self.codec_ctx).sample_rate;
+            av_frame_get_buffer(in_frame, 0);
+            
+            std::slice::from_raw_parts_mut((*in_frame).data[0], data.len() * 4)
+                .copy_from_slice(std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 4));
+
+            // Allocate output frame (planar FLTP)
+            let mut out_frame = av_frame_alloc();
+            (*out_frame).nb_samples = nb_samples;
+            (*out_frame).format = AVSampleFormat::AV_SAMPLE_FMT_FLTP as i32;
+            (*out_frame).channel_layout = (*self.codec_ctx).channel_layout;
+            (*out_frame).sample_rate = (*self.codec_ctx).sample_rate;
+            av_frame_get_buffer(out_frame, 0);
+
+            swr_convert(
+                self.swr_ctx,
+                (*out_frame).data.as_mut_ptr(),
+                nb_samples,
+                (*in_frame).data.as_ptr() as *const *const u8,
+                nb_samples
+            );
+            
+            av_audio_fifo_write(self.fifo, (*out_frame).data.as_mut_ptr() as *mut *mut std::ffi::c_void, nb_samples);
+
+            av_frame_free(&mut in_frame);
+            av_frame_free(&mut out_frame);
+
+            // Read exactly frame_size chunks from FIFO and encode
+            while av_audio_fifo_size(self.fifo) >= self.frame_size {
+                let mut enc_frame = av_frame_alloc();
+                (*enc_frame).nb_samples = self.frame_size;
+                (*enc_frame).format = AVSampleFormat::AV_SAMPLE_FMT_FLTP as i32;
+                (*enc_frame).channel_layout = (*self.codec_ctx).channel_layout;
+                (*enc_frame).sample_rate = (*self.codec_ctx).sample_rate;
+                av_frame_get_buffer(enc_frame, 0);
+
+                av_audio_fifo_read(self.fifo, (*enc_frame).data.as_mut_ptr() as *mut *mut std::ffi::c_void, self.frame_size);
+                
+                (*enc_frame).pts = self.next_pts;
+                self.next_pts += self.frame_size as i64;
+
+                if avcodec_send_frame(self.codec_ctx, enc_frame) >= 0 {
+                    let mut pkt = av_packet_alloc();
+                    while avcodec_receive_packet(self.codec_ctx, pkt) >= 0 {
+                        let new_pkt = av_packet_alloc();
+                        av_packet_move_ref(new_pkt, pkt);
+                        packets.push(crate::ring::Packet::new(new_pkt));
+                    }
+                    av_packet_free(&mut pkt);
+                }
+                av_frame_free(&mut enc_frame);
+            }
+        }
+        Ok(packets)
+    }
+}
+
+impl Drop for AudioEncoder {
+    fn drop(&mut self) {
+        unsafe {
+            av_audio_fifo_free(self.fifo);
+            swr_free(&mut self.swr_ctx);
+            avcodec_free_context(&mut self.codec_ctx);
+        }
+    }
+}

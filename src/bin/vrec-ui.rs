@@ -38,8 +38,11 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
     
     let manager = GlobalHotKeyManager::new().unwrap();
-    let save_hotkey = HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyR);
-    let menu_hotkey = HotKey::new(Some(Modifiers::ALT), Code::KeyZ);
+    let config = vrec::config::VrecConfig::load();
+    let save_hotkey = vrec::hotkey::parse_hotkey(&config.save_hotkey)
+        .unwrap_or_else(|| HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyR));
+    let menu_hotkey = vrec::hotkey::parse_hotkey(&config.menu_hotkey)
+        .unwrap_or_else(|| HotKey::new(Some(Modifiers::ALT), Code::KeyZ));
     
     if let Err(e) = manager.register(save_hotkey) {
         eprintln!("Failed to register global hotkey! Wayland compositor might be blocking it: {}", e);

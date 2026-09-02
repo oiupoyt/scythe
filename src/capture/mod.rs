@@ -35,3 +35,4 @@ pub trait FrameSource: Send {
     fn next_frame(&mut self) -> Result<Frame, Box<dyn std::error::Error + Send + Sync>>;
 }
 pub mod mock;
+pub mod audio;
