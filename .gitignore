@@ -1,1 +1,6 @@
 /target
+*.mp4
+scratch/
+*.orig
+*.obOCNTS
+*.py
