@@ -62,6 +62,28 @@ impl VrecConfig {
         }
         let data = serde_json::to_string_pretty(self)?;
         fs::write(path, data)?;
+        let _ = self.update_autostart();
+        Ok(())
+    }
+
+    pub fn update_autostart(&self) -> Result<(), std::io::Error> {
+        let mut autostart_dir = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
+        autostart_dir.push("autostart");
+        let desktop_file = autostart_dir.join("vrec.desktop");
+
+        if self.autostart {
+            fs::create_dir_all(&autostart_dir)?;
+            let content = "[Desktop Entry]\n\
+                           Type=Application\n\
+                           Name=vrec Screen Recorder\n\
+                           Comment=Hardware-accelerated screen recorder and instant replay\n\
+                           Exec=sh -c \"vrec-daemon & vrec-ui\"\n\
+                           Terminal=false\n\
+                           Categories=AudioVideo;Recorder;\n";
+            fs::write(desktop_file, content)?;
+        } else if desktop_file.exists() {
+            let _ = fs::remove_file(desktop_file);
+        }
         Ok(())
     }
 
