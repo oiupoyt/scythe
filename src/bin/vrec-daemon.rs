@@ -100,7 +100,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut config = vrec::config::VrecConfig::load();
         replay_state_clone.store(config.replay_enabled, Ordering::SeqCst);
 
-        let mut encoder = VideoEncoder::new_with_params(width, height, config.record_bitrate_kbps, config.fps)
+        let mut encoder = VideoEncoder::new_with_params(width, height, config.record_bitrate_kbps, config.fps, &config.video_codec)
             .expect("Failed to init encoder");
         let codec_ctx_ptr = encoder.codec_ctx() as usize;
         

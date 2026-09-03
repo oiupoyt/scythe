@@ -11,6 +11,7 @@ pub struct VrecConfig {
     pub record_enabled: bool,
     pub record_bitrate_kbps: u32,
     pub fps: u32,
+    pub video_codec: String,
     pub output_directory: String,
     pub audio_device: String,
     
@@ -31,6 +32,7 @@ impl Default for VrecConfig {
             record_enabled: false,
             record_bitrate_kbps: 20000,
             fps: 60,
+            video_codec: "h264".to_string(),
             output_directory: Self::default_output_directory(),
             audio_device: "default".to_string(),
             

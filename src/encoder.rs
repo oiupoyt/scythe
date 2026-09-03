@@ -12,19 +12,33 @@ pub struct VaapiEncoder {
 
 impl VaapiEncoder {
     pub fn new(width: u32, height: u32) -> Result<Self, String> {
-        Self::new_with_params(width, height, 18_000, 60)
+        Self::new_with_params(width, height, 18_000, 60, "h264")
     }
 
     pub fn new_with_bitrate(width: u32, height: u32, bitrate_kbps: u32) -> Result<Self, String> {
-        Self::new_with_params(width, height, bitrate_kbps, 60)
+        Self::new_with_params(width, height, bitrate_kbps, 60, "h264")
     }
 
-    pub fn new_with_params(width: u32, height: u32, bitrate_kbps: u32, fps: u32) -> Result<Self, String> {
+    pub fn new_with_params(width: u32, height: u32, bitrate_kbps: u32, fps: u32, codec_pref: &str) -> Result<Self, String> {
         let fps = fps.clamp(20, 144) as i32;
         unsafe {
-            let codec = avcodec_find_encoder_by_name(c"h264_vaapi".as_ptr());
+            let codec_candidates: &[&std::ffi::CStr] = match codec_pref.to_lowercase().as_str() {
+                "hevc" | "h265" => &[c"hevc_vaapi", c"h264_vaapi"],
+                "av1" => &[c"av1_vaapi", c"h264_vaapi"],
+                _ => &[c"h264_vaapi"],
+            };
+
+            let mut codec: *const AVCodec = ptr::null();
+            for cand in codec_candidates {
+                let c = avcodec_find_encoder_by_name(cand.as_ptr());
+                if !c.is_null() {
+                    codec = c;
+                    break;
+                }
+            }
+
             if codec.is_null() {
-                return Err("h264_vaapi encoder not found".into());
+                return Err("No compatible VAAPI hardware encoder found".into());
             }
 
             let codec_ctx = avcodec_alloc_context3(codec);
@@ -267,18 +281,36 @@ pub struct WindowsHwEncoder {
 #[cfg(target_os = "windows")]
 impl WindowsHwEncoder {
     pub fn new(width: u32, height: u32) -> Result<Self, String> {
-        Self::new_with_params(width, height, 20_000, 60)
+        Self::new_with_params(width, height, 20_000, 60, "h264")
     }
 
-    pub fn new_with_params(width: u32, height: u32, bitrate_kbps: u32, fps: u32) -> Result<Self, String> {
+    pub fn new_with_params(width: u32, height: u32, bitrate_kbps: u32, fps: u32, codec_pref: &str) -> Result<Self, String> {
         let fps = fps.clamp(20, 144) as i32;
         unsafe {
-            let candidates = [
-                (c"h264_nvenc", "NVIDIA NVENC Hardware Encoder"),
-                (c"h264_amf", "AMD AMF Hardware Encoder"),
-                (c"h264_qsv", "Intel QuickSync Hardware Encoder"),
-                (c"libx264", "Software CPU H.264 Encoder (Universal Fallback)"),
-            ];
+            let candidates: &[(&std::ffi::CStr, &str)] = match codec_pref.to_lowercase().as_str() {
+                "hevc" | "h265" => &[
+                    (c"hevc_nvenc", "NVIDIA NVENC HEVC Hardware Encoder"),
+                    (c"hevc_amf", "AMD AMF HEVC Hardware Encoder"),
+                    (c"hevc_qsv", "Intel QuickSync HEVC Hardware Encoder"),
+                    (c"libx265", "Software CPU HEVC Encoder"),
+                    (c"h264_nvenc", "NVIDIA NVENC H.264 Fallback"),
+                    (c"libx264", "Software CPU H.264 Fallback"),
+                ],
+                "av1" => &[
+                    (c"av1_nvenc", "NVIDIA NVENC AV1 Hardware Encoder"),
+                    (c"av1_amf", "AMD AMF AV1 Hardware Encoder"),
+                    (c"av1_qsv", "Intel QuickSync AV1 Hardware Encoder"),
+                    (c"libsvtav1", "Software CPU SVT-AV1 Encoder"),
+                    (c"h264_nvenc", "NVIDIA NVENC H.264 Fallback"),
+                    (c"libx264", "Software CPU H.264 Fallback"),
+                ],
+                _ => &[
+                    (c"h264_nvenc", "NVIDIA NVENC Hardware Encoder"),
+                    (c"h264_amf", "AMD AMF Hardware Encoder"),
+                    (c"h264_qsv", "Intel QuickSync Hardware Encoder"),
+                    (c"libx264", "Software CPU H.264 Encoder (Universal Fallback)"),
+                ],
+            };
 
             let mut selected_codec: *const AVCodec = ptr::null();
             let mut selected_desc = String::new();

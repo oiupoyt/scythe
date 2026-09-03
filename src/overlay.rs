@@ -107,7 +107,7 @@ pub fn show_menu_overlay() {
         let window = ApplicationWindow::builder()
             .application(app)
             .default_width(860)
-            .default_height(390)
+            .default_height(430)
             .build();
 
         #[cfg(target_os = "linux")]
@@ -290,6 +290,15 @@ pub fn show_menu_overlay() {
         fps_combo.append(Some("120"), "120 FPS (High-End)");
         fps_combo.set_active_id(Some(&config.fps.to_string()));
 
+        // Video Codec Selector
+        let codec_lbl = Label::new(Some("Video Codec:"));
+        codec_lbl.set_halign(gtk::Align::Start);
+        let codec_combo = ComboBoxText::new();
+        codec_combo.append(Some("h264"), "H.264 / AVC (Most Compatible)");
+        codec_combo.append(Some("hevc"), "HEVC / H.265 (High Efficiency)");
+        codec_combo.append(Some("av1"), "AV1 (Next-Gen High Quality)");
+        codec_combo.set_active_id(Some(&config.video_codec));
+
         // Audio Input Device Selector
         let audio_dev_lbl = Label::new(Some("Audio Device:"));
         audio_dev_lbl.set_halign(gtk::Align::Start);
@@ -312,16 +321,18 @@ pub fn show_menu_overlay() {
         settings_grid.attach(&bit_combo, 1, 1, 1, 1);
         settings_grid.attach(&fps_lbl, 0, 2, 1, 1);
         settings_grid.attach(&fps_combo, 1, 2, 1, 1);
-        settings_grid.attach(&audio_dev_lbl, 0, 3, 1, 1);
-        settings_grid.attach(&audio_dev_combo, 1, 3, 1, 1);
-        settings_grid.attach(&dir_lbl, 0, 4, 1, 1);
-        settings_grid.attach(&dir_entry, 1, 4, 1, 1);
-        settings_grid.attach(&auto_lbl, 0, 5, 1, 1);
-        settings_grid.attach(&auto_switch, 1, 5, 1, 1);
-        settings_grid.attach(&save_hk_lbl, 0, 6, 1, 1);
-        settings_grid.attach(&save_hk_entry, 1, 6, 1, 1);
-        settings_grid.attach(&menu_hk_lbl, 0, 7, 1, 1);
-        settings_grid.attach(&menu_hk_entry, 1, 7, 1, 1);
+        settings_grid.attach(&codec_lbl, 0, 3, 1, 1);
+        settings_grid.attach(&codec_combo, 1, 3, 1, 1);
+        settings_grid.attach(&audio_dev_lbl, 0, 4, 1, 1);
+        settings_grid.attach(&audio_dev_combo, 1, 4, 1, 1);
+        settings_grid.attach(&dir_lbl, 0, 5, 1, 1);
+        settings_grid.attach(&dir_entry, 1, 5, 1, 1);
+        settings_grid.attach(&auto_lbl, 0, 6, 1, 1);
+        settings_grid.attach(&auto_switch, 1, 6, 1, 1);
+        settings_grid.attach(&save_hk_lbl, 0, 7, 1, 1);
+        settings_grid.attach(&save_hk_entry, 1, 7, 1, 1);
+        settings_grid.attach(&menu_hk_lbl, 0, 8, 1, 1);
+        settings_grid.attach(&menu_hk_entry, 1, 8, 1, 1);
 
         let save_settings_btn = Button::with_label("💾 Apply & Save Settings");
         save_settings_btn.style_context().add_class("apply-btn");
@@ -484,6 +495,9 @@ pub fn show_menu_overlay() {
                 && let Ok(fps) = fps_str.parse() {
                     cfg.fps = fps;
                 }
+            if let Some(c) = codec_combo.active_id() {
+                cfg.video_codec = c.to_string();
+            }
             let dir_val = dir_entry.text().to_string();
             if !dir_val.trim().is_empty() {
                 cfg.output_directory = dir_val;
