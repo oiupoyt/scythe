@@ -3,20 +3,72 @@ use vrec::overlay::{show_menu_overlay, show_notification};
 use std::env;
 use global_hotkey::{GlobalHotKeyManager, hotkey::{HotKey, Modifiers, Code}, GlobalHotKeyEvent};
 
+fn ensure_wayland_env() {
+    #[cfg(target_os = "linux")]
+    {
+        let runtime_dir = env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| format!("/run/user/{}", unsafe { libc::getuid() }));
+        unsafe {
+            if env::var("WAYLAND_DISPLAY").is_err() {
+                if let Ok(entries) = std::fs::read_dir(&runtime_dir) {
+                    for entry in entries.flatten() {
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        if name.starts_with("wayland-") && !name.ends_with(".lock") {
+                            env::set_var("WAYLAND_DISPLAY", &name);
+                            break;
+                        }
+                    }
+                }
+            }
+            if env::var("DBUS_SESSION_BUS_ADDRESS").is_err() {
+                let bus_path = format!("{}/bus", runtime_dir);
+                if std::path::Path::new(&bus_path).exists() {
+                    env::set_var("DBUS_SESSION_BUS_ADDRESS", format!("unix:path={}", bus_path));
+                }
+            }
+            if env::var("XDG_CURRENT_DESKTOP").is_err() {
+                env::set_var("XDG_CURRENT_DESKTOP", "Hyprland");
+            }
+            if env::var("XDG_SESSION_TYPE").map(|s| s == "tty" || s.is_empty()).unwrap_or(true) && env::var("WAYLAND_DISPLAY").is_ok() {
+                env::set_var("XDG_SESSION_TYPE", "wayland");
+            }
+        }
+    }
+}
+
+fn ensure_daemon_running() {
+    if query_status().is_err() {
+        println!("vrec-daemon not running. Auto-launching vrec-daemon...");
+        let _ = std::process::Command::new("vrec-daemon")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        for _ in 0..15 {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            if query_status().is_ok() {
+                println!("vrec-daemon successfully connected.");
+                break;
+            }
+        }
+    }
+}
+
 fn send_with_notification(cmd: Command, success_msg: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ensure_daemon_running();
     match send_command(cmd) {
         Ok(()) => {
             show_notification(success_msg);
             Ok(())
         }
         Err(e) => {
-            show_notification("Error: vrec-daemon is not running");
+            show_notification("Error: failed to connect to vrec-daemon");
             Err(e)
         }
     }
 }
 
 fn handle_toggle_recording() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ensure_daemon_running();
     let status = query_status().ok();
     let is_rec = status.as_ref().map(|s| s.is_recording).unwrap_or(false);
     match send_command(Command::ToggleRecording) {
@@ -29,13 +81,15 @@ fn handle_toggle_recording() -> Result<(), Box<dyn std::error::Error + Send + Sy
             Ok(())
         }
         Err(e) => {
-            show_notification("Error: vrec-daemon is not running");
+            show_notification("Error: failed to connect to vrec-daemon");
             Err(e)
         }
     }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ensure_wayland_env();
+
     let args: Vec<String> = env::args().collect();
     if args.len() > 1 {
         match args[1].as_str() {
@@ -43,6 +97,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 return send_with_notification(Command::SaveReplay, "Replay saved");
             }
             "--menu" => {
+                ensure_daemon_running();
                 show_menu_overlay();
                 return Ok(());
             }
@@ -98,55 +153,29 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         println!("X11 session detected.");
     }
     
-    let manager = GlobalHotKeyManager::new().map_err(|e| format!("Failed to init GlobalHotKeyManager: {:?}", e))?;
-    let config = vrec::config::VrecConfig::load();
-    let save_hotkey = vrec::hotkey::parse_hotkey(&config.save_hotkey)
-        .unwrap_or_else(|| HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyR));
-    let menu_hotkey = vrec::hotkey::parse_hotkey(&config.menu_hotkey)
-        .unwrap_or_else(|| HotKey::new(Some(Modifiers::ALT), Code::KeyZ));
-    let record_hotkey = vrec::hotkey::parse_hotkey(&config.record_hotkey)
-        .unwrap_or_else(|| HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::F9));
-    
-    let mut registered_count = 0;
-    if let Err(e) = manager.register(save_hotkey) {
-        eprintln!("Warning: Failed to register save hotkey ({}): {}", config.save_hotkey, e);
-    } else {
-        println!("Registered save replay hotkey: {}", config.save_hotkey);
-        registered_count += 1;
-    }
+    let manager = GlobalHotKeyManager::new()?;
+    let hotkey_menu = HotKey::new(Some(Modifiers::ALT), Code::KeyZ);
+    let hotkey_save = HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyR);
+    let hotkey_record = HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::F9);
 
-    if let Err(e) = manager.register(menu_hotkey) {
-        eprintln!("Warning: Failed to register menu hotkey ({}): {}", config.menu_hotkey, e);
-    } else {
-        println!("Registered menu overlay hotkey: {}", config.menu_hotkey);
-        registered_count += 1;
-    }
+    let _ = manager.register(hotkey_menu);
+    let _ = manager.register(hotkey_save);
+    let _ = manager.register(hotkey_record);
 
-    if let Err(e) = manager.register(record_hotkey) {
-        eprintln!("Warning: Failed to register record hotkey ({}): {}", config.record_hotkey, e);
-    } else {
-        println!("Registered toggle recording hotkey: {}", config.record_hotkey);
-        registered_count += 1;
-    }
-
-    if registered_count == 0 {
-        eprintln!("Note: Running without global hotkeys. You can bind `vrec-ui --menu`, `vrec-ui --record`, and `vrec-ui --save` to compositor shortcuts.");
-    }
+    println!("Listening for global hotkeys (Alt+Z for overlay, Ctrl+Shift+R for replay, Ctrl+Shift+F9 for recording)...");
 
     let receiver = GlobalHotKeyEvent::receiver();
     loop {
-        if let Ok(event) = receiver.recv()
-            && event.state == global_hotkey::HotKeyState::Pressed {
-                if event.id == save_hotkey.id() {
-                    println!("Save replay hotkey pressed. Triggering SaveReplay...");
-                    let _ = send_with_notification(Command::SaveReplay, "Replay saved");
-                } else if event.id == menu_hotkey.id() {
-                    println!("Menu hotkey pressed. Opening Overlay Menu...");
-                    show_menu_overlay();
-                } else if event.id == record_hotkey.id() {
-                    println!("Record hotkey pressed. Toggling Recording...");
-                    let _ = handle_toggle_recording();
-                }
+        if let Ok(event) = receiver.try_recv() {
+            if event.id == hotkey_menu.id() {
+                ensure_daemon_running();
+                show_menu_overlay();
+            } else if event.id == hotkey_save.id() {
+                let _ = send_with_notification(Command::SaveReplay, "Replay saved");
+            } else if event.id == hotkey_record.id() {
+                let _ = handle_toggle_recording();
             }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
     }
 }

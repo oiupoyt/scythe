@@ -12,8 +12,42 @@ use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
+fn ensure_wayland_env() {
+    #[cfg(target_os = "linux")]
+    {
+        let runtime_dir = env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| format!("/run/user/{}", unsafe { libc::getuid() }));
+        unsafe {
+            if env::var("WAYLAND_DISPLAY").is_err() {
+                if let Ok(entries) = std::fs::read_dir(&runtime_dir) {
+                    for entry in entries.flatten() {
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        if name.starts_with("wayland-") && !name.ends_with(".lock") {
+                            env::set_var("WAYLAND_DISPLAY", &name);
+                            println!("Auto-detected Wayland display: {}", name);
+                            break;
+                        }
+                    }
+                }
+            }
+            if env::var("DBUS_SESSION_BUS_ADDRESS").is_err() {
+                let bus_path = format!("{}/bus", runtime_dir);
+                if std::path::Path::new(&bus_path).exists() {
+                    env::set_var("DBUS_SESSION_BUS_ADDRESS", format!("unix:path={}", bus_path));
+                }
+            }
+            if env::var("XDG_CURRENT_DESKTOP").is_err() {
+                env::set_var("XDG_CURRENT_DESKTOP", "Hyprland");
+            }
+            if env::var("XDG_SESSION_TYPE").map(|s| s == "tty" || s.is_empty()).unwrap_or(true) && env::var("WAYLAND_DISPLAY").is_ok() {
+                env::set_var("XDG_SESSION_TYPE", "wayland");
+            }
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ensure_wayland_env();
     let session_type = env::var("XDG_SESSION_TYPE").unwrap_or_else(|_| "x11".to_string());
     println!("Detected session type: {}", session_type);
 
@@ -65,7 +99,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (mux_tx, mux_rx) = bounded::<Vec<Packet>>(1);
     let (audio_tx, audio_rx) = bounded::<Vec<f32>>(100);
     let initial_config = vrec::config::VrecConfig::load();
-    let audio_info = vrec::capture::audio::AudioCapture::new_with_device(audio_tx, Some(&initial_config.audio_device)).ok();
+    let audio_info = vrec::capture::audio::AudioCapture::new_with_device_and_mode(
+        audio_tx,
+        Some(&initial_config.audio_device),
+        &initial_config.audio_mode,
+    ).ok();
 
     let is_recording_state = Arc::new(AtomicBool::new(false));
     let record_start_state = Arc::new(AtomicU64::new(0));
@@ -306,17 +344,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                     } else {
                                         0
                                     };
+                                    let cfg = vrec::config::VrecConfig::load();
                                     let status = DaemonStatus {
                                         is_recording: rec,
                                         recording_duration_sec: duration,
                                         is_replay_active: replay_enabled_state.load(Ordering::SeqCst),
                                         audio_muted: audio_muted_state.load(Ordering::SeqCst),
+                                        audio_mode: cfg.audio_mode,
                                     };
                                     if let Ok(resp) = serde_json::to_vec(&status) {
                                         let len_resp = (resp.len() as u32).to_le_bytes();
                                         let _ = stream.write_all(&len_resp);
                                         let _ = stream.write_all(&resp);
                                     }
+                                },
+                                Command::CycleAudioMode => {
+                                    let mut cfg = vrec::config::VrecConfig::load();
+                                    cfg.audio_mode = match cfg.audio_mode.as_str() {
+                                        "system" => "mic",
+                                        "mic" => "both",
+                                        "both" => "muted",
+                                        _ => "system",
+                                    }.to_string();
+                                    let _ = cfg.save();
+                                    println!("Audio mode cycled to: {}", cfg.audio_mode);
                                 },
                                 Command::StopDaemon => {
                                     println!("StopDaemon requested: Finalizing active recordings...");

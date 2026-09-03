@@ -7,6 +7,7 @@ pub enum Command {
     StopRecording,
     ToggleRecording,
     ToggleAudio,
+    CycleAudioMode,
     ReloadConfig,
     StopDaemon,
     ShowOverlay,
@@ -19,6 +20,12 @@ pub struct DaemonStatus {
     pub recording_duration_sec: u64,
     pub is_replay_active: bool,
     pub audio_muted: bool,
+    #[serde(default = "default_audio_mode_str")]
+    pub audio_mode: String,
+}
+
+fn default_audio_mode_str() -> String {
+    "system".to_string()
 }
 
 pub fn send_command(cmd: Command) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
