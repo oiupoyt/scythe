@@ -23,6 +23,7 @@ jobs:
           sudo apt-get install -y \
             pkg-config clang libva-dev \
             libavcodec-dev libavformat-dev libavutil-dev libswresample-dev libswscale-dev \
+            libavfilter-dev libavdevice-dev \
             libpipewire-0.3-dev libgtk-3-dev libgtk-layer-shell-dev libxcb1-dev libasound2-dev \
             rpm alien wget
 
@@ -113,9 +114,13 @@ jobs:
             mingw-w64-x86_64-gtk3
             mingw-w64-x86_64-ffmpeg
             mingw-w64-x86_64-pkg-config
+            mingw-w64-x86_64-clang
 
       - name: Build Release Binaries (Windows)
         shell: msys2 {0}
+        env:
+          LIBCLANG_PATH: /mingw64/bin
+          BINDGEN_EXTRA_CLANG_ARGS: "-I/mingw64/include"
         run: |
           cargo build --release
 
