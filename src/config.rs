@@ -10,6 +10,8 @@ pub struct VrecConfig {
     
     pub record_enabled: bool,
     pub record_bitrate_kbps: u32,
+    pub fps: u32,
+    pub output_directory: String,
     
     pub autostart: bool,
     pub language: String,
@@ -23,10 +25,12 @@ impl Default for VrecConfig {
         Self {
             replay_enabled: true,
             replay_duration_sec: 60,
-            replay_bitrate_kbps: 10000,
+            replay_bitrate_kbps: 18000,
             
             record_enabled: false,
-            record_bitrate_kbps: 15000,
+            record_bitrate_kbps: 20000,
+            fps: 60,
+            output_directory: Self::default_output_directory(),
             
             autostart: false,
             language: "en".to_string(),
@@ -38,6 +42,12 @@ impl Default for VrecConfig {
 }
 
 impl VrecConfig {
+    pub fn default_output_directory() -> String {
+        let mut p = dirs::video_dir().unwrap_or_else(|| PathBuf::from("."));
+        p.push("vrec");
+        p.to_string_lossy().to_string()
+    }
+
     pub fn config_path() -> PathBuf {
         let mut path = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
         path.push("vrec");
@@ -55,11 +65,18 @@ impl VrecConfig {
         Self::default()
     }
 
+    pub fn resolve_save_path(&self, filename: &str) -> String {
+        let p = std::path::Path::new(&self.output_directory);
+        let _ = fs::create_dir_all(p);
+        p.join(filename).to_string_lossy().to_string()
+    }
+
     pub fn save(&self) -> Result<(), std::io::Error> {
         let path = Self::config_path();
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
+        let _ = fs::create_dir_all(&self.output_directory);
         let data = serde_json::to_string_pretty(self)?;
         fs::write(path, data)?;
         let _ = self.update_autostart();
@@ -101,10 +118,11 @@ mod tests {
         let cfg = VrecConfig::default();
         assert!(cfg.replay_enabled);
         assert_eq!(cfg.replay_duration_sec, 60);
+        assert_eq!(cfg.fps, 60);
+        assert!(cfg.output_directory.contains("vrec"));
         let json = serde_json::to_string(&cfg).unwrap();
         let parsed: VrecConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.menu_hotkey, "Alt+Z");
         assert_eq!(parsed.save_hotkey, "Ctrl+Shift+R");
     }
 }
-

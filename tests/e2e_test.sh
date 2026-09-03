@@ -11,13 +11,15 @@ cargo build --release --quiet
 
 SOCKET_PATH="${XDG_RUNTIME_DIR:-/tmp}/vrec.sock"
 rm -f "$SOCKET_PATH"
-rm -f test_record_*.mp4 test_replay_*.mp4
+rm -f record_*.mp4 replay_*.mp4
+
+SAVE_DIR=$(python3 -c 'import json, os; print(json.load(open(os.path.expanduser("~/.config/vrec/config.json")))["output_directory"])' 2>/dev/null || echo "$HOME/Videos/vrec")
+mkdir -p "$SAVE_DIR"
 
 echo "[2/6] Starting vrec-daemon with mock capture..."
 target/release/vrec-daemon --mock > daemon_test.log 2>&1 &
 DAEMON_PID=$!
 
-# Ensure daemon is killed on exit
 cleanup() {
     if kill -0 $DAEMON_PID 2>/dev/null; then
         target/release/vrec-ui --quit 2>/dev/null || kill -9 $DAEMON_PID 2>/dev/null || true
@@ -69,10 +71,8 @@ echo "============================================="
 echo "   Verifying Generated Recordings with ffprobe"
 echo "============================================="
 
-MP4_FILES=(record_*.mp4 replay_*.mp4)
 FOUND_ANY=0
-
-for f in "${MP4_FILES[@]}"; do
+for f in $(find "$SAVE_DIR" ./vrec . -maxdepth 2 \( -name "record_*.mp4" -o -name "replay_*.mp4" \) 2>/dev/null); do
     if [ -f "$f" ]; then
         FOUND_ANY=1
         echo "--> Testing file: $f ($(ls -lh "$f" | awk '{print $5}'))"

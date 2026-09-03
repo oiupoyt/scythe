@@ -99,7 +99,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut config = vrec::config::VrecConfig::load();
         replay_state_clone.store(config.replay_enabled, Ordering::SeqCst);
 
-        let mut encoder = VaapiEncoder::new_with_bitrate(width, height, config.record_bitrate_kbps)
+        let mut encoder = VaapiEncoder::new_with_params(width, height, config.record_bitrate_kbps, config.fps)
             .expect("Failed to init encoder");
         let codec_ctx_ptr = encoder.codec_ctx() as usize;
         
@@ -118,8 +118,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         thread::spawn(move || {
             while let Ok(drain) = mux_rx.recv() {
                 let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
-                let name = format!("replay_{}.mp4", ts);
-                println!("Saving replay to {}...", name);
+                let filename = format!("replay_{}.mp4", ts);
+                let full_path = vrec::config::VrecConfig::load().resolve_save_path(&filename);
+                println!("Saving replay to {}...", full_path);
                 let mut start_idx = 0;
                 for (i, p) in drain.iter().enumerate() {
                     if p.is_keyframe() {
@@ -131,12 +132,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 if start_idx < drain.len() {
                     let codec_ctx = codec_ctx_ptr as *mut ffmpeg_next::ffi::AVCodecContext;
                     let audio_codec_ctx = audio_codec_ctx_ptr.map(|p| p as *mut ffmpeg_next::ffi::AVCodecContext);
-                    let mut muxer = unsafe { Muxer::new(&name, codec_ctx, audio_codec_ctx).unwrap() };
+                    let mut muxer = unsafe { Muxer::new(&full_path, codec_ctx, audio_codec_ctx).unwrap() };
                     for p in drain.into_iter().skip(start_idx) {
                         let _ = muxer.write_packet(&p);
                     }
                     let _ = muxer.finalize();
-                    println!("Replay saved to {}!", name);
+                    println!("Replay saved to {}!", full_path);
                 } else {
                     println!("No keyframe found in buffer, skipping save.");
                 }
@@ -242,10 +243,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                             normal_waiting_keyframe = false;
                             let codec_ctx = codec_ctx_ptr as *mut ffmpeg_next::ffi::AVCodecContext;
                             let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
-                            let name = format!("record_{}.mp4", ts);
+                            let filename = format!("record_{}.mp4", ts);
+                            let full_path = config.resolve_save_path(&filename);
                             let audio_codec_ctx = audio_codec_ctx_ptr.map(|p| p as *mut ffmpeg_next::ffi::AVCodecContext);
-                            normal_muxer = unsafe { Muxer::new(&name, codec_ctx, audio_codec_ctx).ok() };
-                            println!("Started normal recording to {}", name);
+                            normal_muxer = unsafe { Muxer::new(&full_path, codec_ctx, audio_codec_ctx).ok() };
+                            println!("Started normal recording to {}", full_path);
                         }
                         
                         if !normal_waiting_keyframe

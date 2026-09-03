@@ -12,10 +12,15 @@ pub struct VaapiEncoder {
 
 impl VaapiEncoder {
     pub fn new(width: u32, height: u32) -> Result<Self, String> {
-        Self::new_with_bitrate(width, height, 15_000)
+        Self::new_with_params(width, height, 18_000, 60)
     }
 
     pub fn new_with_bitrate(width: u32, height: u32, bitrate_kbps: u32) -> Result<Self, String> {
+        Self::new_with_params(width, height, bitrate_kbps, 60)
+    }
+
+    pub fn new_with_params(width: u32, height: u32, bitrate_kbps: u32, fps: u32) -> Result<Self, String> {
+        let fps = fps.clamp(20, 144) as i32;
         unsafe {
             let codec = avcodec_find_encoder_by_name(c"h264_vaapi".as_ptr());
             if codec.is_null() {
@@ -29,12 +34,20 @@ impl VaapiEncoder {
 
             (*codec_ctx).width = width as i32;
             (*codec_ctx).height = height as i32;
-            (*codec_ctx).time_base = AVRational { num: 1, den: 60 };
-            (*codec_ctx).framerate = AVRational { num: 60, den: 1 };
+            (*codec_ctx).time_base = AVRational { num: 1, den: fps };
+            (*codec_ctx).framerate = AVRational { num: fps, den: 1 };
             (*codec_ctx).pix_fmt = AVPixelFormat::AV_PIX_FMT_VAAPI;
-            (*codec_ctx).gop_size = 60; // Emit IDR keyframe every 60 frames (1 second)
-            (*codec_ctx).max_b_frames = 0; // Low latency, no B-frame reordering
-            (*codec_ctx).bit_rate = (bitrate_kbps as i64) * 1000;
+            (*codec_ctx).gop_size = fps; // Emit IDR keyframe every second
+            (*codec_ctx).max_b_frames = 0; // Zero latency, no frame reordering
+            
+            // High Quality & Clean VBR Rate Control
+            let rate = (bitrate_kbps as i64) * 1000;
+            (*codec_ctx).bit_rate = rate;
+            (*codec_ctx).rc_max_rate = rate * 3 / 2; // Allow burst for fast motion scenes
+            (*codec_ctx).rc_buffer_size = (rate / 2) as i32;
+            (*codec_ctx).qmin = 16;
+            (*codec_ctx).qmax = 28; // Prevent compression blockiness
+            (*codec_ctx).profile = FF_PROFILE_H264_HIGH;
 
             let mut hw_device_ctx: *mut AVBufferRef = ptr::null_mut();
             let ret = av_hwdevice_ctx_create(

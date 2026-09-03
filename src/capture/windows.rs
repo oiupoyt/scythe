@@ -15,10 +15,13 @@ pub struct WindowsCapture {
     device: ID3D11Device,
     context: ID3D11DeviceContext,
     duplication: IDXGIOutputDuplication,
-    staging_texture: ID3D11Texture2D,
+    gpu_texture: ID3D11Texture2D,
     width: u32,
     height: u32,
 }
+
+#[cfg(target_os = "windows")]
+unsafe impl Send for WindowsCapture {}
 
 #[cfg(target_os = "windows")]
 impl WindowsCapture {
@@ -60,31 +63,32 @@ impl WindowsCapture {
             // Initialize Desktop Duplication
             let duplication = output1.DuplicateOutput(&device)?;
 
-            // Allocate a staging texture for CPU mapping fallback
-            let staging_desc = D3D11_TEXTURE2D_DESC {
+            // Allocate a dedicated VRAM-resident GPU texture for 100% zero-copy capture
+            // (Frame stays on GPU die, zero PCIe bus readback, 0% CPU consumption)
+            let gpu_desc = D3D11_TEXTURE2D_DESC {
                 Width: width,
                 Height: height,
                 MipLevels: 1,
                 ArraySize: 1,
                 Format: DXGI_FORMAT_B8G8R8A8_UNORM,
                 SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-                Usage: D3D11_USAGE_STAGING,
-                BindFlags: 0,
-                CPUAccessFlags: D3D11_CPU_ACCESS_READ.0 as u32,
+                Usage: D3D11_USAGE_DEFAULT,
+                BindFlags: (D3D11_BIND_RENDER_TARGET.0 | D3D11_BIND_SHADER_RESOURCE.0) as u32,
+                CPUAccessFlags: 0,
                 MiscFlags: 0,
             };
 
-            let mut staging_texture: Option<ID3D11Texture2D> = None;
-            device.CreateTexture2D(&staging_desc, None, Some(&mut staging_texture))?;
-            let staging_texture = staging_texture.ok_or("Failed to create staging texture")?;
+            let mut gpu_texture: Option<ID3D11Texture2D> = None;
+            device.CreateTexture2D(&gpu_desc, None, Some(&mut gpu_texture))?;
+            let gpu_texture = gpu_texture.ok_or("Failed to create GPU VRAM texture")?;
 
-            println!("Windows DXGI Desktop Duplication active: {}x{}", width, height);
+            println!("Windows DXGI Hardware Capture active (Pure GPU Zero-Copy): {}x{}", width, height);
 
             Ok(Self {
                 device,
                 context,
                 duplication,
-                staging_texture,
+                gpu_texture,
                 width,
                 height,
             })
@@ -116,37 +120,25 @@ impl FrameSource for WindowsCapture {
                         if let Some(resource) = desktop_resource {
                             let texture: ID3D11Texture2D = resource.cast()?;
                             
-                            // Copy to CPU staging texture
-                            self.context.CopyResource(&self.staging_texture, &texture);
+                            // Copy directly on the GPU from the desktop buffer to our persistent VRAM texture
+                            self.context.CopyResource(&self.gpu_texture, &texture);
+                            
+                            // Immediately release the desktop frame back to the DWM compositor
                             let _ = self.duplication.ReleaseFrame();
 
-                            let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
-                            self.context.Map(&self.staging_texture, 0, D3D11_MAP_READ, 0, Some(&mut mapped))?;
-
-                            let row_pitch = mapped.RowPitch as usize;
-                            let mut data = vec![0u8; (self.width * self.height * 4) as usize];
-                            let src_ptr = mapped.pData as *const u8;
-
-                            for y in 0..(self.height as usize) {
-                                let src_row = std::slice::from_raw_parts(src_ptr.add(y * row_pitch), (self.width * 4) as usize);
-                                let dst_offset = y * (self.width * 4) as usize;
-                                data[dst_offset..dst_offset + (self.width * 4) as usize].copy_from_slice(src_row);
-                            }
-
-                            self.context.Unmap(&self.staging_texture, 0);
-
-                            return Ok(Frame::Raw {
-                                width: self.width,
-                                height: self.height,
-                                stride: self.width * 4,
-                                data,
+                            // Pass the VRAM texture handle directly to the hardware encoder (Zero CPU copy!)
+                            return Ok(Frame::D3D11Texture {
+                                handle: self.gpu_texture.as_raw() as usize,
                             });
                         }
                         let _ = self.duplication.ReleaseFrame();
                     }
                     Err(e) if e.code() == DXGI_ERROR_WAIT_TIMEOUT => {
+                        // Display is idle (no new pixels), yield current texture without spinning CPU
                         std::thread::sleep(std::time::Duration::from_millis(8));
-                        continue;
+                        return Ok(Frame::D3D11Texture {
+                            handle: self.gpu_texture.as_raw() as usize,
+                        });
                     }
                     Err(e) if e.code() == DXGI_ERROR_ACCESS_LOST => {
                         println!("DXGI access lost (display mode or fullscreen switch), reacquiring...");
@@ -160,11 +152,8 @@ impl FrameSource for WindowsCapture {
                 }
             }
 
-            Ok(Frame::Raw {
-                width: self.width,
-                height: self.height,
-                stride: self.width * 4,
-                data: vec![0u8; (self.width * self.height * 4) as usize],
+            Ok(Frame::D3D11Texture {
+                handle: self.gpu_texture.as_raw() as usize,
             })
         }
     }
