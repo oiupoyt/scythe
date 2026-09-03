@@ -6,6 +6,13 @@ use crate::config::VrecConfig;
 use crate::settings_ui;
 
 pub fn show_notification_overlay() {
+    if std::env::var("WAYLAND_DISPLAY").is_err() && std::env::var("DISPLAY").is_err() {
+        return;
+    }
+    if gtk::init().is_err() {
+        return;
+    }
+
     let app = Application::builder()
         .application_id("com.vrec.notification")
         .build();
@@ -58,6 +65,15 @@ pub fn show_notification_overlay() {
 }
 
 pub fn show_menu_overlay() {
+    if std::env::var("WAYLAND_DISPLAY").is_err() && std::env::var("DISPLAY").is_err() {
+        eprintln!("Error: No display server detected (WAYLAND_DISPLAY and DISPLAY are unset).");
+        return;
+    }
+    if gtk::init().is_err() {
+        eprintln!("Error: Failed to connect to display server.");
+        return;
+    }
+
     let app = Application::builder()
         .application_id("com.vrec.menu")
         .build();

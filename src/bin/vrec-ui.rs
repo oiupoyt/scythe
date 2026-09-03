@@ -7,8 +7,9 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if args.len() > 1 {
         match args[1].as_str() {
             "--save" => {
+                let res = send_command(Command::SaveReplay);
                 vrec::overlay::show_notification_overlay();
-                return send_command(Command::SaveReplay);
+                return res;
             }
             "--menu" => {
                 vrec::overlay::show_menu_overlay();
