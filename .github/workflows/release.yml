@@ -118,10 +118,10 @@ jobs:
 
       - name: Build Release Binaries (Windows)
         shell: msys2 {0}
-        env:
-          LIBCLANG_PATH: /mingw64/bin
-          BINDGEN_EXTRA_CLANG_ARGS: "-I/mingw64/include"
         run: |
+          GCC_INC="$(gcc -print-file-name=include)"
+          export LIBCLANG_PATH="/mingw64/bin"
+          export BINDGEN_EXTRA_CLANG_ARGS="-I${GCC_INC} -I/mingw64/include"
           cargo build --release
 
       - name: Package Windows Zip

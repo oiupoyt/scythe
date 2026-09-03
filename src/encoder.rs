@@ -584,7 +584,7 @@ impl AudioEncoder {
                 self.swr_ctx,
                 (*out_frame).data.as_mut_ptr(),
                 nb_samples,
-                (*in_frame).data.as_ptr() as *const *const u8,
+                (*in_frame).data.as_ptr() as *mut _,
                 nb_samples
             );
             
