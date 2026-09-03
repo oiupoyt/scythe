@@ -10,7 +10,7 @@ fn send_with_notification(cmd: Command, success_msg: &str) -> Result<(), Box<dyn
             Ok(())
         }
         Err(e) => {
-            show_notification("⚠️ vrec-daemon is not running!");
+            show_notification("Error: vrec-daemon is not running");
             Err(e)
         }
     }
@@ -22,14 +22,14 @@ fn handle_toggle_recording() -> Result<(), Box<dyn std::error::Error + Send + Sy
     match send_command(Command::ToggleRecording) {
         Ok(()) => {
             if is_rec {
-                show_notification("⏹️ Recording Saved!");
+                show_notification("Recording saved");
             } else {
-                show_notification("🔴 Recording Started");
+                show_notification("Recording started");
             }
             Ok(())
         }
         Err(e) => {
-            show_notification("⚠️ vrec-daemon is not running!");
+            show_notification("Error: vrec-daemon is not running");
             Err(e)
         }
     }
@@ -40,7 +40,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if args.len() > 1 {
         match args[1].as_str() {
             "--save" => {
-                return send_with_notification(Command::SaveReplay, "💾 Replay Saved!");
+                return send_with_notification(Command::SaveReplay, "Replay saved");
             }
             "--menu" => {
                 show_menu_overlay();
@@ -50,10 +50,10 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 return handle_toggle_recording();
             }
             "--start" => {
-                return send_with_notification(Command::StartRecording, "🔴 Recording Started");
+                return send_with_notification(Command::StartRecording, "Recording started");
             }
             "--stop" => {
-                return send_with_notification(Command::StopRecording, "⏹️ Recording Saved!");
+                return send_with_notification(Command::StopRecording, "Recording saved");
             }
             "--reload" => {
                 return send_command(Command::ReloadConfig);
@@ -65,7 +65,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 println!("vrec-ui - UI Overlay and Hotkey listener for vrec");
                 println!("Usage:");
                 println!("  vrec-ui                Run global hotkey manager in background");
-                println!("  vrec-ui --menu         Open GPU Screen Recorder style menu overlay");
+                println!("  vrec-ui --menu         Open overlay menu");
                 println!("  vrec-ui --save         Save instant replay and show notification");
                 println!("  vrec-ui --record       Toggle normal recording on/off (with notification)");
                 println!("  vrec-ui --start        Start normal recording");
@@ -139,7 +139,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             && event.state == global_hotkey::HotKeyState::Pressed {
                 if event.id == save_hotkey.id() {
                     println!("Save replay hotkey pressed. Triggering SaveReplay...");
-                    let _ = send_with_notification(Command::SaveReplay, "💾 Replay Saved!");
+                    let _ = send_with_notification(Command::SaveReplay, "Replay saved");
                 } else if event.id == menu_hotkey.id() {
                     println!("Menu hotkey pressed. Opening Overlay Menu...");
                     show_menu_overlay();

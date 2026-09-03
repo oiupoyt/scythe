@@ -12,7 +12,7 @@ use crate::config::VrecConfig;
 use crate::ipc::{self, Command};
 
 pub fn show_notification_overlay() {
-    show_notification("💾 Replay Saved!");
+    show_notification("Replay saved");
 }
 
 pub fn show_notification(message: &str) {
@@ -170,14 +170,14 @@ pub fn show_menu_overlay() {
         let replay_card = Box::new(Orientation::Vertical, 8);
         replay_card.style_context().add_class("card-box");
         let replay_toggle_btn = Button::with_label(if config.replay_enabled {
-            "Instant Replay\n🟢 ACTIVE"
+            "Instant Replay\nEnabled"
         } else {
-            "Instant Replay\n⚪ OFF"
+            "Instant Replay\nDisabled"
         });
         replay_toggle_btn.set_size_request(170, 75);
         replay_toggle_btn.style_context().add_class("action-btn");
 
-        let replay_save_btn = Button::with_label("💾 Save Replay");
+        let replay_save_btn = Button::with_label("Save Replay");
         replay_save_btn.style_context().add_class("sub-btn");
         replay_card.pack_start(&replay_toggle_btn, true, true, 0);
         replay_card.pack_start(&replay_save_btn, false, false, 0);
@@ -185,7 +185,7 @@ pub fn show_menu_overlay() {
         // Card 2: Normal Recording
         let record_card = Box::new(Orientation::Vertical, 8);
         record_card.style_context().add_class("card-box");
-        let record_toggle_btn = Button::with_label("🔴 Record\nClick to Start");
+        let record_toggle_btn = Button::with_label("Record\nStart");
         record_toggle_btn.set_size_request(170, 75);
         record_toggle_btn.style_context().add_class("action-btn");
 
@@ -197,7 +197,7 @@ pub fn show_menu_overlay() {
         // Card 3: Microphone & Audio
         let audio_card = Box::new(Orientation::Vertical, 8);
         audio_card.style_context().add_class("card-box");
-        let mic_toggle_btn = Button::with_label("🎙️ Mic / Audio\n🟢 LIVE");
+        let mic_toggle_btn = Button::with_label("Microphone\nActive");
         mic_toggle_btn.set_size_request(170, 75);
         mic_toggle_btn.style_context().add_class("action-btn");
 
@@ -209,7 +209,7 @@ pub fn show_menu_overlay() {
         // Card 4: Settings
         let settings_card = Box::new(Orientation::Vertical, 8);
         settings_card.style_context().add_class("card-box");
-        let settings_open_btn = Button::with_label("⚙️ Settings\nPreferences");
+        let settings_open_btn = Button::with_label("Settings\nConfigure");
         settings_open_btn.set_size_request(170, 75);
         settings_open_btn.style_context().add_class("action-btn");
 
@@ -236,7 +236,7 @@ pub fn show_menu_overlay() {
         settings_page.set_margin_bottom(20);
 
         let settings_header = Box::new(Orientation::Horizontal, 12);
-        let back_btn = Button::with_label("⬅️ Back");
+        let back_btn = Button::with_label("Back");
         back_btn.style_context().add_class("sub-btn");
         let settings_title = Label::new(Some("Recorder Settings"));
         settings_title.style_context().add_class("hud-title");
@@ -346,7 +346,7 @@ pub fn show_menu_overlay() {
         settings_grid.attach(&menu_hk_lbl, 0, 9, 1, 1);
         settings_grid.attach(&menu_hk_entry, 1, 9, 1, 1);
 
-        let save_settings_btn = Button::with_label("💾 Apply & Save Settings");
+        let save_settings_btn = Button::with_label("Apply & Save");
         save_settings_btn.style_context().add_class("apply-btn");
 
         settings_page.pack_start(&settings_header, false, false, 0);
@@ -534,9 +534,9 @@ pub fn show_menu_overlay() {
             let _ = cfg.save();
             VrecConfig::notify_daemon_reload();
             if cfg.replay_enabled {
-                replay_lbl_btn.set_label("Instant Replay\n🟢 ACTIVE");
+                replay_lbl_btn.set_label("Instant Replay\nEnabled");
             } else {
-                replay_lbl_btn.set_label("Instant Replay\n⚪ OFF");
+                replay_lbl_btn.set_label("Instant Replay\nDisabled");
             }
         });
 
@@ -569,23 +569,23 @@ pub fn show_menu_overlay() {
                 if status.is_recording {
                     let mins = status.recording_duration_sec / 60;
                     let secs = status.recording_duration_sec % 60;
-                    rec_btn_sync.set_label(&format!("⏹️ Recording\n⏱️ {:02}:{:02}", mins, secs));
+                    rec_btn_sync.set_label(&format!("Recording\n{:02}:{:02}", mins, secs));
                     rec_btn_sync.style_context().add_class("recording-active");
                 } else {
-                    rec_btn_sync.set_label("🔴 Record\nClick to Start");
+                    rec_btn_sync.set_label("Record\nStart");
                     rec_btn_sync.style_context().remove_class("recording-active");
                 }
 
                 if status.audio_muted {
-                    mic_btn_sync.set_label("🔇 Mic / Audio\n⚪ MUTED");
+                    mic_btn_sync.set_label("Microphone\nMuted");
                 } else {
-                    mic_btn_sync.set_label("🎙️ Mic / Audio\n🟢 LIVE");
+                    mic_btn_sync.set_label("Microphone\nActive");
                 }
 
                 if status.is_replay_active {
-                    replay_btn_sync.set_label("Instant Replay\n🟢 ACTIVE");
+                    replay_btn_sync.set_label("Instant Replay\nEnabled");
                 } else {
-                    replay_btn_sync.set_label("Instant Replay\n⚪ OFF");
+                    replay_btn_sync.set_label("Instant Replay\nDisabled");
                 }
             }
             gtk::glib::ControlFlow::Continue
