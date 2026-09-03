@@ -319,10 +319,6 @@ pub fn show_menu_overlay() {
         dir_lbl.set_halign(gtk::Align::Start);
         let dir_entry = Entry::new();
         dir_entry.set_text(&config.output_directory);
-        let menu_hk_lbl = Label::new(Some("Menu Overlay Hotkey:"));
-        menu_hk_lbl.set_halign(gtk::Align::Start);
-        let menu_hk_entry = Entry::new();
-        menu_hk_entry.set_text(&config.menu_hotkey);
 
         let record_hk_lbl = Label::new(Some("Toggle Record Hotkey:"));
         record_hk_lbl.set_halign(gtk::Align::Start);
