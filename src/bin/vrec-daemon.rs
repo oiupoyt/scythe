@@ -1,5 +1,5 @@
 use vrec::capture::{Frame, FrameSource};
-use vrec::encoder::VaapiEncoder;
+use vrec::encoder::VideoEncoder;
 use vrec::ring::Packet;
 use vrec::muxer::Muxer;
 use vrec::ipc::{Command, DaemonStatus};
@@ -64,7 +64,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (cmd_tx, cmd_rx) = bounded::<Command>(10);
     let (mux_tx, mux_rx) = bounded::<Vec<Packet>>(1);
     let (audio_tx, audio_rx) = bounded::<Vec<f32>>(100);
-    let audio_info = vrec::capture::audio::AudioCapture::new(audio_tx).ok();
+    let initial_config = vrec::config::VrecConfig::load();
+    let audio_info = vrec::capture::audio::AudioCapture::new_with_device(audio_tx, Some(&initial_config.audio_device)).ok();
 
     let is_recording_state = Arc::new(AtomicBool::new(false));
     let record_start_state = Arc::new(AtomicU64::new(0));
@@ -99,7 +100,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut config = vrec::config::VrecConfig::load();
         replay_state_clone.store(config.replay_enabled, Ordering::SeqCst);
 
-        let mut encoder = VaapiEncoder::new_with_params(width, height, config.record_bitrate_kbps, config.fps)
+        let mut encoder = VideoEncoder::new_with_params(width, height, config.record_bitrate_kbps, config.fps)
             .expect("Failed to init encoder");
         let codec_ctx_ptr = encoder.codec_ctx() as usize;
         

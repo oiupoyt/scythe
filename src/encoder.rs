@@ -255,6 +255,200 @@ impl Drop for VaapiEncoder {
     }
 }
 
+#[cfg(target_os = "windows")]
+pub struct WindowsHwEncoder {
+    codec_ctx: *mut AVCodecContext,
+    encoder_name: String,
+    next_pts: i64,
+    sws_ctx: *mut SwsContext,
+    sw_frame: *mut AVFrame,
+}
+
+#[cfg(target_os = "windows")]
+impl WindowsHwEncoder {
+    pub fn new(width: u32, height: u32) -> Result<Self, String> {
+        Self::new_with_params(width, height, 20_000, 60)
+    }
+
+    pub fn new_with_params(width: u32, height: u32, bitrate_kbps: u32, fps: u32) -> Result<Self, String> {
+        let fps = fps.clamp(20, 144) as i32;
+        unsafe {
+            let candidates = [
+                (c"h264_nvenc", "NVIDIA NVENC Hardware Encoder"),
+                (c"h264_amf", "AMD AMF Hardware Encoder"),
+                (c"h264_qsv", "Intel QuickSync Hardware Encoder"),
+                (c"libx264", "Software CPU H.264 Encoder (Universal Fallback)"),
+            ];
+
+            let mut selected_codec: *const AVCodec = ptr::null();
+            let mut selected_desc = String::new();
+
+            for (name, desc) in candidates {
+                let c = avcodec_find_encoder_by_name(name.as_ptr());
+                if !c.is_null() {
+                    selected_codec = c;
+                    selected_desc = desc.to_string();
+                    println!("Auto-detected Windows encoder: {}", desc);
+                    break;
+                }
+            }
+
+            if selected_codec.is_null() {
+                return Err("No compatible H.264 video encoder found on this system".into());
+            }
+
+            let codec_ctx = avcodec_alloc_context3(selected_codec);
+            if codec_ctx.is_null() {
+                return Err("Failed to allocate codec context".into());
+            }
+
+            (*codec_ctx).width = width as i32;
+            (*codec_ctx).height = height as i32;
+            (*codec_ctx).time_base = AVRational { num: 1, den: fps };
+            (*codec_ctx).framerate = AVRational { num: fps, den: 1 };
+            (*codec_ctx).gop_size = fps;
+            (*codec_ctx).max_b_frames = 0;
+
+            let rate = (bitrate_kbps as i64) * 1000;
+            (*codec_ctx).bit_rate = rate;
+            (*codec_ctx).rc_max_rate = rate * 3 / 2;
+            (*codec_ctx).rc_buffer_size = (rate / 2) as i32;
+            (*codec_ctx).qmin = 16;
+            (*codec_ctx).qmax = 28;
+            (*codec_ctx).profile = FF_PROFILE_H264_HIGH;
+
+            if selected_desc.contains("NVENC") {
+                (*codec_ctx).pix_fmt = AVPixelFormat::AV_PIX_FMT_NV12;
+                let _ = av_opt_set((*codec_ctx).priv_data, c"preset".as_ptr(), c"p1".as_ptr(), 0);
+                let _ = av_opt_set((*codec_ctx).priv_data, c"tune".as_ptr(), c"ull".as_ptr(), 0);
+            } else if selected_desc.contains("AMF") {
+                (*codec_ctx).pix_fmt = AVPixelFormat::AV_PIX_FMT_NV12;
+                let _ = av_opt_set((*codec_ctx).priv_data, c"usage".as_ptr(), c"ultralowlatency".as_ptr(), 0);
+            } else if selected_desc.contains("QuickSync") {
+                (*codec_ctx).pix_fmt = AVPixelFormat::AV_PIX_FMT_NV12;
+                let _ = av_opt_set((*codec_ctx).priv_data, c"preset".as_ptr(), c"veryfast".as_ptr(), 0);
+            } else {
+                (*codec_ctx).pix_fmt = AVPixelFormat::AV_PIX_FMT_YUV420P;
+                let _ = av_opt_set((*codec_ctx).priv_data, c"preset".as_ptr(), c"ultrafast".as_ptr(), 0);
+                let _ = av_opt_set((*codec_ctx).priv_data, c"tune".as_ptr(), c"zerolatency".as_ptr(), 0);
+            }
+
+            let ret = avcodec_open2(codec_ctx, selected_codec, ptr::null_mut());
+            if ret < 0 {
+                avcodec_free_context(&mut (codec_ctx as *mut _));
+                return Err(format!("Failed to open Windows encoder: {}", ret));
+            }
+
+            let sw_frame = av_frame_alloc();
+            (*sw_frame).format = (*codec_ctx).pix_fmt as i32;
+            (*sw_frame).width = width as i32;
+            (*sw_frame).height = height as i32;
+            av_frame_get_buffer(sw_frame, 32);
+
+            let sws_ctx = sws_getContext(
+                width as i32,
+                height as i32,
+                AVPixelFormat::AV_PIX_FMT_BGRA,
+                width as i32,
+                height as i32,
+                (*codec_ctx).pix_fmt,
+                SWS_FAST_BILINEAR,
+                ptr::null_mut(),
+                ptr::null_mut(),
+                ptr::null(),
+            );
+
+            Ok(Self {
+                codec_ctx,
+                encoder_name: selected_desc,
+                next_pts: 0,
+                sws_ctx,
+                sw_frame,
+            })
+        }
+    }
+
+    pub fn codec_ctx(&self) -> *mut AVCodecContext {
+        self.codec_ctx
+    }
+
+    pub fn encode_frame(&mut self, frame: &Frame) -> Result<Vec<crate::ring::Packet>, String> {
+        let mut packets = Vec::new();
+        unsafe {
+            match frame {
+                Frame::Raw { width: _, height, stride, data } => {
+                    let src_data = [data.as_ptr(), ptr::null(), ptr::null(), ptr::null()];
+                    let src_linesize = [*stride as i32, 0, 0, 0];
+
+                    sws_scale(
+                        self.sws_ctx,
+                        src_data.as_ptr(),
+                        src_linesize.as_ptr(),
+                        0,
+                        *height as i32,
+                        (*self.sw_frame).data.as_mut_ptr(),
+                        (*self.sw_frame).linesize.as_mut_ptr(),
+                    );
+
+                    (*self.sw_frame).pts = self.next_pts;
+                    self.next_pts += 1;
+
+                    if avcodec_send_frame(self.codec_ctx, self.sw_frame) >= 0 {
+                        let mut pkt = av_packet_alloc();
+                        while avcodec_receive_packet(self.codec_ctx, pkt) >= 0 {
+                            let new_pkt = av_packet_alloc();
+                            av_packet_move_ref(new_pkt, pkt);
+                            packets.push(crate::ring::Packet::new(new_pkt));
+                        }
+                        av_packet_free(&mut pkt);
+                    }
+                }
+                #[cfg(target_os = "windows")]
+                Frame::D3D11Texture { handle: _ } => {
+                    // Zero-copy D3D11 frame submission
+                    (*self.sw_frame).pts = self.next_pts;
+                    self.next_pts += 1;
+
+                    if avcodec_send_frame(self.codec_ctx, self.sw_frame) >= 0 {
+                        let mut pkt = av_packet_alloc();
+                        while avcodec_receive_packet(self.codec_ctx, pkt) >= 0 {
+                            let new_pkt = av_packet_alloc();
+                            av_packet_move_ref(new_pkt, pkt);
+                            packets.push(crate::ring::Packet::new(new_pkt));
+                        }
+                        av_packet_free(&mut pkt);
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(packets)
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for WindowsHwEncoder {
+    fn drop(&mut self) {
+        unsafe {
+            if !self.sws_ctx.is_null() {
+                sws_freeContext(self.sws_ctx);
+                self.sws_ctx = ptr::null_mut();
+            }
+            if !self.sw_frame.is_null() {
+                av_frame_free(&mut self.sw_frame);
+            }
+            if !self.codec_ctx.is_null() {
+                avcodec_free_context(&mut self.codec_ctx);
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub type VideoEncoder = VaapiEncoder;
+#[cfg(target_os = "windows")]
+pub type VideoEncoder = WindowsHwEncoder;
+
 pub struct AudioEncoder {
     codec_ctx: *mut AVCodecContext,
     swr_ctx: *mut SwrContext,
