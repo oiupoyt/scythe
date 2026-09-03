@@ -38,7 +38,7 @@ impl WindowsCapture {
             D3D11CreateDevice(
                 None,
                 D3D_DRIVER_TYPE_HARDWARE,
-                None,
+                HMODULE(std::ptr::null_mut()),
                 D3D11_CREATE_DEVICE_BGRA_SUPPORT,
                 Some(&[D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0]),
                 D3D11_SDK_VERSION,
@@ -56,7 +56,8 @@ impl WindowsCapture {
             let output = adapter.EnumOutputs(0)?;
             let output1: IDXGIOutput1 = output.cast()?;
 
-            let desc = output.GetDesc()?;
+            let mut desc = DXGI_OUTPUT_DESC::default();
+            output.GetDesc(&mut desc)?;
             let width = (desc.DesktopCoordinates.right - desc.DesktopCoordinates.left) as u32;
             let height = (desc.DesktopCoordinates.bottom - desc.DesktopCoordinates.top) as u32;
 

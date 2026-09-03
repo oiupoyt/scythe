@@ -384,10 +384,10 @@ impl WindowsHwEncoder {
                 width as i32,
                 height as i32,
                 (*codec_ctx).pix_fmt,
-                SWS_FAST_BILINEAR,
+                2,
                 ptr::null_mut(),
                 ptr::null_mut(),
-                ptr::null(),
+                ptr::null_mut(),
             );
 
             Ok(Self {
