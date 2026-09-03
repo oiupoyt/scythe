@@ -2,14 +2,16 @@ use vrec::capture::{Frame, FrameSource};
 use vrec::encoder::VaapiEncoder;
 use vrec::ring::Packet;
 use vrec::muxer::Muxer;
-use vrec::ipc::Command;
+use vrec::ipc::{Command, DaemonStatus};
 use ringbuf::HeapRb;
 use ringbuf::traits::{RingBuffer, Consumer, Observer};
 use crossbeam_channel::bounded;
 use std::thread;
 use std::env;
 use std::os::unix::net::UnixListener;
-use std::io::Read;
+use std::io::{Read, Write};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -40,7 +42,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (mux_tx, mux_rx) = bounded::<Vec<Packet>>(1);
     let (audio_tx, audio_rx) = bounded::<Vec<f32>>(100);
     let audio_info = vrec::capture::audio::AudioCapture::new(audio_tx).ok();
-    
+
+    let is_recording_state = Arc::new(AtomicBool::new(false));
+    let record_start_state = Arc::new(AtomicU64::new(0));
+    let replay_enabled_state = Arc::new(AtomicBool::new(true));
+    let audio_muted_state = Arc::new(AtomicBool::new(false));
+
     let _ = frame_tx.send(first_frame);
 
     let capture_tx = frame_tx.clone();
@@ -60,8 +67,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
     });
 
+    let rec_state_clone = Arc::clone(&is_recording_state);
+    let rec_start_clone = Arc::clone(&record_start_state);
+    let replay_state_clone = Arc::clone(&replay_enabled_state);
+    let audio_muted_clone = Arc::clone(&audio_muted_state);
+
     thread::spawn(move || {
         let mut config = vrec::config::VrecConfig::load();
+        replay_state_clone.store(config.replay_enabled, Ordering::SeqCst);
+
         let mut encoder = VaapiEncoder::new_with_bitrate(width, height, config.record_bitrate_kbps)
             .expect("Failed to init encoder");
         let codec_ctx_ptr = encoder.codec_ctx() as usize;
@@ -111,6 +125,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 match cmd {
                     Command::ReloadConfig => {
                         config = vrec::config::VrecConfig::load();
+                        replay_state_clone.store(config.replay_enabled, Ordering::SeqCst);
                         println!("Daemon config reloaded!");
                         let new_capacity = (config.replay_duration_sec * 120).max(120) as usize;
                         if ring.capacity().get() != new_capacity {
@@ -128,6 +143,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         if !normal_recording {
                             normal_recording = true;
                             normal_waiting_keyframe = true;
+                            rec_state_clone.store(true, Ordering::SeqCst);
+                            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+                            rec_start_clone.store(now, Ordering::SeqCst);
                             println!("StartRecording requested, waiting for keyframe...");
                         }
                     },
@@ -138,6 +156,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         }
                         normal_recording = false;
                         normal_waiting_keyframe = false;
+                        rec_state_clone.store(false, Ordering::SeqCst);
+                        rec_start_clone.store(0, Ordering::SeqCst);
                     },
                     Command::ToggleRecording => {
                         if normal_recording {
@@ -147,17 +167,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                             }
                             normal_recording = false;
                             normal_waiting_keyframe = false;
+                            rec_state_clone.store(false, Ordering::SeqCst);
+                            rec_start_clone.store(0, Ordering::SeqCst);
                         } else {
                             normal_recording = true;
                             normal_waiting_keyframe = true;
+                            rec_state_clone.store(true, Ordering::SeqCst);
+                            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+                            rec_start_clone.store(now, Ordering::SeqCst);
                             println!("ToggleRecording: StartRecording requested, waiting for keyframe...");
                         }
+                    },
+                    Command::ToggleAudio => {
+                        let cur = audio_muted_clone.load(Ordering::SeqCst);
+                        audio_muted_clone.store(!cur, Ordering::SeqCst);
+                        println!("Audio mute toggled: {}", !cur);
                     },
                     _ => {}
                 }
             }
 
-            while let Ok(audio_chunk) = audio_rx.try_recv() {
+            while let Ok(mut audio_chunk) = audio_rx.try_recv() {
+                if audio_muted_clone.load(Ordering::Relaxed) {
+                    for sample in audio_chunk.iter_mut() {
+                        *sample = 0.0;
+                    }
+                }
                 if let Some(enc) = audio_encoder.as_mut()
                     && let Ok(audio_packets) = enc.encode_pcm(&audio_chunk) {
                         for mut pkt in audio_packets {
@@ -215,6 +250,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     if stream.read_exact(&mut payload).is_ok()
                         && let Ok(cmd) = serde_json::from_slice::<Command>(&payload) {
                             match cmd {
+                                Command::GetStatus => {
+                                    let rec = is_recording_state.load(Ordering::SeqCst);
+                                    let start_ts = record_start_state.load(Ordering::SeqCst);
+                                    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+                                    let duration = if rec && start_ts > 0 {
+                                        now.saturating_sub(start_ts)
+                                    } else {
+                                        0
+                                    };
+                                    let status = DaemonStatus {
+                                        is_recording: rec,
+                                        recording_duration_sec: duration,
+                                        is_replay_active: replay_enabled_state.load(Ordering::SeqCst),
+                                        audio_muted: audio_muted_state.load(Ordering::SeqCst),
+                                    };
+                                    if let Ok(resp) = serde_json::to_vec(&status) {
+                                        let len_resp = (resp.len() as u32).to_le_bytes();
+                                        let _ = stream.write_all(&len_resp);
+                                        let _ = stream.write_all(&resp);
+                                    }
+                                },
                                 Command::StopDaemon => {
                                     break;
                                 },
