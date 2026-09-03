@@ -3,6 +3,7 @@ use gtk::{
     Application, ApplicationWindow, Box, Button, ComboBoxText, CssProvider, Entry, Label,
     Orientation, Stack, StackTransitionType, StyleContext, Switch,
 };
+#[cfg(target_os = "linux")]
 use gtk_layer_shell::{Layer, LayerShell};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -11,6 +12,7 @@ use crate::config::VrecConfig;
 use crate::ipc::{self, Command};
 
 pub fn show_notification_overlay() {
+    #[cfg(unix)]
     if std::env::var("WAYLAND_DISPLAY").is_err() && std::env::var("DISPLAY").is_err() {
         return;
     }
@@ -29,11 +31,22 @@ pub fn show_notification_overlay() {
             .default_height(70)
             .build();
 
-        window.init_layer_shell();
-        window.set_layer(Layer::Overlay);
-        window.set_namespace("vrec-notification");
-        window.set_layer_shell_margin(gtk_layer_shell::Edge::Top, 30);
-        window.set_anchor(gtk_layer_shell::Edge::Top, true);
+        #[cfg(target_os = "linux")]
+        {
+            window.init_layer_shell();
+            window.set_layer(Layer::Overlay);
+            window.set_namespace("vrec-notification");
+            window.set_layer_shell_margin(gtk_layer_shell::Edge::Top, 30);
+            window.set_anchor(gtk_layer_shell::Edge::Top, true);
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            window.set_decorated(false);
+            window.set_keep_above(true);
+            window.set_skip_taskbar_hint(true);
+            window.set_position(gtk::WindowPosition::Center);
+        }
 
         let css_provider = CssProvider::new();
         let css = r#"
@@ -74,6 +87,7 @@ pub fn show_notification_overlay() {
 }
 
 pub fn show_menu_overlay() {
+    #[cfg(unix)]
     if std::env::var("WAYLAND_DISPLAY").is_err() && std::env::var("DISPLAY").is_err() {
         eprintln!("Error: No display server detected (WAYLAND_DISPLAY and DISPLAY are unset).");
         return;
@@ -96,12 +110,23 @@ pub fn show_menu_overlay() {
             .default_height(220)
             .build();
 
-        window.init_layer_shell();
-        window.set_layer(Layer::Overlay);
-        window.set_namespace("vrec-hud");
-        window.set_keyboard_interactivity(true);
-        window.set_layer_shell_margin(gtk_layer_shell::Edge::Top, 70);
-        window.set_anchor(gtk_layer_shell::Edge::Top, true);
+        #[cfg(target_os = "linux")]
+        {
+            window.init_layer_shell();
+            window.set_layer(Layer::Overlay);
+            window.set_namespace("vrec-hud");
+            window.set_keyboard_interactivity(true);
+            window.set_layer_shell_margin(gtk_layer_shell::Edge::Top, 70);
+            window.set_anchor(gtk_layer_shell::Edge::Top, true);
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            window.set_decorated(false);
+            window.set_keep_above(true);
+            window.set_skip_taskbar_hint(true);
+            window.set_position(gtk::WindowPosition::Center);
+        }
 
         // Main Stack (Allows toggling between HUD cards and Inline Settings with NO extra windows!)
         let stack = Stack::new();

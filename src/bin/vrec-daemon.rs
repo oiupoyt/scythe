@@ -8,7 +8,6 @@ use ringbuf::traits::{RingBuffer, Consumer, Observer};
 use crossbeam_channel::bounded;
 use std::thread;
 use std::env;
-use std::os::unix::net::UnixListener;
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -21,12 +20,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut source: Box<dyn FrameSource> = if std::env::args().any(|a| a == "--mock") {
         println!("Initializing MOCK capture...");
         Box::new(vrec::capture::mock::MockCapture::new())
+    } else if cfg!(target_os = "windows") {
+        #[cfg(target_os = "windows")]
+        {
+            println!("Initializing Windows DXGI capture...");
+            Box::new(vrec::capture::windows::WindowsCapture::new()?)
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            unreachable!()
+        }
     } else if session_type.to_lowercase() == "wayland" {
-        println!("Initializing Wayland capture...");
-        Box::new(vrec::capture::wayland::WaylandCapture::new().await?)
+        #[cfg(target_os = "linux")]
+        {
+            println!("Initializing Wayland capture...");
+            Box::new(vrec::capture::wayland::WaylandCapture::new().await?)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            unreachable!()
+        }
     } else {
-        println!("Initializing X11 capture...");
-        Box::new(vrec::capture::x11::X11Capture::new()?)
+        #[cfg(target_os = "linux")]
+        {
+            println!("Initializing X11 capture...");
+            Box::new(vrec::capture::x11::X11Capture::new()?)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            unreachable!()
+        }
     };
 
     let first_frame = source.next_frame()?;
@@ -235,10 +258,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
     });
 
-    let socket_path = format!("{}/vrec.sock", env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string()));
-    let _ = std::fs::remove_file(&socket_path); 
-    let listener = UnixListener::bind(&socket_path)?;
-    println!("Daemon listening on IPC socket: {}", socket_path);
+    #[cfg(unix)]
+    let listener = {
+        let socket_path = format!("{}/vrec.sock", env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string()));
+        let _ = std::fs::remove_file(&socket_path); 
+        let l = std::os::unix::net::UnixListener::bind(&socket_path)?;
+        println!("Daemon listening on IPC socket: {}", socket_path);
+        l
+    };
+
+    #[cfg(windows)]
+    let listener = {
+        let l = std::net::TcpListener::bind("127.0.0.1:42069")?;
+        println!("Daemon listening on TCP IPC: 127.0.0.1:42069");
+        l
+    };
 
     for stream in listener.incoming() {
         match stream {

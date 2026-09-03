@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=vrec Screen Recorder
+GenericName=Screen Recorder & Instant Replay
+Comment=High-performance GPU hardware screen recorder and instant replay overlay
+Exec=vrec-ui --menu
+Icon=media-record
+Terminal=false
+Categories=AudioVideo;Recorder;
+Keywords=screen;recorder;replay;capture;game;shadowplay;
+StartupNotify=false
+EOF
