@@ -277,6 +277,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         l
     };
 
+    let cmd_tx_sig = cmd_tx.clone();
+    tokio::spawn(async move {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            println!("\nReceived shutdown signal. Finalizing recordings...");
+            let _ = cmd_tx_sig.send(Command::StopRecording);
+            tokio::time::sleep(std::time::Duration::from_millis(350)).await;
+            let _ = vrec::ipc::send_command(Command::StopDaemon);
+        }
+    });
+
     for stream in listener.incoming() {
         match stream {
             Ok(mut stream) => {
@@ -309,6 +319,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                     }
                                 },
                                 Command::StopDaemon => {
+                                    println!("StopDaemon requested: Finalizing active recordings...");
+                                    let _ = cmd_tx.send(Command::StopRecording);
+                                    std::thread::sleep(std::time::Duration::from_millis(350));
                                     break;
                                 },
                                 other => {

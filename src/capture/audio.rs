@@ -16,7 +16,10 @@ pub fn list_input_devices() -> Vec<String> {
     let mut names = Vec::new();
     if let Ok(devices) = host.input_devices() {
         for dev in devices {
-            names.push(get_device_name(&dev));
+            let name = get_device_name(&dev);
+            if !names.contains(&name) {
+                names.push(name);
+            }
         }
     }
     names
@@ -43,7 +46,17 @@ impl AudioCapture {
                     host.default_input_device().ok_or("No audio input device available")?
                 }
             } else {
-                host.default_input_device().ok_or("No audio input device available")?
+                // When default is selected, prefer desktop audio monitor if available so gameplay sound is recorded
+                if let Ok(mut devs) = host.input_devices() {
+                    devs.find(|d| {
+                        let n = get_device_name(d).to_lowercase();
+                        n.contains("monitor")
+                    })
+                    .or_else(|| host.default_input_device())
+                    .ok_or("No audio input device available")?
+                } else {
+                    host.default_input_device().ok_or("No audio input device available")?
+                }
             };
         
         let dev_name = get_device_name(&device);

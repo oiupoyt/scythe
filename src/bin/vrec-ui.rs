@@ -1,4 +1,5 @@
-use vrec::ipc::{Command, send_command};
+use vrec::ipc::{Command, send_command, query_status};
+use vrec::overlay::{show_menu_overlay, show_notification};
 use std::env;
 use global_hotkey::{GlobalHotKeyManager, hotkey::{HotKey, Modifiers, Code}, GlobalHotKeyEvent};
 
@@ -8,21 +9,33 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         match args[1].as_str() {
             "--save" => {
                 let res = send_command(Command::SaveReplay);
-                vrec::overlay::show_notification_overlay();
+                show_notification("💾 Replay Saved!");
                 return res;
             }
             "--menu" => {
-                vrec::overlay::show_menu_overlay();
+                show_menu_overlay();
                 return Ok(());
             }
             "--record" | "--toggle" => {
-                return send_command(Command::ToggleRecording);
+                let status = query_status().ok();
+                let is_rec = status.as_ref().map(|s| s.is_recording).unwrap_or(false);
+                let res = send_command(Command::ToggleRecording);
+                if is_rec {
+                    show_notification("⏹️ Recording Saved!");
+                } else {
+                    show_notification("🔴 Recording Started");
+                }
+                return res;
             }
             "--start" => {
-                return send_command(Command::StartRecording);
+                let res = send_command(Command::StartRecording);
+                show_notification("🔴 Recording Started");
+                return res;
             }
             "--stop" => {
-                return send_command(Command::StopRecording);
+                let res = send_command(Command::StopRecording);
+                show_notification("⏹️ Recording Saved!");
+                return res;
             }
             "--reload" => {
                 return send_command(Command::ReloadConfig);
@@ -36,7 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 println!("  vrec-ui                Run global hotkey manager in background");
                 println!("  vrec-ui --menu         Open GPU Screen Recorder style menu overlay");
                 println!("  vrec-ui --save         Save instant replay and show notification");
-                println!("  vrec-ui --record       Toggle normal recording on/off");
+                println!("  vrec-ui --record       Toggle normal recording on/off (with notification)");
                 println!("  vrec-ui --start        Start normal recording");
                 println!("  vrec-ui --stop         Stop normal recording");
                 println!("  vrec-ui --reload       Reload daemon configuration");
@@ -73,6 +86,8 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .unwrap_or_else(|| HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyR));
     let menu_hotkey = vrec::hotkey::parse_hotkey(&config.menu_hotkey)
         .unwrap_or_else(|| HotKey::new(Some(Modifiers::ALT), Code::KeyZ));
+    let record_hotkey = vrec::hotkey::parse_hotkey(&config.record_hotkey)
+        .unwrap_or_else(|| HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::F9));
     
     let mut registered_count = 0;
     if let Err(e) = manager.register(save_hotkey) {
@@ -89,8 +104,15 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         registered_count += 1;
     }
 
+    if let Err(e) = manager.register(record_hotkey) {
+        eprintln!("Warning: Failed to register record hotkey ({}): {}", config.record_hotkey, e);
+    } else {
+        println!("Registered toggle recording hotkey: {}", config.record_hotkey);
+        registered_count += 1;
+    }
+
     if registered_count == 0 {
-        eprintln!("Note: Running without global hotkeys. You can bind `vrec-ui --menu` and `vrec-ui --save` to compositor shortcuts.");
+        eprintln!("Note: Running without global hotkeys. You can bind `vrec-ui --menu`, `vrec-ui --record`, and `vrec-ui --save` to compositor shortcuts.");
     }
 
     let receiver = GlobalHotKeyEvent::receiver();
@@ -99,11 +121,21 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             && event.state == global_hotkey::HotKeyState::Pressed {
                 if event.id == save_hotkey.id() {
                     println!("Save replay hotkey pressed. Triggering SaveReplay...");
-                    vrec::overlay::show_notification_overlay();
                     let _ = send_command(Command::SaveReplay);
+                    show_notification("💾 Replay Saved!");
                 } else if event.id == menu_hotkey.id() {
                     println!("Menu hotkey pressed. Opening Overlay Menu...");
-                    vrec::overlay::show_menu_overlay();
+                    show_menu_overlay();
+                } else if event.id == record_hotkey.id() {
+                    println!("Record hotkey pressed. Toggling Recording...");
+                    let status = query_status().ok();
+                    let is_rec = status.as_ref().map(|s| s.is_recording).unwrap_or(false);
+                    let _ = send_command(Command::ToggleRecording);
+                    if is_rec {
+                        show_notification("⏹️ Recording Saved!");
+                    } else {
+                        show_notification("🔴 Recording Started");
+                    }
                 }
             }
     }

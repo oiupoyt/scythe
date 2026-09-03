@@ -73,16 +73,28 @@ impl PipeWireStream {
                             if datas.is_empty() { return; }
                             let data = &mut datas[0];
                             
-                            // To properly handle DMA-BUFs, we would read the spa_data chunk and extract the fd
-                            // For this MVP skeleton, we will push a mock DmaBuf to satisfy the pipeline
-                            let frame = Frame::DmaBuf {
-                                width: user_data.format.size().width,
-                                height: user_data.format.size().height,
-                                format: 0x34325241, // DRM_FORMAT_ARGB8888
-                                modifier: user_data.format.modifier(), 
-                                fd: data.fd(),
-                                stride: data.chunk().stride() as u32,
-                                offset: data.chunk().offset(),
+                            let fd = data.fd();
+                            let stride = data.chunk().stride() as u32;
+                            let offset = data.chunk().offset();
+                            let frame = if fd > 0 {
+                                Frame::DmaBuf {
+                                    width: user_data.format.size().width,
+                                    height: user_data.format.size().height,
+                                    format: 0x34325241, // DRM_FORMAT_ARGB8888
+                                    modifier: user_data.format.modifier(), 
+                                    fd,
+                                    stride,
+                                    offset,
+                                }
+                            } else if let Some(slice) = data.data() {
+                                Frame::Raw {
+                                    width: user_data.format.size().width,
+                                    height: user_data.format.size().height,
+                                    stride,
+                                    data: slice.to_vec(),
+                                }
+                            } else {
+                                return;
                             };
                             let _ = user_data.tx.try_send(frame);
                         }

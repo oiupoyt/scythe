@@ -20,6 +20,7 @@ pub struct VrecConfig {
     pub ui_color_theme: String,
     pub save_hotkey: String,
     pub menu_hotkey: String,
+    pub record_hotkey: String,
 }
 
 impl Default for VrecConfig {
@@ -41,6 +42,7 @@ impl Default for VrecConfig {
             ui_color_theme: "dark".to_string(),
             save_hotkey: "Ctrl+Shift+R".to_string(),
             menu_hotkey: "Alt+Z".to_string(),
+            record_hotkey: "Ctrl+Shift+F9".to_string(),
         }
     }
 }

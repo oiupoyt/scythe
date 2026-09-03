@@ -12,6 +12,10 @@ use crate::config::VrecConfig;
 use crate::ipc::{self, Command};
 
 pub fn show_notification_overlay() {
+    show_notification("💾 Replay Saved!");
+}
+
+pub fn show_notification(message: &str) {
     #[cfg(unix)]
     if std::env::var("WAYLAND_DISPLAY").is_err() && std::env::var("DISPLAY").is_err() {
         return;
@@ -24,10 +28,11 @@ pub fn show_notification_overlay() {
         .application_id("com.vrec.notification")
         .build();
 
-    app.connect_activate(|app| {
+    let msg_text = message.to_string();
+    app.connect_activate(move |app| {
         let window = ApplicationWindow::builder()
             .application(app)
-            .default_width(320)
+            .default_width(340)
             .default_height(70)
             .build();
 
@@ -36,7 +41,7 @@ pub fn show_notification_overlay() {
             window.init_layer_shell();
             window.set_layer(Layer::Overlay);
             window.set_namespace("vrec-notification");
-            window.set_layer_shell_margin(gtk_layer_shell::Edge::Top, 30);
+            window.set_layer_shell_margin(gtk_layer_shell::Edge::Top, 35);
             window.set_anchor(gtk_layer_shell::Edge::Top, true);
         }
 
@@ -51,16 +56,16 @@ pub fn show_notification_overlay() {
         let css_provider = CssProvider::new();
         let css = r#"
             window {
-                background-color: rgba(18, 18, 22, 0.94);
+                background-color: rgba(18, 20, 26, 0.95);
                 border-radius: 16px;
-                border: 1px solid rgba(255, 255, 255, 0.15);
-                box-shadow: 0px 8px 24px rgba(0, 0, 0, 0.6);
+                border: 1px solid rgba(255, 255, 255, 0.18);
+                box-shadow: 0px 8px 30px rgba(0, 0, 0, 0.7);
             }
             label {
                 color: #ffffff;
-                font-weight: bold;
-                font-size: 17px;
-                padding: 12px 24px;
+                font-weight: 800;
+                font-size: 16px;
+                padding: 12px 28px;
             }
         "#;
         let _ = css_provider.load_from_data(css.as_bytes());
@@ -72,12 +77,12 @@ pub fn show_notification_overlay() {
             );
         }
 
-        let label = Label::new(Some("✅ Replay Saved!"));
+        let label = Label::new(Some(&msg_text));
         window.add(&label);
         window.show_all();
 
         let window_clone = window.clone();
-        gtk::glib::timeout_add_local(Duration::from_secs(2), move || {
+        gtk::glib::timeout_add_local(Duration::from_millis(2200), move || {
             window_clone.close();
             gtk::glib::ControlFlow::Break
         });
@@ -107,7 +112,7 @@ pub fn show_menu_overlay() {
         let window = ApplicationWindow::builder()
             .application(app)
             .default_width(860)
-            .default_height(430)
+            .default_height(470)
             .build();
 
         #[cfg(target_os = "linux")]
@@ -314,6 +319,15 @@ pub fn show_menu_overlay() {
         dir_lbl.set_halign(gtk::Align::Start);
         let dir_entry = Entry::new();
         dir_entry.set_text(&config.output_directory);
+        let menu_hk_lbl = Label::new(Some("Menu Overlay Hotkey:"));
+        menu_hk_lbl.set_halign(gtk::Align::Start);
+        let menu_hk_entry = Entry::new();
+        menu_hk_entry.set_text(&config.menu_hotkey);
+
+        let record_hk_lbl = Label::new(Some("Toggle Record Hotkey:"));
+        record_hk_lbl.set_halign(gtk::Align::Start);
+        let record_hk_entry = Entry::new();
+        record_hk_entry.set_text(&config.record_hotkey);
 
         settings_grid.attach(&dur_lbl, 0, 0, 1, 1);
         settings_grid.attach(&dur_combo, 1, 0, 1, 1);
@@ -331,8 +345,10 @@ pub fn show_menu_overlay() {
         settings_grid.attach(&auto_switch, 1, 6, 1, 1);
         settings_grid.attach(&save_hk_lbl, 0, 7, 1, 1);
         settings_grid.attach(&save_hk_entry, 1, 7, 1, 1);
-        settings_grid.attach(&menu_hk_lbl, 0, 8, 1, 1);
-        settings_grid.attach(&menu_hk_entry, 1, 8, 1, 1);
+        settings_grid.attach(&record_hk_lbl, 0, 8, 1, 1);
+        settings_grid.attach(&record_hk_entry, 1, 8, 1, 1);
+        settings_grid.attach(&menu_hk_lbl, 0, 9, 1, 1);
+        settings_grid.attach(&menu_hk_entry, 1, 9, 1, 1);
 
         let save_settings_btn = Button::with_label("💾 Apply & Save Settings");
         save_settings_btn.style_context().add_class("apply-btn");
@@ -508,6 +524,7 @@ pub fn show_menu_overlay() {
             cfg.autostart = auto_switch.is_active();
             cfg.save_hotkey = save_hk_entry.text().to_string();
             cfg.menu_hotkey = menu_hk_entry.text().to_string();
+            cfg.record_hotkey = record_hk_entry.text().to_string();
             let _ = cfg.save();
             VrecConfig::notify_daemon_reload();
             stack_after_save.set_visible_child_name("hud");

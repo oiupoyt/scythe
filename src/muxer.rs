@@ -68,7 +68,10 @@ impl Muxer {
                 }
             }
 
-            let ret = avformat_write_header(fmt_ctx, std::ptr::null_mut());
+            let mut opts: *mut AVDictionary = std::ptr::null_mut();
+            av_dict_set(&mut opts, c"movflags".as_ptr(), c"+faststart".as_ptr(), 0);
+            let ret = avformat_write_header(fmt_ctx, &mut opts);
+            av_dict_free(&mut opts);
             if ret < 0 {
                 if ((*(*fmt_ctx).oformat).flags & AVFMT_NOFILE) == 0 {
                     avio_closep(&mut (*fmt_ctx).pb);
