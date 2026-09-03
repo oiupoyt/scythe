@@ -108,20 +108,17 @@ jobs:
         with:
           msystem: MINGW64
           update: true
+          path-type: minimal
           install: >-
             mingw-w64-x86_64-toolchain
             mingw-w64-x86_64-rust
             mingw-w64-x86_64-gtk3
             mingw-w64-x86_64-ffmpeg
             mingw-w64-x86_64-pkg-config
-            mingw-w64-x86_64-clang
 
       - name: Build Release Binaries (Windows)
         shell: msys2 {0}
         run: |
-          GCC_INC="$(gcc -print-file-name=include)"
-          export LIBCLANG_PATH="/mingw64/bin"
-          export BINDGEN_EXTRA_CLANG_ARGS="-I${GCC_INC} -I/mingw64/include"
           cargo build --release
 
       - name: Package Windows Zip
@@ -141,7 +138,7 @@ jobs:
   publish-release:
     name: Publish GitHub Release
     needs: [build-linux, build-windows]
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    if: always() && !cancelled() && (needs.build-linux.result == 'success' || needs.build-windows.result == 'success')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -149,6 +146,7 @@ jobs:
 
       - name: Download all built artifacts
         uses: actions/download-artifact@v4
+        continue-on-error: true
         with:
           path: artifacts
 
