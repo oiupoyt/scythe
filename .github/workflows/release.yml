@@ -85,11 +85,6 @@ jobs:
           chmod +x appimagetool
           ./appimagetool --appimage-extract-and-run AppDir dist/vrec-x86_64.AppImage || true
 
-      - name: Copy Packaging Blueprints
-        run: |
-          cp packaging/aur/PKGBUILD dist/ 2>/dev/null || true
-          cp packaging/flatpak/com.vrec.Vrec.yaml dist/ 2>/dev/null || true
-
       - name: Upload Linux Artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -115,9 +110,13 @@ jobs:
             mingw-w64-x86_64-gtk3
             mingw-w64-x86_64-ffmpeg
             mingw-w64-x86_64-pkg-config
+            mingw-w64-x86_64-clang
 
       - name: Build Release Binaries (Windows)
         shell: msys2 {0}
+        env:
+          LIBCLANG_PATH: /mingw64/bin
+          BINDGEN_EXTRA_CLANG_ARGS: "--target=x86_64-w64-windows-gnu"
         run: |
           cargo build --release
 
