@@ -183,72 +183,81 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             }
         });
 
-        while let Ok(frame) = frame_rx.recv() {
-            while let Ok(cmd) = cmd_rx.try_recv() {
-                match cmd {
-                    Command::ReloadConfig => {
-                        config = vrec::config::VrecConfig::load();
-                        replay_state_clone.store(config.replay_enabled, Ordering::SeqCst);
-                        println!("Daemon config reloaded!");
-                        let new_capacity = (config.replay_duration_sec * 120).max(120) as usize;
-                        if ring.capacity().get() != new_capacity {
-                            ring = HeapRb::<Packet>::new(new_capacity);
-                            println!("Replay buffer resized to {} packets.", new_capacity);
+        loop {
+            crossbeam_channel::select! {
+                recv(cmd_rx) -> cmd_res => {
+                    if let Ok(cmd) = cmd_res {
+                        match cmd {
+                            Command::ReloadConfig => {
+                                config = vrec::config::VrecConfig::load();
+                                replay_state_clone.store(config.replay_enabled, Ordering::SeqCst);
+                                println!("Daemon config reloaded!");
+                                let new_capacity = (config.replay_duration_sec * 120).max(120) as usize;
+                                if ring.capacity().get() != new_capacity {
+                                    ring = HeapRb::<Packet>::new(new_capacity);
+                                    println!("Replay buffer resized to {} packets.", new_capacity);
+                                }
+                            },
+                            Command::SaveReplay => {
+                                if config.replay_enabled {
+                                    let drain = ring.iter().cloned().collect::<Vec<_>>();
+                                    println!("SaveReplay triggered: {} packets in ring buffer", drain.len());
+                                    let _ = mux_tx.try_send(drain);
+                                }
+                            },
+                            Command::StartRecording => {
+                                if !normal_recording {
+                                    normal_recording = true;
+                                    normal_waiting_keyframe = true;
+                                    rec_state_clone.store(true, Ordering::SeqCst);
+                                    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+                                    rec_start_clone.store(now, Ordering::SeqCst);
+                                    println!("StartRecording requested, waiting for keyframe...");
+                                }
+                            },
+                            Command::StopRecording => {
+                                if let Some(mut m) = normal_muxer.take() {
+                                    let _ = m.finalize();
+                                    println!("Stopped normal recording.");
+                                }
+                                normal_recording = false;
+                                normal_waiting_keyframe = false;
+                                rec_state_clone.store(false, Ordering::SeqCst);
+                                rec_start_clone.store(0, Ordering::SeqCst);
+                            },
+                            Command::ToggleRecording => {
+                                if normal_recording {
+                                    if let Some(mut m) = normal_muxer.take() {
+                                        let _ = m.finalize();
+                                        println!("Stopped normal recording.");
+                                    }
+                                    normal_recording = false;
+                                    normal_waiting_keyframe = false;
+                                    rec_state_clone.store(false, Ordering::SeqCst);
+                                    rec_start_clone.store(0, Ordering::SeqCst);
+                                } else {
+                                    normal_recording = true;
+                                    normal_waiting_keyframe = true;
+                                    rec_state_clone.store(true, Ordering::SeqCst);
+                                    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+                                    rec_start_clone.store(now, Ordering::SeqCst);
+                                    println!("ToggleRecording: StartRecording requested, waiting for keyframe...");
+                                }
+                            },
+                            Command::ToggleAudio => {
+                                let cur = audio_muted_clone.load(Ordering::SeqCst);
+                                audio_muted_clone.store(!cur, Ordering::SeqCst);
+                                println!("Audio mute toggled: {}", !cur);
+                            },
+                            _ => {}
                         }
-                    },
-                    Command::SaveReplay => {
-                        if config.replay_enabled {
-                            let drain = ring.iter().cloned().collect::<Vec<_>>();
-                            let _ = mux_tx.try_send(drain);
-                        }
-                    },
-                    Command::StartRecording => {
-                        if !normal_recording {
-                            normal_recording = true;
-                            normal_waiting_keyframe = true;
-                            rec_state_clone.store(true, Ordering::SeqCst);
-                            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
-                            rec_start_clone.store(now, Ordering::SeqCst);
-                            println!("StartRecording requested, waiting for keyframe...");
-                        }
-                    },
-                    Command::StopRecording => {
-                        if let Some(mut m) = normal_muxer.take() {
-                            let _ = m.finalize();
-                            println!("Stopped normal recording.");
-                        }
-                        normal_recording = false;
-                        normal_waiting_keyframe = false;
-                        rec_state_clone.store(false, Ordering::SeqCst);
-                        rec_start_clone.store(0, Ordering::SeqCst);
-                    },
-                    Command::ToggleRecording => {
-                        if normal_recording {
-                            if let Some(mut m) = normal_muxer.take() {
-                                let _ = m.finalize();
-                                println!("Stopped normal recording.");
-                            }
-                            normal_recording = false;
-                            normal_waiting_keyframe = false;
-                            rec_state_clone.store(false, Ordering::SeqCst);
-                            rec_start_clone.store(0, Ordering::SeqCst);
-                        } else {
-                            normal_recording = true;
-                            normal_waiting_keyframe = true;
-                            rec_state_clone.store(true, Ordering::SeqCst);
-                            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
-                            rec_start_clone.store(now, Ordering::SeqCst);
-                            println!("ToggleRecording: StartRecording requested, waiting for keyframe...");
-                        }
-                    },
-                    Command::ToggleAudio => {
-                        let cur = audio_muted_clone.load(Ordering::SeqCst);
-                        audio_muted_clone.store(!cur, Ordering::SeqCst);
-                        println!("Audio mute toggled: {}", !cur);
-                    },
-                    _ => {}
-                }
-            }
+                    }
+                },
+                recv(frame_rx) -> frame_res => {
+                    let frame = match frame_res {
+                        Ok(f) => f,
+                        Err(_) => break,
+                    };
 
             while let Ok(mut audio_chunk) = audio_rx.try_recv() {
                 if audio_muted_clone.load(Ordering::Relaxed) {
@@ -292,11 +301,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         if !normal_waiting_keyframe
                             && let Some(muxer) = normal_muxer.as_mut() {
                                 let _ = muxer.write_packet(&pkt);
-                            }
                     }
                 }
             }
         }
+    }
+}
+}
     });
 
     #[cfg(unix)]

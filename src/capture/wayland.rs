@@ -25,10 +25,10 @@ impl WaylandCapture {
         })?;
         
         let select_opts = ashpd::desktop::screencast::SelectSourcesOptions::default()
-            .set_multiple(true)
-            .set_cursor_mode(CursorMode::Hidden)
-            .set_sources(SourceType::Monitor | SourceType::Window)
-            .set_persist_mode(PersistMode::DoNot);
+            .set_multiple(false)
+            .set_cursor_mode(CursorMode::Embedded)
+            .set_sources(SourceType::Monitor | SourceType::Monitor)
+            .set_persist_mode(PersistMode::Application);
             
         proxy.select_sources(&session, select_opts).await.map_err(|e| {
             format!("Failed to select ScreenCast sources: {:?}", e)
