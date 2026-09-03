@@ -3,39 +3,57 @@ use vrec::overlay::{show_menu_overlay, show_notification};
 use std::env;
 use global_hotkey::{GlobalHotKeyManager, hotkey::{HotKey, Modifiers, Code}, GlobalHotKeyEvent};
 
+fn send_with_notification(cmd: Command, success_msg: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    match send_command(cmd) {
+        Ok(()) => {
+            show_notification(success_msg);
+            Ok(())
+        }
+        Err(e) => {
+            show_notification("⚠️ vrec-daemon is not running!");
+            Err(e)
+        }
+    }
+}
+
+fn handle_toggle_recording() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let status = query_status().ok();
+    let is_rec = status.as_ref().map(|s| s.is_recording).unwrap_or(false);
+    match send_command(Command::ToggleRecording) {
+        Ok(()) => {
+            if is_rec {
+                show_notification("⏹️ Recording Saved!");
+            } else {
+                show_notification("🔴 Recording Started");
+            }
+            Ok(())
+        }
+        Err(e) => {
+            show_notification("⚠️ vrec-daemon is not running!");
+            Err(e)
+        }
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let args: Vec<String> = env::args().collect();
     if args.len() > 1 {
         match args[1].as_str() {
             "--save" => {
-                let res = send_command(Command::SaveReplay);
-                show_notification("💾 Replay Saved!");
-                return res;
+                return send_with_notification(Command::SaveReplay, "💾 Replay Saved!");
             }
             "--menu" => {
                 show_menu_overlay();
                 return Ok(());
             }
             "--record" | "--toggle" => {
-                let status = query_status().ok();
-                let is_rec = status.as_ref().map(|s| s.is_recording).unwrap_or(false);
-                let res = send_command(Command::ToggleRecording);
-                if is_rec {
-                    show_notification("⏹️ Recording Saved!");
-                } else {
-                    show_notification("🔴 Recording Started");
-                }
-                return res;
+                return handle_toggle_recording();
             }
             "--start" => {
-                let res = send_command(Command::StartRecording);
-                show_notification("🔴 Recording Started");
-                return res;
+                return send_with_notification(Command::StartRecording, "🔴 Recording Started");
             }
             "--stop" => {
-                let res = send_command(Command::StopRecording);
-                show_notification("⏹️ Recording Saved!");
-                return res;
+                return send_with_notification(Command::StopRecording, "⏹️ Recording Saved!");
             }
             "--reload" => {
                 return send_command(Command::ReloadConfig);
@@ -121,21 +139,13 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             && event.state == global_hotkey::HotKeyState::Pressed {
                 if event.id == save_hotkey.id() {
                     println!("Save replay hotkey pressed. Triggering SaveReplay...");
-                    let _ = send_command(Command::SaveReplay);
-                    show_notification("💾 Replay Saved!");
+                    let _ = send_with_notification(Command::SaveReplay, "💾 Replay Saved!");
                 } else if event.id == menu_hotkey.id() {
                     println!("Menu hotkey pressed. Opening Overlay Menu...");
                     show_menu_overlay();
                 } else if event.id == record_hotkey.id() {
                     println!("Record hotkey pressed. Toggling Recording...");
-                    let status = query_status().ok();
-                    let is_rec = status.as_ref().map(|s| s.is_recording).unwrap_or(false);
-                    let _ = send_command(Command::ToggleRecording);
-                    if is_rec {
-                        show_notification("⏹️ Recording Saved!");
-                    } else {
-                        show_notification("🔴 Recording Started");
-                    }
+                    let _ = handle_toggle_recording();
                 }
             }
     }
