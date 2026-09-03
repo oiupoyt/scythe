@@ -6,13 +6,18 @@ pub struct VaapiEncoder {
     codec_ctx: *mut AVCodecContext,
     hw_device_ctx: *mut AVBufferRef,
     hw_frames_ctx: *mut AVBufferRef,
+    sws_ctx: *mut SwsContext,
     next_pts: i64,
 }
 
 impl VaapiEncoder {
     pub fn new(width: u32, height: u32) -> Result<Self, String> {
+        Self::new_with_bitrate(width, height, 15_000)
+    }
+
+    pub fn new_with_bitrate(width: u32, height: u32, bitrate_kbps: u32) -> Result<Self, String> {
         unsafe {
-            let codec = avcodec_find_encoder_by_name(b"h264_vaapi\0".as_ptr() as *const i8);
+            let codec = avcodec_find_encoder_by_name(c"h264_vaapi".as_ptr());
             if codec.is_null() {
                 return Err("h264_vaapi encoder not found".into());
             }
@@ -27,6 +32,9 @@ impl VaapiEncoder {
             (*codec_ctx).time_base = AVRational { num: 1, den: 60 };
             (*codec_ctx).framerate = AVRational { num: 60, den: 1 };
             (*codec_ctx).pix_fmt = AVPixelFormat::AV_PIX_FMT_VAAPI;
+            (*codec_ctx).gop_size = 60; // Emit IDR keyframe every 60 frames (1 second)
+            (*codec_ctx).max_b_frames = 0; // Low latency, no B-frame reordering
+            (*codec_ctx).bit_rate = (bitrate_kbps as i64) * 1000;
 
             let mut hw_device_ctx: *mut AVBufferRef = ptr::null_mut();
             let ret = av_hwdevice_ctx_create(
@@ -37,11 +45,14 @@ impl VaapiEncoder {
                 0,
             );
             if ret < 0 {
+                avcodec_free_context(&mut (codec_ctx as *mut _));
                 return Err("Failed to create VAAPI hardware device".into());
             }
 
             let hw_frames_ref = av_hwframe_ctx_alloc(hw_device_ctx);
             if hw_frames_ref.is_null() {
+                av_buffer_unref(&mut hw_device_ctx);
+                avcodec_free_context(&mut (codec_ctx as *mut _));
                 return Err("Failed to allocate hw frames context".into());
             }
             let frames_ctx = (*hw_frames_ref).data as *mut AVHWFramesContext;
@@ -53,6 +64,9 @@ impl VaapiEncoder {
 
             let ret = av_hwframe_ctx_init(hw_frames_ref);
             if ret < 0 {
+                av_buffer_unref(&mut (hw_frames_ref as *mut _));
+                av_buffer_unref(&mut hw_device_ctx);
+                avcodec_free_context(&mut (codec_ctx as *mut _));
                 return Err("Failed to init hw frames context".into());
             }
 
@@ -60,6 +74,9 @@ impl VaapiEncoder {
 
             let ret = avcodec_open2(codec_ctx, codec, ptr::null_mut());
             if ret < 0 {
+                av_buffer_unref(&mut (hw_frames_ref as *mut _));
+                av_buffer_unref(&mut hw_device_ctx);
+                avcodec_free_context(&mut (codec_ctx as *mut _));
                 return Err("Failed to open h264_vaapi encoder".into());
             }
 
@@ -67,6 +84,7 @@ impl VaapiEncoder {
                 codec_ctx,
                 hw_device_ctx,
                 hw_frames_ctx: hw_frames_ref,
+                sws_ctx: ptr::null_mut(),
                 next_pts: 0,
             })
         }
@@ -103,14 +121,16 @@ impl VaapiEncoder {
                     (*nv12_frame).height = *height as i32;
                     av_frame_get_buffer(nv12_frame, 32);
 
-                    let sws_ctx = sws_getContext(
-                        *width as i32, *height as i32, AVPixelFormat::AV_PIX_FMT_BGRA,
-                        *width as i32, *height as i32, AVPixelFormat::AV_PIX_FMT_NV12,
-                        2, ptr::null_mut(), ptr::null_mut(), ptr::null_mut()
-                    );
+                    if self.sws_ctx.is_null() {
+                        self.sws_ctx = sws_getContext(
+                            *width as i32, *height as i32, AVPixelFormat::AV_PIX_FMT_BGRA,
+                            *width as i32, *height as i32, AVPixelFormat::AV_PIX_FMT_NV12,
+                            2, ptr::null_mut(), ptr::null_mut(), ptr::null_mut()
+                        );
+                    }
                     
                     sws_scale(
-                        sws_ctx,
+                        self.sws_ctx,
                         (*bgra_frame).data.as_ptr() as *const *const u8,
                         (*bgra_frame).linesize.as_ptr(),
                         0,
@@ -118,7 +138,6 @@ impl VaapiEncoder {
                         (*nv12_frame).data.as_ptr(),
                         (*nv12_frame).linesize.as_ptr()
                     );
-                    sws_freeContext(sws_ctx);
 
                     let mut hw_frame = av_frame_alloc();
                     av_hwframe_get_buffer(self.hw_frames_ctx, hw_frame, 0);
@@ -145,7 +164,7 @@ impl VaapiEncoder {
                         nb_objects: 1,
                         objects: [AVDRMObjectDescriptor {
                             fd: *fd,
-                            size: 0, // usually ignored or mapped by driver
+                            size: 0,
                             format_modifier: *modifier,
                         }, std::mem::zeroed(), std::mem::zeroed(), std::mem::zeroed()],
                         nb_layers: 1,
@@ -169,11 +188,6 @@ impl VaapiEncoder {
                     let mut hw_frame = av_frame_alloc();
                     (*hw_frame).format = AVPixelFormat::AV_PIX_FMT_VAAPI as i32;
 
-                    // Map the DRM frame to VAAPI
-                    // Since it's hardware mapping, av_hwframe_map expects the device context or frames context.
-                    // Wait, av_hwframe_map uses the destination's hw_frames_ctx if we preallocate, OR
-                    // if we just pass a device context to hw_frame.hw_frames_ctx?
-                    // Let's allocate the hw_frame from our VAAPI frames context.
                     let ret = av_hwframe_get_buffer(self.hw_frames_ctx, hw_frame, 0);
                     if ret >= 0 {
                         let map_ret = av_hwframe_map(hw_frame, drm_frame, 0);
@@ -195,9 +209,6 @@ impl VaapiEncoder {
                         }
                     }
 
-                    // For AV_PIX_FMT_DRM_PRIME, we don't own the data, so don't av_frame_unref the data buffer,
-                    // av_frame_free is safe because data[0] wasn't allocated by ffmpeg.
-                    // Wait, av_frame_free will try to free data[0] if buf[0] is set. But we didn't set buf[0].
                     av_frame_free(&mut hw_frame);
                     av_frame_free(&mut drm_frame);
                 }
@@ -214,9 +225,19 @@ impl VaapiEncoder {
 impl Drop for VaapiEncoder {
     fn drop(&mut self) {
         unsafe {
-            avcodec_free_context(&mut self.codec_ctx);
-            av_buffer_unref(&mut self.hw_device_ctx);
-            av_buffer_unref(&mut self.hw_frames_ctx);
+            if !self.sws_ctx.is_null() {
+                sws_freeContext(self.sws_ctx);
+                self.sws_ctx = ptr::null_mut();
+            }
+            if !self.codec_ctx.is_null() {
+                avcodec_free_context(&mut self.codec_ctx);
+            }
+            if !self.hw_device_ctx.is_null() {
+                av_buffer_unref(&mut self.hw_device_ctx);
+            }
+            if !self.hw_frames_ctx.is_null() {
+                av_buffer_unref(&mut self.hw_frames_ctx);
+            }
         }
     }
 }
@@ -224,6 +245,7 @@ impl Drop for VaapiEncoder {
 pub struct AudioEncoder {
     codec_ctx: *mut AVCodecContext,
     swr_ctx: *mut SwrContext,
+    enc_frame: *mut AVFrame,
     next_pts: i64,
     frame_size: i32,
     channels: i32,
@@ -239,22 +261,23 @@ impl AudioEncoder {
             }
 
             let codec_ctx = avcodec_alloc_context3(codec);
+            if codec_ctx.is_null() {
+                return Err("Failed to allocate AAC codec context".into());
+            }
+
             (*codec_ctx).sample_rate = sample_rate;
             (*codec_ctx).time_base = AVRational { num: 1, den: sample_rate };
-            (*codec_ctx).ch_layout.nb_channels = channels;
-            // AAC requires FLTP (planar float)
             (*codec_ctx).sample_fmt = AVSampleFormat::AV_SAMPLE_FMT_FLTP;
             (*codec_ctx).bit_rate = 192_000;
-            // For older ffmpeg compatibility:
             av_channel_layout_default(&mut (*codec_ctx).ch_layout, channels);
 
-            let ret = avcodec_open2(codec_ctx, codec, std::ptr::null_mut());
+            let ret = avcodec_open2(codec_ctx, codec, ptr::null_mut());
             if ret < 0 {
+                avcodec_free_context(&mut (codec_ctx as *mut _));
                 return Err("Failed to open AAC encoder".into());
             }
 
-            // Create SwrContext to convert from interleaved F32 (AV_SAMPLE_FMT_FLT) to planar F32 (AV_SAMPLE_FMT_FLTP)
-            let mut swr_ctx: *mut SwrContext = std::ptr::null_mut();
+            let mut swr_ctx: *mut SwrContext = ptr::null_mut();
             swr_alloc_set_opts2(
                 &mut swr_ctx,
                 &(*codec_ctx).ch_layout,
@@ -264,16 +287,24 @@ impl AudioEncoder {
                 AVSampleFormat::AV_SAMPLE_FMT_FLT,
                 sample_rate,
                 0,
-                std::ptr::null_mut()
+                ptr::null_mut()
             );
             swr_init(swr_ctx);
 
             let frame_size = (*codec_ctx).frame_size;
-            let fifo = av_audio_fifo_alloc(AVSampleFormat::AV_SAMPLE_FMT_FLTP, channels, 1024 * 10);
+            let fifo = av_audio_fifo_alloc(AVSampleFormat::AV_SAMPLE_FMT_FLTP, channels, 1024 * 32);
+
+            let enc_frame = av_frame_alloc();
+            (*enc_frame).nb_samples = frame_size;
+            (*enc_frame).format = AVSampleFormat::AV_SAMPLE_FMT_FLTP as i32;
+            (*enc_frame).ch_layout = (*codec_ctx).ch_layout;
+            (*enc_frame).sample_rate = sample_rate;
+            av_frame_get_buffer(enc_frame, 0);
 
             Ok(Self {
                 codec_ctx,
                 swr_ctx,
+                enc_frame,
                 next_pts: 0,
                 frame_size,
                 channels,
@@ -325,19 +356,12 @@ impl AudioEncoder {
 
             // Read exactly frame_size chunks from FIFO and encode
             while av_audio_fifo_size(self.fifo) >= self.frame_size {
-                let mut enc_frame = av_frame_alloc();
-                (*enc_frame).nb_samples = self.frame_size;
-                (*enc_frame).format = AVSampleFormat::AV_SAMPLE_FMT_FLTP as i32;
-                (*enc_frame).ch_layout = (*self.codec_ctx).ch_layout;
-                (*enc_frame).sample_rate = (*self.codec_ctx).sample_rate;
-                av_frame_get_buffer(enc_frame, 0);
-
-                av_audio_fifo_read(self.fifo, (*enc_frame).data.as_mut_ptr() as *mut *mut std::ffi::c_void, self.frame_size);
+                av_audio_fifo_read(self.fifo, (*self.enc_frame).data.as_mut_ptr() as *mut *mut std::ffi::c_void, self.frame_size);
                 
-                (*enc_frame).pts = self.next_pts;
+                (*self.enc_frame).pts = self.next_pts;
                 self.next_pts += self.frame_size as i64;
 
-                if avcodec_send_frame(self.codec_ctx, enc_frame) >= 0 {
+                if avcodec_send_frame(self.codec_ctx, self.enc_frame) >= 0 {
                     let mut pkt = av_packet_alloc();
                     while avcodec_receive_packet(self.codec_ctx, pkt) >= 0 {
                         let new_pkt = av_packet_alloc();
@@ -346,7 +370,6 @@ impl AudioEncoder {
                     }
                     av_packet_free(&mut pkt);
                 }
-                av_frame_free(&mut enc_frame);
             }
         }
         Ok(packets)
@@ -356,9 +379,20 @@ impl AudioEncoder {
 impl Drop for AudioEncoder {
     fn drop(&mut self) {
         unsafe {
-            av_audio_fifo_free(self.fifo);
-            swr_free(&mut self.swr_ctx);
-            avcodec_free_context(&mut self.codec_ctx);
+            if !self.enc_frame.is_null() {
+                av_frame_free(&mut self.enc_frame);
+            }
+            if !self.fifo.is_null() {
+                av_audio_fifo_free(self.fifo);
+                self.fifo = ptr::null_mut();
+            }
+            if !self.swr_ctx.is_null() {
+                swr_free(&mut self.swr_ctx);
+                self.swr_ctx = ptr::null_mut();
+            }
+            if !self.codec_ctx.is_null() {
+                avcodec_free_context(&mut self.codec_ctx);
+            }
         }
     }
 }

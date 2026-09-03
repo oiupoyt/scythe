@@ -1,10 +1,11 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     SaveReplay,
     StartRecording,
     StopRecording,
+    ToggleRecording,
     ReloadConfig,
     StopDaemon,
     ShowOverlay,
@@ -14,6 +15,7 @@ pub fn send_command(cmd: Command) -> Result<(), Box<dyn std::error::Error + Send
     use std::env;
     use std::os::unix::net::UnixStream;
     use std::io::Write;
+
     let socket_path = format!("{}/vrec.sock", env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string()));
     let mut stream = UnixStream::connect(&socket_path)?;
     let payload = serde_json::to_vec(&cmd)?;

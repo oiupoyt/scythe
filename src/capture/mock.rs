@@ -13,6 +13,12 @@ impl MockCapture {
     }
 }
 
+impl Default for MockCapture {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FrameSource for MockCapture {
     fn next_frame(&mut self) -> Result<Frame, Box<dyn std::error::Error + Send + Sync>> {
         std::thread::sleep(Duration::from_millis(16)); // ~60fps

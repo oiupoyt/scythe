@@ -32,7 +32,7 @@ impl FrameSource for X11Capture {
             y: 0,
             width: self.width,
             height: self.height,
-            plane_mask: std::u32::MAX,
+            plane_mask: u32::MAX,
         });
         
         let reply = self.conn.wait_for_reply(cookie)?;

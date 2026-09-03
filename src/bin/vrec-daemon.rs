@@ -31,6 +31,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (width, height) = match &first_frame {
         Frame::Raw { width, height, .. } => (*width, *height),
         Frame::DmaBuf { width, height, .. } => (*width, *height),
+        #[cfg(target_os = "windows")]
+        Frame::D3D11Texture { .. } => (1920, 1080),
     };
 
     let (frame_tx, frame_rx) = bounded::<Frame>(5);
@@ -59,15 +61,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     });
 
     thread::spawn(move || {
-        let mut encoder = VaapiEncoder::new(width, height).expect("Failed to init encoder");
+        let mut config = vrec::config::VrecConfig::load();
+        let mut encoder = VaapiEncoder::new_with_bitrate(width, height, config.record_bitrate_kbps)
+            .expect("Failed to init encoder");
         let codec_ctx_ptr = encoder.codec_ctx() as usize;
         
         let mut audio_encoder = if let Some(ref info) = audio_info {
             vrec::encoder::AudioEncoder::new(info.1 as i32, info.2 as i32).ok()
-        } else { None };
+        } else {
+            None
+        };
         let audio_codec_ctx_ptr = audio_encoder.as_ref().map(|e| e.codec_ctx() as usize); 
         
-        let mut config = vrec::config::VrecConfig::load();
         let mut ring = HeapRb::<Packet>::new((config.replay_duration_sec * 120).max(120) as usize);
         let mut normal_muxer: Option<Muxer> = None;
         let mut normal_recording = false;
@@ -94,7 +99,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         let _ = muxer.write_packet(&p);
                     }
                     let _ = muxer.finalize();
-                    println!("Replay saved!");
+                    println!("Replay saved to {}!", name);
                 } else {
                     println!("No keyframe found in buffer, skipping save.");
                 }
@@ -110,7 +115,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         let new_capacity = (config.replay_duration_sec * 120).max(120) as usize;
                         if ring.capacity().get() != new_capacity {
                             ring = HeapRb::<Packet>::new(new_capacity);
-                            println!("Replay buffer resized to {} frames.", new_capacity);
+                            println!("Replay buffer resized to {} packets.", new_capacity);
                         }
                     },
                     Command::SaveReplay => {
@@ -120,7 +125,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         }
                     },
                     Command::StartRecording => {
-                        if config.record_enabled && !normal_recording {
+                        if !normal_recording {
                             normal_recording = true;
                             normal_waiting_keyframe = true;
                             println!("StartRecording requested, waiting for keyframe...");
@@ -132,27 +137,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                             println!("Stopped normal recording.");
                         }
                         normal_recording = false;
+                        normal_waiting_keyframe = false;
+                    },
+                    Command::ToggleRecording => {
+                        if normal_recording {
+                            if let Some(mut m) = normal_muxer.take() {
+                                let _ = m.finalize();
+                                println!("Stopped normal recording.");
+                            }
+                            normal_recording = false;
+                            normal_waiting_keyframe = false;
+                        } else {
+                            normal_recording = true;
+                            normal_waiting_keyframe = true;
+                            println!("ToggleRecording: StartRecording requested, waiting for keyframe...");
+                        }
                     },
                     _ => {}
                 }
             }
 
             while let Ok(audio_chunk) = audio_rx.try_recv() {
-                if let Some(enc) = audio_encoder.as_mut() {
-                    if let Ok(audio_packets) = enc.encode_pcm(&audio_chunk) {
+                if let Some(enc) = audio_encoder.as_mut()
+                    && let Ok(audio_packets) = enc.encode_pcm(&audio_chunk) {
                         for mut pkt in audio_packets {
                             pkt.set_stream_index(1);
                             if config.replay_enabled {
                                 ring.push_overwrite(pkt.clone());
                             }
-                            if normal_recording && !normal_waiting_keyframe {
-                                if let Some(muxer) = normal_muxer.as_mut() {
+                            if normal_recording && !normal_waiting_keyframe
+                                && let Some(muxer) = normal_muxer.as_mut() {
                                     let _ = muxer.write_packet(&pkt);
                                 }
-                            }
                         }
                     }
-                }
             }
 
             if let Ok(packets) = encoder.encode_frame(&frame) {
@@ -162,23 +180,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         ring.push_overwrite(pkt.clone());
                     }
                     if normal_recording {
-                        if normal_waiting_keyframe {
-                            if pkt.is_keyframe() {
-                                normal_waiting_keyframe = false;
-                                let codec_ctx = codec_ctx_ptr as *mut ffmpeg_next::ffi::AVCodecContext;
-                                let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
-                                let name = format!("record_{}.mp4", ts);
-                                let audio_codec_ctx = audio_codec_ctx_ptr.map(|p| p as *mut ffmpeg_next::ffi::AVCodecContext);
-                                normal_muxer = unsafe { Muxer::new(&name, codec_ctx, audio_codec_ctx).ok() };
-                                println!("Started normal recording to {}", name);
-                            }
+                        if normal_waiting_keyframe && pkt.is_keyframe() {
+                            normal_waiting_keyframe = false;
+                            let codec_ctx = codec_ctx_ptr as *mut ffmpeg_next::ffi::AVCodecContext;
+                            let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+                            let name = format!("record_{}.mp4", ts);
+                            let audio_codec_ctx = audio_codec_ctx_ptr.map(|p| p as *mut ffmpeg_next::ffi::AVCodecContext);
+                            normal_muxer = unsafe { Muxer::new(&name, codec_ctx, audio_codec_ctx).ok() };
+                            println!("Started normal recording to {}", name);
                         }
                         
-                        if !normal_waiting_keyframe {
-                            if let Some(muxer) = normal_muxer.as_mut() {
+                        if !normal_waiting_keyframe
+                            && let Some(muxer) = normal_muxer.as_mut() {
                                 let _ = muxer.write_packet(&pkt);
                             }
-                        }
                     }
                 }
             }

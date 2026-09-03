@@ -48,10 +48,10 @@ impl VrecConfig {
     pub fn load() -> Self {
         let path = Self::config_path();
         if path.exists()
-            && let Ok(data) = fs::read_to_string(path)
-                && let Ok(config) = serde_json::from_str(&data) {
-                    return config;
-                }
+            && let Ok(data) = fs::read_to_string(&path)
+            && let Ok(config) = serde_json::from_str(&data) {
+                return config;
+            }
         Self::default()
     }
 
@@ -66,15 +66,23 @@ impl VrecConfig {
     }
 
     pub fn notify_daemon_reload() {
-        use std::env;
-        use std::os::unix::net::UnixStream;
-        use std::io::Write;
-        let socket_path = format!("{}/vrec.sock", env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string()));
-        if let Ok(mut stream) = UnixStream::connect(&socket_path)
-            && let Ok(payload) = serde_json::to_vec(&crate::ipc::Command::ReloadConfig) {
-                let len_buf = (payload.len() as u32).to_le_bytes();
-                let _ = stream.write_all(&len_buf);
-                let _ = stream.write_all(&payload);
-            }
+        let _ = crate::ipc::send_command(crate::ipc::Command::ReloadConfig);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_defaults_and_json() {
+        let cfg = VrecConfig::default();
+        assert!(cfg.replay_enabled);
+        assert_eq!(cfg.replay_duration_sec, 60);
+        let json = serde_json::to_string(&cfg).unwrap();
+        let parsed: VrecConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.menu_hotkey, "Alt+Z");
+        assert_eq!(parsed.save_hotkey, "Ctrl+Shift+R");
+    }
+}
+

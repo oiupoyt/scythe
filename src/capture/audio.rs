@@ -6,7 +6,7 @@ pub struct AudioCapture {
 }
 
 impl AudioCapture {
-    pub fn new(sender: Sender<Vec<f32>>) -> Result<(Self, u32, u16), Box<dyn std::error::Error>> {
+    pub fn new(sender: Sender<Vec<f32>>) -> Result<(Self, u32, u16), Box<dyn std::error::Error + Send + Sync>> {
         let host = cpal::default_host();
         let device = host.default_input_device().ok_or("No audio input device available")?;
         
@@ -17,12 +17,12 @@ impl AudioCapture {
         println!("Audio capture initialized: {} Hz, {} channels", sample_rate, channels);
         
         let err_fn = |err| eprintln!("Audio stream error: {}", err);
-        let stream_config: cpal::StreamConfig = config.clone().into();
+        let stream_config: cpal::StreamConfig = config.into();
         
         let stream = match config.sample_format() {
             cpal::SampleFormat::F32 => {
                 device.build_input_stream(
-                    stream_config.clone(),
+                    stream_config,
                     move |data: &[f32], _: &_| {
                         let _ = sender.try_send(data.to_vec());
                     },

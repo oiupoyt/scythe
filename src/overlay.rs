@@ -141,13 +141,22 @@ pub fn show_menu_overlay() {
             window_clone.close();
         });
 
-        // Toggle buttons logic (just UI for now, backend IPC will be needed to actually toggle daemon state)
-        let _btn_cfg_1 = config.clone();
+        let window_esc = window.clone();
+        window.connect_key_press_event(move |_, key| {
+            if key.keyval() == gdk::keys::constants::Escape {
+                window_esc.close();
+                gtk::glib::Propagation::Stop
+            } else {
+                gtk::glib::Propagation::Proceed
+            }
+        });
+
         let replay_btn_clone = replay_btn.clone();
         replay_btn.connect_clicked(move |_| {
             let mut cfg = VrecConfig::load();
             cfg.replay_enabled = !cfg.replay_enabled;
-            cfg.save().unwrap(); VrecConfig::notify_daemon_reload();
+            let _ = cfg.save();
+            VrecConfig::notify_daemon_reload();
             if cfg.replay_enabled {
                 replay_btn_clone.set_label("Instant Replay\n🟢 ON");
             } else {
@@ -155,12 +164,11 @@ pub fn show_menu_overlay() {
             }
         });
 
-        let _btn_cfg_2 = config.clone();
         let record_btn_clone = record_btn.clone();
         record_btn.connect_clicked(move |_| {
             let mut cfg = VrecConfig::load();
             cfg.record_enabled = !cfg.record_enabled;
-            cfg.save().unwrap();
+            let _ = cfg.save();
             VrecConfig::notify_daemon_reload();
             if cfg.record_enabled {
                 record_btn_clone.set_label("Recording\n🔴 ON");
