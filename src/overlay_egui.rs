@@ -146,81 +146,111 @@ impl eframe::App for VrecOverlayApp {
 
                 ui.add_space(12.0);
 
+                // Reusable custom card frame
+                let card_frame = egui::Frame::NONE
+                    .fill(Color32::from_rgb(18, 22, 31))
+                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 45, 62)))
+                    .corner_radius(CornerRadius::same(10_u8))
+                    .inner_margin(Margin::same(12_i8));
+
                 // Main HUD Cards Grid (4 Cards)
                 ui.columns(4, |cols| {
                     // Card 1: Replay
-                    cols[0].group(|ui| {
-                        ui.set_min_height(110.0);
+                    card_frame.show(&mut cols[0], |ui| {
+                        ui.set_min_height(115.0);
                         ui.vertical_centered(|ui| {
-                            ui.label(egui::RichText::new("REPLAY").font(FontId::proportional(13.0)).strong().color(Color32::from_rgb(148, 163, 184)));
+                            ui.label(egui::RichText::new("REPLAY").font(FontId::proportional(12.0)).strong().color(Color32::from_rgb(148, 163, 184)));
                             let buf_label = format!("{}s Buffer", self.config.replay_duration_sec);
-                            ui.label(egui::RichText::new(buf_label).font(FontId::proportional(11.0)).color(Color32::from_rgb(100, 116, 139)));
-                            ui.add_space(8.0);
-                            if ui.add_sized([120.0, 32.0], egui::Button::new("Save Replay").fill(Color32::from_rgb(16, 185, 129)).corner_radius(CornerRadius::same(8_u8))).clicked() {
+                            ui.label(egui::RichText::new(buf_label).font(FontId::proportional(11.0)).color(Color32::from_rgb(56, 189, 248)));
+                            ui.add_space(10.0);
+                            let save_btn = egui::Button::new(egui::RichText::new("Save Replay").strong().color(Color32::WHITE))
+                                .fill(Color32::from_rgb(16, 185, 129))
+                                .corner_radius(CornerRadius::same(8_u8));
+                            if ui.add_sized([120.0, 32.0], save_btn).clicked() {
                                 let _ = ipc::send_command(Command::SaveReplay);
                                 self.set_msg("Replay save command sent!");
                             }
+                            ui.add_space(4.0);
+                            ui.label(egui::RichText::new(&self.config.save_hotkey).font(FontId::monospace(10.0)).color(Color32::from_rgb(71, 85, 105)));
                         });
                     });
 
                     // Card 2: Record
-                    cols[1].group(|ui| {
-                        ui.set_min_height(110.0);
+                    card_frame.show(&mut cols[1], |ui| {
+                        ui.set_min_height(115.0);
                         ui.vertical_centered(|ui| {
-                            ui.label(egui::RichText::new("RECORD").font(FontId::proportional(13.0)).strong().color(Color32::from_rgb(148, 163, 184)));
+                            ui.label(egui::RichText::new("RECORD").font(FontId::proportional(12.0)).strong().color(Color32::from_rgb(148, 163, 184)));
                             let timer_text = if self.status.is_recording {
                                 let d = self.status.recording_duration_sec;
                                 format!("{:02}:{:02}:{:02}", d / 3600, (d % 3600) / 60, d % 60)
                             } else {
                                 "Idle".to_string()
                             };
-                            ui.label(egui::RichText::new(timer_text).font(FontId::proportional(11.0)).color(Color32::from_rgb(100, 116, 139)));
-                            ui.add_space(8.0);
+                            let timer_color = if self.status.is_recording { Color32::from_rgb(248, 113, 113) } else { Color32::from_rgb(100, 116, 139) };
+                            ui.label(egui::RichText::new(timer_text).font(FontId::proportional(11.0)).color(timer_color));
+                            ui.add_space(10.0);
                             let (rec_label, rec_color) = if self.status.is_recording {
-                                ("Stop", Color32::from_rgb(239, 68, 68))
+                                ("Stop Recording", Color32::from_rgb(220, 38, 38))
                             } else {
-                                ("Start", Color32::from_rgb(59, 130, 246))
+                                ("Start Record", Color32::from_rgb(37, 99, 235))
                             };
-                            if ui.add_sized([120.0, 32.0], egui::Button::new(rec_label).fill(rec_color).corner_radius(CornerRadius::same(8_u8))).clicked() {
+                            let rec_btn = egui::Button::new(egui::RichText::new(rec_label).strong().color(Color32::WHITE))
+                                .fill(rec_color)
+                                .corner_radius(CornerRadius::same(8_u8));
+                            if ui.add_sized([120.0, 32.0], rec_btn).clicked() {
                                 let _ = ipc::send_command(Command::ToggleRecording);
                                 self.set_msg("Recording toggled!");
                             }
+                            ui.add_space(4.0);
+                            ui.label(egui::RichText::new(&self.config.record_hotkey).font(FontId::monospace(10.0)).color(Color32::from_rgb(71, 85, 105)));
                         });
                     });
 
                     // Card 3: Audio
-                    cols[2].group(|ui| {
-                        ui.set_min_height(110.0);
+                    card_frame.show(&mut cols[2], |ui| {
+                        ui.set_min_height(115.0);
                         ui.vertical_centered(|ui| {
-                            ui.label(egui::RichText::new("AUDIO").font(FontId::proportional(13.0)).strong().color(Color32::from_rgb(148, 163, 184)));
+                            ui.label(egui::RichText::new("AUDIO").font(FontId::proportional(12.0)).strong().color(Color32::from_rgb(148, 163, 184)));
                             let mode_name = match self.status.audio_mode.as_str() {
                                 "mic" => "Microphone",
                                 "both" => "System + Mic",
                                 "muted" => "Muted",
                                 _ => "System Audio",
                             };
-                            ui.label(egui::RichText::new(mode_name).font(FontId::proportional(11.0)).color(Color32::from_rgb(100, 116, 139)));
-                            ui.add_space(8.0);
-                            if ui.add_sized([120.0, 32.0], egui::Button::new("Cycle Mode").fill(Color32::from_rgb(30, 41, 59)).corner_radius(CornerRadius::same(8_u8))).clicked() {
+                            ui.label(egui::RichText::new(mode_name).font(FontId::proportional(11.0)).color(Color32::from_rgb(168, 85, 247)));
+                            ui.add_space(10.0);
+                            let audio_btn = egui::Button::new(egui::RichText::new("Cycle Mode").strong().color(Color32::from_rgb(226, 232, 240)))
+                                .fill(Color32::from_rgb(30, 41, 59))
+                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(51, 65, 85)))
+                                .corner_radius(CornerRadius::same(8_u8));
+                            if ui.add_sized([120.0, 32.0], audio_btn).clicked() {
                                 let _ = ipc::send_command(Command::CycleAudioMode);
                                 self.refresh_status();
                                 self.set_msg("Audio mode cycled!");
                             }
+                            ui.add_space(4.0);
+                            ui.label(egui::RichText::new("Tap to cycle").font(FontId::proportional(10.0)).color(Color32::from_rgb(71, 85, 105)));
                         });
                     });
 
                     // Card 4: Preferences Toggle
-                    cols[3].group(|ui| {
-                        ui.set_min_height(110.0);
+                    card_frame.show(&mut cols[3], |ui| {
+                        ui.set_min_height(115.0);
                         ui.vertical_centered(|ui| {
-                            ui.label(egui::RichText::new("SETTINGS").font(FontId::proportional(13.0)).strong().color(Color32::from_rgb(148, 163, 184)));
+                            ui.label(egui::RichText::new("SETTINGS").font(FontId::proportional(12.0)).strong().color(Color32::from_rgb(148, 163, 184)));
                             let codec_info = format!("{} / {}fps", self.config.video_codec.to_uppercase(), self.config.fps);
-                            ui.label(egui::RichText::new(codec_info).font(FontId::proportional(11.0)).color(Color32::from_rgb(100, 116, 139)));
-                            ui.add_space(8.0);
+                            ui.label(egui::RichText::new(codec_info).font(FontId::proportional(11.0)).color(Color32::from_rgb(251, 146, 60)));
+                            ui.add_space(10.0);
                             let gear_label = if self.show_settings { "Hide Panel" } else { "Open Panel" };
-                            if ui.add_sized([120.0, 32.0], egui::Button::new(gear_label).fill(Color32::from_rgb(51, 65, 85)).corner_radius(CornerRadius::same(8_u8))).clicked() {
+                            let gear_btn = egui::Button::new(egui::RichText::new(gear_label).strong().color(Color32::from_rgb(226, 232, 240)))
+                                .fill(Color32::from_rgb(45, 55, 72))
+                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(74, 85, 104)))
+                                .corner_radius(CornerRadius::same(8_u8));
+                            if ui.add_sized([120.0, 32.0], gear_btn).clicked() {
                                 self.show_settings = !self.show_settings;
                             }
+                            ui.add_space(4.0);
+                            ui.label(egui::RichText::new("Configure").font(FontId::proportional(10.0)).color(Color32::from_rgb(71, 85, 105)));
                         });
                     });
                 });
@@ -231,8 +261,18 @@ impl eframe::App for VrecOverlayApp {
                     ui.separator();
                     ui.add_space(10.0);
 
+                    let pill = |ui: &mut egui::Ui, text: &str, active: bool| -> bool {
+                        let fill = if active { Color32::from_rgb(37, 99, 235) } else { Color32::from_rgb(26, 32, 44) };
+                        let stroke = if active { Stroke::new(1.0_f32, Color32::from_rgb(96, 165, 250)) } else { Stroke::new(1.0_f32, Color32::from_rgb(45, 55, 72)) };
+                        let btn = egui::Button::new(egui::RichText::new(text).size(11.0).color(Color32::from_rgb(240, 246, 252)))
+                            .fill(fill)
+                            .stroke(stroke)
+                            .corner_radius(CornerRadius::same(6_u8));
+                        ui.add(btn).clicked()
+                    };
+
                     egui::ScrollArea::vertical().max_height(240.0).show(ui, |ui| {
-                        ui.label(egui::RichText::new("Precise Tuning & Configuration").strong().color(Color32::from_rgb(203, 213, 225)));
+                        ui.label(egui::RichText::new("Precise Tuning & Hardware Configuration").strong().color(Color32::from_rgb(203, 213, 225)));
                         ui.add_space(8.0);
 
                         // 1. Replay Duration with Number Input & Pills
@@ -241,10 +281,10 @@ impl eframe::App for VrecOverlayApp {
                             ui.label("Replay Duration (sec):");
                             ui.add(egui::DragValue::new(&mut self.replay_sec).range(5..=600).suffix(" s"));
                             ui.add_space(8.0);
-                            if ui.small_button("30s").clicked() { self.replay_sec = 30; }
-                            if ui.small_button("60s").clicked() { self.replay_sec = 60; }
-                            if ui.small_button("120s").clicked() { self.replay_sec = 120; }
-                            if ui.small_button("300s").clicked() { self.replay_sec = 300; }
+                            if pill(ui, "30s", self.replay_sec == 30) { self.replay_sec = 30; }
+                            if pill(ui, "60s", self.replay_sec == 60) { self.replay_sec = 60; }
+                            if pill(ui, "120s", self.replay_sec == 120) { self.replay_sec = 120; }
+                            if pill(ui, "300s", self.replay_sec == 300) { self.replay_sec = 300; }
                         });
 
                         ui.add_space(6.0);
@@ -255,10 +295,10 @@ impl eframe::App for VrecOverlayApp {
                             ui.label("Bitrate (Mbps):");
                             ui.add(egui::DragValue::new(&mut self.bitrate_mbps).range(2..=120).suffix(" Mbps"));
                             ui.add_space(8.0);
-                            if ui.small_button("10M").clicked() { self.bitrate_mbps = 10; }
-                            if ui.small_button("20M").clicked() { self.bitrate_mbps = 20; }
-                            if ui.small_button("30M").clicked() { self.bitrate_mbps = 30; }
-                            if ui.small_button("50M").clicked() { self.bitrate_mbps = 50; }
+                            if pill(ui, "10M", self.bitrate_mbps == 10) { self.bitrate_mbps = 10; }
+                            if pill(ui, "20M", self.bitrate_mbps == 20) { self.bitrate_mbps = 20; }
+                            if pill(ui, "30M", self.bitrate_mbps == 30) { self.bitrate_mbps = 30; }
+                            if pill(ui, "50M", self.bitrate_mbps == 50) { self.bitrate_mbps = 50; }
                         });
 
                         ui.add_space(6.0);
@@ -269,10 +309,10 @@ impl eframe::App for VrecOverlayApp {
                             ui.label("Framerate (FPS):");
                             ui.add(egui::DragValue::new(&mut self.target_fps).range(15..=240).suffix(" fps"));
                             ui.add_space(8.0);
-                            if ui.small_button("30").clicked() { self.target_fps = 30; }
-                            if ui.small_button("60").clicked() { self.target_fps = 60; }
-                            if ui.small_button("120").clicked() { self.target_fps = 120; }
-                            if ui.small_button("144").clicked() { self.target_fps = 144; }
+                            if pill(ui, "30", self.target_fps == 30) { self.target_fps = 30; }
+                            if pill(ui, "60", self.target_fps == 60) { self.target_fps = 60; }
+                            if pill(ui, "120", self.target_fps == 120) { self.target_fps = 120; }
+                            if pill(ui, "144", self.target_fps == 144) { self.target_fps = 144; }
                         });
 
                         ui.add_space(6.0);
@@ -296,11 +336,11 @@ impl eframe::App for VrecOverlayApp {
                                 });
                         });
 
-                        ui.add_space(10.0);
+                        ui.add_space(12.0);
 
                         // Save & Apply Button
                         ui.horizontal(|ui| {
-                            if ui.add_sized([160.0, 30.0], egui::Button::new("Save & Apply").fill(Color32::from_rgb(37, 99, 235)).corner_radius(CornerRadius::same(6_u8))).clicked() {
+                            if ui.add_sized([160.0, 32.0], egui::Button::new(egui::RichText::new("Save & Apply").strong()).fill(Color32::from_rgb(37, 99, 235)).corner_radius(CornerRadius::same(6_u8))).clicked() {
                                 self.config.replay_duration_sec = self.replay_sec;
                                 self.config.record_bitrate_kbps = self.bitrate_mbps * 1000;
                                 self.config.replay_bitrate_kbps = self.bitrate_mbps * 1000;
@@ -316,7 +356,7 @@ impl eframe::App for VrecOverlayApp {
                                 self.set_msg("Settings applied & saved!");
                             }
 
-                            if ui.button("Open Recordings Folder").clicked() {
+                            if ui.add_sized([180.0, 32.0], egui::Button::new("Open Recordings Folder").fill(Color32::from_rgb(30, 41, 59)).corner_radius(CornerRadius::same(6_u8))).clicked() {
                                 let dir = self.config.output_directory.clone();
                                 std::thread::spawn(move || {
                                     let _ = std::process::Command::new("xdg-open").arg(dir).spawn();
@@ -333,9 +373,10 @@ pub fn run_egui_overlay() {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("vrec")
+            .with_app_id("vrec-overlay")
             .with_inner_size([740.0, 220.0])
             .with_min_inner_size([640.0, 180.0])
-            .with_max_inner_size([820.0, 520.0])
+            .with_max_inner_size([820.0, 560.0])
             .with_resizable(true)
             .with_decorations(false)
             .with_transparent(true)

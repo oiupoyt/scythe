@@ -50,10 +50,24 @@ pub fn hotkey_to_hyprland(hotkey: &str) -> Option<(String, String)> {
     Some((mod_str, key.to_string()))
 }
 
-/// Dynamically inject binds into running Hyprland without touching hyprland.conf
+/// Dynamically inject binds and window rules into running Hyprland without touching hyprland.conf
 pub fn register_hyprland_binds(config: &VrecConfig) {
     if !is_hyprland() {
         return;
+    }
+
+    // Register overlay window rules so the UI floats and centers cleanly
+    let rules = [
+        "float, class:^(vrec-overlay)$",
+        "center, class:^(vrec-overlay)$",
+        "pin, class:^(vrec-overlay)$",
+        "stayfocused, class:^(vrec-overlay)$",
+        "noborder, class:^(vrec-overlay)$",
+    ];
+    for rule in rules {
+        let _ = Command::new("hyprctl")
+            .args(["keyword", "windowrulev2", rule])
+            .output();
     }
 
     let binds = [
