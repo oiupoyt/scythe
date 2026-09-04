@@ -25,6 +25,35 @@ impl Packet {
             ((*self.ptr).flags & AV_PKT_FLAG_KEY) != 0
         }
     }
+
+    pub fn pts(&self) -> i64 {
+        unsafe { (*self.ptr).pts }
+    }
+
+    pub fn dts(&self) -> i64 {
+        unsafe { (*self.ptr).dts }
+    }
+
+    pub fn set_pts(&mut self, pts: i64) {
+        unsafe { (*self.ptr).pts = pts; }
+    }
+
+    pub fn set_dts(&mut self, dts: i64) {
+        unsafe { (*self.ptr).dts = dts; }
+    }
+
+    pub fn rebased(&self, base_pts: i64) -> Self {
+        let cloned = self.clone();
+        unsafe {
+            if (*cloned.ptr).pts != AV_NOPTS_VALUE {
+                (*cloned.ptr).pts -= base_pts;
+            }
+            if (*cloned.ptr).dts != AV_NOPTS_VALUE {
+                (*cloned.ptr).dts -= base_pts;
+            }
+        }
+        cloned
+    }
 }
 
 impl Drop for Packet {

@@ -62,6 +62,7 @@ impl VaapiEncoder {
             (*codec_ctx).qmin = 16;
             (*codec_ctx).qmax = 28; // Prevent compression blockiness
             (*codec_ctx).profile = FF_PROFILE_H264_HIGH;
+            (*codec_ctx).flags |= AV_CODEC_FLAG_GLOBAL_HEADER as libc::c_int;
 
             let mut hw_device_ctx: *mut AVBufferRef = ptr::null_mut();
             let ret = av_hwdevice_ctx_create(
@@ -434,6 +435,7 @@ impl WindowsHwEncoder {
             (*codec_ctx).qmin = 16;
             (*codec_ctx).qmax = 28;
             (*codec_ctx).profile = FF_PROFILE_H264_HIGH;
+            (*codec_ctx).flags |= AV_CODEC_FLAG_GLOBAL_HEADER as libc::c_int;
 
             if selected_desc.contains("NVENC") {
                 (*codec_ctx).pix_fmt = AVPixelFormat::AV_PIX_FMT_NV12;
@@ -594,6 +596,7 @@ impl AudioEncoder {
             (*codec_ctx).time_base = AVRational { num: 1, den: sample_rate };
             (*codec_ctx).sample_fmt = AVSampleFormat::AV_SAMPLE_FMT_FLTP;
             (*codec_ctx).bit_rate = 192_000;
+            (*codec_ctx).flags |= AV_CODEC_FLAG_GLOBAL_HEADER as libc::c_int;
             av_channel_layout_default(&mut (*codec_ctx).ch_layout, channels);
 
             let ret = avcodec_open2(codec_ctx, codec, ptr::null_mut());
@@ -717,6 +720,43 @@ impl Drop for AudioEncoder {
             }
             if !self.codec_ctx.is_null() {
                 avcodec_free_context(&mut self.codec_ctx);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_audio_encoder_global_header() {
+        let enc = AudioEncoder::new(48000, 2).expect("AudioEncoder creation");
+        unsafe {
+            let flags = (*enc.codec_ctx).flags;
+            assert!((flags & (AV_CODEC_FLAG_GLOBAL_HEADER as i32)) != 0, "Audio encoder must have GLOBAL_HEADER flag");
+            assert!((*enc.codec_ctx).extradata_size > 0, "Audio encoder extradata must be populated");
+        }
+    }
+
+    #[test]
+    fn test_vaapi_encoder_global_header() {
+        if let Ok(mut enc) = VaapiEncoder::new(1280, 720) {
+            unsafe {
+                let flags = (*enc.codec_ctx).flags;
+                assert!((flags & (AV_CODEC_FLAG_GLOBAL_HEADER as i32)) != 0, "Vaapi encoder must have GLOBAL_HEADER flag");
+            }
+            // Encode a blank BGRA frame
+            let blank_frame = Frame::Raw {
+                width: 1280,
+                height: 720,
+                stride: 1280 * 4,
+                data: vec![0u8; 1280 * 720 * 4],
+            };
+            let pkts = enc.encode_frame(&blank_frame).expect("Encode frame");
+            println!("Encoded {} packets from first frame", pkts.len());
+            unsafe {
+                println!("VAAPI extradata_size after encode: {}", (*enc.codec_ctx).extradata_size);
             }
         }
     }

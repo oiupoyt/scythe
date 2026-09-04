@@ -70,6 +70,8 @@ impl Muxer {
 
             let mut opts: *mut AVDictionary = std::ptr::null_mut();
             av_dict_set(&mut opts, c"movflags".as_ptr(), c"+faststart".as_ptr(), 0);
+            (*fmt_ctx).avoid_negative_ts = 2; // AVFMT_AVOID_NEG_TS_MAKE_ZERO: Shift timestamps so that they start at 0
+            (*fmt_ctx).max_interleave_delta = 1_000_000;
             let ret = avformat_write_header(fmt_ctx, &mut opts);
             av_dict_free(&mut opts);
             if ret < 0 {
@@ -86,6 +88,14 @@ impl Muxer {
                 audio_time_base,
             })
         }
+    }
+
+    pub fn video_time_base(&self) -> AVRational {
+        self.video_time_base
+    }
+
+    pub fn audio_time_base(&self) -> Option<AVRational> {
+        self.audio_time_base
     }
 
     pub fn write_packet(&mut self, packet: &Packet) -> Result<(), String> {

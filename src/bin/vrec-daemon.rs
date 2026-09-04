@@ -177,10 +177,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         };
         let audio_codec_ctx_ptr = audio_encoder.as_ref().map(|e| e.codec_ctx() as usize); 
         
+        let video_time_base = unsafe { (*(codec_ctx_ptr as *mut ffmpeg_next::ffi::AVCodecContext)).time_base };
+        let audio_time_base = audio_codec_ctx_ptr.map(|p| unsafe { (*(p as *mut ffmpeg_next::ffi::AVCodecContext)).time_base });
+
         let mut ring = HeapRb::<Packet>::new((config.replay_duration_sec * 120).max(120) as usize);
         let mut normal_muxer: Option<Muxer> = None;
         let mut normal_recording = false;
         let mut normal_waiting_keyframe = false;
+        let mut rec_base_video_pts: i64 = 0;
+        let mut rec_base_audio_pts: i64 = 0;
 
         thread::spawn(move || {
             while let Ok(drain) = mux_rx.recv() {
@@ -188,25 +193,73 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 let filename = format!("replay_{}.mp4", ts);
                 let full_path = vrec::config::VrecConfig::load().resolve_save_path(&filename);
                 println!("Saving replay to {}...", full_path);
-                let mut start_idx = 0;
+
+                // Find the first video IDR keyframe (ignore audio packets which always have keyframe flag set)
+                let start_video_idx = drain.iter().position(|p| p.stream_index() == 0 && p.is_keyframe());
+                let first_v_idx = match start_video_idx {
+                    Some(idx) => idx,
+                    None => {
+                        println!("No video keyframe found in buffer, skipping save.");
+                        continue;
+                    }
+                };
+
+                let first_video_pts = drain[first_v_idx].pts();
+                let first_audio_pts = if let Some(a_tb) = audio_time_base {
+                    unsafe { ffmpeg_next::ffi::av_rescale_q(first_video_pts, video_time_base, a_tb) }
+                } else {
+                    0
+                };
+
+                let mut prepared: Vec<(i64, Packet)> = Vec::with_capacity(drain.len());
                 for (i, p) in drain.iter().enumerate() {
-                    if p.is_keyframe() {
-                        start_idx = i;
-                        break;
+                    if p.stream_index() == 0 {
+                        if i >= first_v_idx {
+                            let rebased = p.rebased(first_video_pts);
+                            let time_us = unsafe {
+                                ffmpeg_next::ffi::av_rescale_q(
+                                    rebased.pts(),
+                                    video_time_base,
+                                    ffmpeg_next::ffi::AVRational { num: 1, den: 1_000_000 },
+                                )
+                            };
+                            prepared.push((time_us, rebased));
+                        }
+                    } else if p.stream_index() == 1 {
+                        if p.pts() >= first_audio_pts {
+                            let rebased = p.rebased(first_audio_pts);
+                            let time_us = if let Some(a_tb) = audio_time_base {
+                                unsafe {
+                                    ffmpeg_next::ffi::av_rescale_q(
+                                        rebased.pts(),
+                                        a_tb,
+                                        ffmpeg_next::ffi::AVRational { num: 1, den: 1_000_000 },
+                                    )
+                                }
+                            } else {
+                                0
+                            };
+                            prepared.push((time_us, rebased));
+                        }
                     }
                 }
-                
-                if start_idx < drain.len() {
-                    let codec_ctx = codec_ctx_ptr as *mut ffmpeg_next::ffi::AVCodecContext;
-                    let audio_codec_ctx = audio_codec_ctx_ptr.map(|p| p as *mut ffmpeg_next::ffi::AVCodecContext);
-                    let mut muxer = unsafe { Muxer::new(&full_path, codec_ctx, audio_codec_ctx).unwrap() };
-                    for p in drain.into_iter().skip(start_idx) {
-                        let _ = muxer.write_packet(&p);
+
+                // Sort packets by presentation timestamp so muxer receives strictly chronological stream
+                prepared.sort_by_key(|(t, _)| *t);
+
+                let codec_ctx = codec_ctx_ptr as *mut ffmpeg_next::ffi::AVCodecContext;
+                let audio_codec_ctx = audio_codec_ctx_ptr.map(|p| p as *mut ffmpeg_next::ffi::AVCodecContext);
+                match unsafe { Muxer::new(&full_path, codec_ctx, audio_codec_ctx) } {
+                    Ok(mut muxer) => {
+                        for (_, p) in prepared {
+                            let _ = muxer.write_packet(&p);
+                        }
+                        let _ = muxer.finalize();
+                        println!("Replay saved to {}!", full_path);
                     }
-                    let _ = muxer.finalize();
-                    println!("Replay saved to {}!", full_path);
-                } else {
-                    println!("No keyframe found in buffer, skipping save.");
+                    Err(e) => {
+                        eprintln!("Failed to create muxer for {}: {}", full_path, e);
+                    }
                 }
             }
         });
@@ -251,6 +304,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                 }
                                 normal_recording = false;
                                 normal_waiting_keyframe = false;
+                                rec_base_video_pts = 0;
+                                rec_base_audio_pts = 0;
                                 rec_state_clone.store(false, Ordering::SeqCst);
                                 rec_start_clone.store(0, Ordering::SeqCst);
                             },
@@ -262,6 +317,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                     }
                                     normal_recording = false;
                                     normal_waiting_keyframe = false;
+                                    rec_base_video_pts = 0;
+                                    rec_base_audio_pts = 0;
                                     rec_state_clone.store(false, Ordering::SeqCst);
                                     rec_start_clone.store(0, Ordering::SeqCst);
                                 } else {
@@ -303,7 +360,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                             }
                             if normal_recording && !normal_waiting_keyframe
                                 && let Some(muxer) = normal_muxer.as_mut() {
-                                    let _ = muxer.write_packet(&pkt);
+                                    if pkt.pts() >= rec_base_audio_pts {
+                                        let rebased = pkt.rebased(rec_base_audio_pts);
+                                        let _ = muxer.write_packet(&rebased);
+                                    }
                                 }
                         }
                     }
@@ -318,6 +378,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     if normal_recording {
                         if normal_waiting_keyframe && pkt.is_keyframe() {
                             normal_waiting_keyframe = false;
+                            rec_base_video_pts = pkt.pts();
+                            rec_base_audio_pts = if let Some(a_tb) = audio_time_base {
+                                unsafe { ffmpeg_next::ffi::av_rescale_q(rec_base_video_pts, video_time_base, a_tb) }
+                            } else {
+                                0
+                            };
                             let codec_ctx = codec_ctx_ptr as *mut ffmpeg_next::ffi::AVCodecContext;
                             let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
                             let filename = format!("record_{}.mp4", ts);
@@ -329,13 +395,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         
                         if !normal_waiting_keyframe
                             && let Some(muxer) = normal_muxer.as_mut() {
-                                let _ = muxer.write_packet(&pkt);
+                                let rebased = pkt.rebased(rec_base_video_pts);
+                                let _ = muxer.write_packet(&rebased);
+                        }
                     }
                 }
             }
         }
     }
-}
 }
     });
 
