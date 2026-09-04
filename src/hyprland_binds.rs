@@ -1,15 +1,27 @@
+#[cfg(unix)]
 use std::process::Command;
+#[cfg(unix)]
 use std::env;
+#[cfg(unix)]
 use std::io::{BufRead, BufReader};
+#[cfg(unix)]
 use std::os::unix::net::UnixStream;
+#[cfg(unix)]
 use std::path::PathBuf;
 use crate::config::VrecConfig;
 
 pub fn is_hyprland() -> bool {
-    env::var("HYPRLAND_INSTANCE_SIGNATURE").is_ok()
-        || env::var("XDG_CURRENT_DESKTOP")
-            .map(|d| d.to_lowercase().contains("hyprland"))
-            .unwrap_or(false)
+    #[cfg(unix)]
+    {
+        env::var("HYPRLAND_INSTANCE_SIGNATURE").is_ok()
+            || env::var("XDG_CURRENT_DESKTOP")
+                .map(|d| d.to_lowercase().contains("hyprland"))
+                .unwrap_or(false)
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
 }
 
 /// Convert standard hotkey format (e.g. "Ctrl+Shift+R") to Hyprland bind format ("CONTROL_SHIFT, R")
@@ -50,6 +62,7 @@ pub fn hotkey_to_hyprland(hotkey: &str) -> Option<(String, String)> {
     Some((mod_str, key.to_string()))
 }
 
+#[cfg(unix)]
 /// Dynamically inject binds and window rules into running Hyprland without touching hyprland.conf
 pub fn register_hyprland_binds(config: &VrecConfig) {
     if !is_hyprland() {
@@ -97,6 +110,10 @@ pub fn register_hyprland_binds(config: &VrecConfig) {
     }
 }
 
+#[cfg(not(unix))]
+pub fn register_hyprland_binds(_config: &VrecConfig) {}
+
+#[cfg(unix)]
 /// Dynamically remove binds from running Hyprland
 pub fn unregister_hyprland_binds(config: &VrecConfig) {
     if !is_hyprland() {
@@ -123,6 +140,10 @@ pub fn unregister_hyprland_binds(config: &VrecConfig) {
     }
 }
 
+#[cfg(not(unix))]
+pub fn unregister_hyprland_binds(_config: &VrecConfig) {}
+
+#[cfg(unix)]
 /// Find Hyprland socket2 for live event listening
 fn get_hyprland_socket2() -> Option<PathBuf> {
     let sig = env::var("HYPRLAND_INSTANCE_SIGNATURE").ok()?;
@@ -139,6 +160,7 @@ fn get_hyprland_socket2() -> Option<PathBuf> {
     None
 }
 
+#[cfg(unix)]
 /// Background watcher for Hyprland config reloads so dynamic binds are never lost
 pub fn spawn_hyprland_reload_watcher() {
     if !is_hyprland() {
@@ -163,6 +185,9 @@ pub fn spawn_hyprland_reload_watcher() {
         }
     });
 }
+
+#[cfg(not(unix))]
+pub fn spawn_hyprland_reload_watcher() {}
 
 #[cfg(test)]
 mod tests {
