@@ -47,6 +47,13 @@ fn default_audio_mode_str() -> String {
     "system".to_string()
 }
 
+#[cfg(unix)]
+pub fn get_socket_path() -> String {
+    let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+        .unwrap_or_else(|_| format!("/run/user/{}", unsafe { libc::getuid() }));
+    format!("{}/vrec.sock", runtime_dir)
+}
+
 pub fn send_command(cmd: Command) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     use std::io::Write;
     use std::time::Duration;
@@ -63,7 +70,7 @@ pub fn send_command(cmd: Command) -> Result<(), Box<dyn std::error::Error + Send
         #[cfg(unix)]
         {
             use std::os::unix::net::UnixStream;
-            let socket_path = format!("{}/vrec.sock", std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string()));
+            let socket_path = get_socket_path();
             match UnixStream::connect(&socket_path) {
                 Ok(mut stream) => {
                     let _ = stream.set_write_timeout(Some(Duration::from_millis(1000)));
@@ -115,7 +122,7 @@ pub fn query_status() -> Result<DaemonStatus, Box<dyn std::error::Error + Send +
         #[cfg(unix)]
         let stream_res = {
             use std::os::unix::net::UnixStream;
-            let socket_path = format!("{}/vrec.sock", std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string()));
+            let socket_path = get_socket_path();
             UnixStream::connect(&socket_path)
         };
 

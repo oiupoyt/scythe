@@ -126,7 +126,7 @@ impl PipeWireStream {
             stream.connect(
                 spa::utils::Direction::Input,
                 Some(node_id),
-                pw::stream::StreamFlags::AUTOCONNECT,
+                pw::stream::StreamFlags::AUTOCONNECT | pw::stream::StreamFlags::MAP_BUFFERS,
                 &mut params,
             ).unwrap();
 
