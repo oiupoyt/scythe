@@ -154,9 +154,26 @@ jobs:
         with:
           tag_name: ${{ github.ref_name != 'main' && github.ref_name || 'v0.1.0' }}
           name: "vrec ${{ github.ref_name != 'main' && github.ref_name || 'v0.1.0' }}"
+          body: |
+            High-performance GPU hardware screen recorder and instant replay overlay for Linux and Windows.
+
+            ### Highlights
+            - Zero-copy GPU screen capture (PipeWire/DMA-BUF on Wayland, XCB on X11, D3D11 on Windows)
+            - Low-overhead rolling ring buffer for instant replays
+            - Hardware encoding via VAAPI (AMD/Intel) and NVENC (NVIDIA)
+            - Stealth floating HUD dock built in egui
+            - Dynamic Hyprland keybinding and window rule injection
+            - Multi-channel audio routing (System audio, Microphone, Combined, and Mute)
+
+            ### Packages
+            - Windows: `vrec-windows-x64.zip`
+            - Universal Linux: `vrec-x86_64.AppImage`
+            - Debian / Ubuntu / Mint: `vrec_0.1.0_amd64.deb`
+            - Fedora / RHEL / openSUSE: `vrec-0.1.0-2.x86_64.rpm`
+            - Generic Linux: `vrec-linux-x86_64.tar.gz`
           files: |
             artifacts/linux-packages/*
             artifacts/windows-package/*
           draft: false
           prerelease: false
-          generate_release_notes: true
+          generate_release_notes: false
