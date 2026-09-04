@@ -16,6 +16,8 @@ fn default_save_hotkey() -> String { "Ctrl+Shift+R".to_string() }
 fn default_menu_hotkey() -> String { "Alt+Z".to_string() }
 fn default_record_hotkey() -> String { "Ctrl+Shift+F9".to_string() }
 fn default_cursor_hotkey() -> String { "Ctrl+Shift+F10".to_string() }
+fn default_mic_volume() -> f32 { 0.60 }
+fn default_system_volume() -> f32 { 1.00 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct VrecConfig {
@@ -42,6 +44,10 @@ pub struct VrecConfig {
     pub audio_device: String,
     #[serde(default = "default_audio_mode")]
     pub audio_mode: String,
+    #[serde(default = "default_mic_volume")]
+    pub mic_volume: f32,
+    #[serde(default = "default_system_volume")]
+    pub system_volume: f32,
     
     #[serde(default)]
     pub autostart: bool,
@@ -74,6 +80,8 @@ impl Default for VrecConfig {
             show_cursor: true,
             audio_device: "default".to_string(),
             audio_mode: "system".to_string(),
+            mic_volume: default_mic_volume(),
+            system_volume: default_system_volume(),
             
             autostart: false,
             language: "en".to_string(),
@@ -151,5 +159,7 @@ mod tests {
         assert_eq!(parsed.replay_duration_sec, 60);
         assert_eq!(parsed.audio_mode, "system");
         assert!(parsed.show_cursor);
+        assert!((parsed.mic_volume - 0.60).abs() < 1e-4);
+        assert!((parsed.system_volume - 1.00).abs() < 1e-4);
     }
 }

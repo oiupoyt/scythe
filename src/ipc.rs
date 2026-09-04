@@ -25,10 +25,22 @@ pub struct DaemonStatus {
     pub audio_mode: String,
     #[serde(default = "default_true")]
     pub show_cursor: bool,
+    #[serde(default = "default_mic_volume")]
+    pub mic_volume: f32,
+    #[serde(default = "default_system_volume")]
+    pub system_volume: f32,
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn default_mic_volume() -> f32 {
+    0.60
+}
+
+fn default_system_volume() -> f32 {
+    1.00
 }
 
 fn default_audio_mode_str() -> String {

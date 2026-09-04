@@ -136,6 +136,24 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             "--reload" => {
                 return send_command(Command::ReloadConfig);
             }
+            "--status" => {
+                match query_status() {
+                    Ok(st) => {
+                        println!("Daemon Status:");
+                        println!("  State: {}", if st.is_recording { format!("RECORDING ({}s)", st.recording_duration_sec) } else { "IDLE".to_string() });
+                        println!("  Instant Replay: {}", if st.is_replay_active { "ACTIVE" } else { "OFF" });
+                        println!("  Audio Mode: {}", st.audio_mode);
+                        println!("  Mic Volume: {:.0}%", st.mic_volume * 100.0);
+                        println!("  System Volume: {:.0}%", st.system_volume * 100.0);
+                        println!("  Show Cursor: {}", st.show_cursor);
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to connect to vrec daemon: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            }
             "--quit" => {
                 return send_command(Command::StopDaemon);
             }
@@ -144,6 +162,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 println!("Usage:");
                 println!("  vrec-ui                Run global hotkey manager in background");
                 println!("  vrec-ui --menu         Open overlay menu");
+                println!("  vrec-ui --status       Query current daemon status");
                 println!("  vrec-ui --save         Save instant replay and show notification");
                 println!("  vrec-ui --record       Toggle normal recording on/off (with notification)");
                 println!("  vrec-ui --cursor       Toggle mouse cursor recording on/off (with notification)");

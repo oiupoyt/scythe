@@ -125,10 +125,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (cmd_tx, cmd_rx) = bounded::<Command>(10);
     let (mux_tx, mux_rx) = bounded::<Vec<Packet>>(1);
     let (audio_tx, audio_rx) = bounded::<Vec<f32>>(500);
-    let audio_capture_initial = vrec::capture::audio::AudioCapture::new_with_device_and_mode(
+    let audio_capture_initial = vrec::capture::audio::AudioCapture::new_with_device_mode_and_volumes(
         audio_tx.clone(),
         Some(&initial_config.audio_device),
         &initial_config.audio_mode,
+        initial_config.mic_volume,
+        initial_config.system_volume,
     ).ok();
 
     // Automatically register dynamic keybindings on Hyprland if active (no config edits needed)
@@ -301,13 +303,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                     println!("Replay buffer resized to {} packets.", new_capacity);
                                 }
                                 vrec::hyprland_binds::register_hyprland_binds(&config);
-                                audio_capture = match vrec::capture::audio::AudioCapture::new_with_device_and_mode(
+                                audio_capture = match vrec::capture::audio::AudioCapture::new_with_device_mode_and_volumes(
                                     audio_tx_clone.clone(),
                                     Some(&config.audio_device),
                                     &config.audio_mode,
+                                    config.mic_volume,
+                                    config.system_volume,
                                 ) {
                                     Ok((c, _, _)) => {
-                                        println!("Audio capture reloaded for mode: {}", config.audio_mode);
+                                        println!("Audio capture reloaded for mode: {} (mic: {:.0}%, sys: {:.0}%)", config.audio_mode, config.mic_volume * 100.0, config.system_volume * 100.0);
                                         Some(c)
                                     }
                                     Err(e) => {
@@ -512,6 +516,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                         audio_muted: audio_muted_state.load(Ordering::SeqCst),
                                         audio_mode: cfg.audio_mode,
                                         show_cursor: cfg.show_cursor,
+                                        mic_volume: cfg.mic_volume,
+                                        system_volume: cfg.system_volume,
                                     };
                                     if let Ok(resp) = serde_json::to_vec(&status) {
                                         let len_resp = (resp.len() as u32).to_le_bytes();
