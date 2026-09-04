@@ -54,28 +54,49 @@ pub fn send_command(cmd: Command) -> Result<(), Box<dyn std::error::Error + Send
     let payload = serde_json::to_vec(&cmd)?;
     let len_buf = (payload.len() as u32).to_le_bytes();
 
-    #[cfg(unix)]
-    {
-        use std::os::unix::net::UnixStream;
-        let socket_path = format!("{}/vrec.sock", std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string()));
-        let mut stream = UnixStream::connect(&socket_path)?;
-        let _ = stream.set_write_timeout(Some(Duration::from_millis(250)));
-        let _ = stream.set_read_timeout(Some(Duration::from_millis(250)));
-        stream.write_all(&len_buf)?;
-        stream.write_all(&payload)?;
+    let mut last_err = None;
+    for attempt in 0..3 {
+        if attempt > 0 {
+            std::thread::sleep(Duration::from_millis(60));
+        }
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::net::UnixStream;
+            let socket_path = format!("{}/vrec.sock", std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string()));
+            match UnixStream::connect(&socket_path) {
+                Ok(mut stream) => {
+                    let _ = stream.set_write_timeout(Some(Duration::from_millis(1000)));
+                    let _ = stream.set_read_timeout(Some(Duration::from_millis(1000)));
+                    if stream.write_all(&len_buf).is_ok() && stream.write_all(&payload).is_ok() {
+                        return Ok(());
+                    }
+                }
+                Err(e) => {
+                    last_err = Some(Box::new(e) as Box<dyn std::error::Error + Send + Sync>);
+                }
+            }
+        }
+
+        #[cfg(windows)]
+        {
+            use std::net::TcpStream;
+            match TcpStream::connect("127.0.0.1:42069") {
+                Ok(mut stream) => {
+                    let _ = stream.set_write_timeout(Some(Duration::from_millis(1000)));
+                    let _ = stream.set_read_timeout(Some(Duration::from_millis(1000)));
+                    if stream.write_all(&len_buf).is_ok() && stream.write_all(&payload).is_ok() {
+                        return Ok(());
+                    }
+                }
+                Err(e) => {
+                    last_err = Some(Box::new(e) as Box<dyn std::error::Error + Send + Sync>);
+                }
+            }
+        }
     }
 
-    #[cfg(windows)]
-    {
-        use std::net::TcpStream;
-        let mut stream = TcpStream::connect("127.0.0.1:42069")?;
-        let _ = stream.set_write_timeout(Some(Duration::from_millis(250)));
-        let _ = stream.set_read_timeout(Some(Duration::from_millis(250)));
-        stream.write_all(&len_buf)?;
-        stream.write_all(&payload)?;
-    }
-
-    Ok(())
+    Err(last_err.unwrap_or_else(|| "Failed to communicate with vrec-daemon".into()))
 }
 
 pub fn query_status() -> Result<DaemonStatus, Box<dyn std::error::Error + Send + Sync>> {
@@ -85,33 +106,52 @@ pub fn query_status() -> Result<DaemonStatus, Box<dyn std::error::Error + Send +
     let payload = serde_json::to_vec(&Command::GetStatus)?;
     let len_buf = (payload.len() as u32).to_le_bytes();
 
-    #[cfg(unix)]
-    let mut stream = {
-        use std::os::unix::net::UnixStream;
-        let socket_path = format!("{}/vrec.sock", std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string()));
-        let s = UnixStream::connect(&socket_path)?;
-        let _ = s.set_write_timeout(Some(Duration::from_millis(250)));
-        let _ = s.set_read_timeout(Some(Duration::from_millis(250)));
-        s
-    };
+    let mut last_err = None;
+    for attempt in 0..3 {
+        if attempt > 0 {
+            std::thread::sleep(Duration::from_millis(60));
+        }
 
-    #[cfg(windows)]
-    let mut stream = {
-        use std::net::TcpStream;
-        let s = TcpStream::connect("127.0.0.1:42069")?;
-        let _ = s.set_write_timeout(Some(Duration::from_millis(250)));
-        let _ = s.set_read_timeout(Some(Duration::from_millis(250)));
-        s
-    };
+        #[cfg(unix)]
+        let stream_res = {
+            use std::os::unix::net::UnixStream;
+            let socket_path = format!("{}/vrec.sock", std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string()));
+            UnixStream::connect(&socket_path)
+        };
 
-    stream.write_all(&len_buf)?;
-    stream.write_all(&payload)?;
+        #[cfg(windows)]
+        let stream_res = {
+            use std::net::TcpStream;
+            TcpStream::connect("127.0.0.1:42069")
+        };
 
-    let mut resp_len_buf = [0u8; 4];
-    stream.read_exact(&mut resp_len_buf)?;
-    let resp_len = u32::from_le_bytes(resp_len_buf) as usize;
-    let mut resp_payload = vec![0u8; resp_len];
-    stream.read_exact(&mut resp_payload)?;
-    let status: DaemonStatus = serde_json::from_slice(&resp_payload)?;
-    Ok(status)
+        match stream_res {
+            Ok(mut stream) => {
+                let _ = stream.set_write_timeout(Some(Duration::from_millis(1000)));
+                let _ = stream.set_read_timeout(Some(Duration::from_millis(1000)));
+
+                if stream.write_all(&len_buf).is_err() || stream.write_all(&payload).is_err() {
+                    continue;
+                }
+
+                let mut resp_len_buf = [0u8; 4];
+                if stream.read_exact(&mut resp_len_buf).is_err() {
+                    continue;
+                }
+                let resp_len = u32::from_le_bytes(resp_len_buf) as usize;
+                let mut resp_payload = vec![0u8; resp_len];
+                if stream.read_exact(&mut resp_payload).is_err() {
+                    continue;
+                }
+                if let Ok(status) = serde_json::from_slice::<DaemonStatus>(&resp_payload) {
+                    return Ok(status);
+                }
+            }
+            Err(e) => {
+                last_err = Some(Box::new(e) as Box<dyn std::error::Error + Send + Sync>);
+            }
+        }
+    }
+
+    Err(last_err.unwrap_or_else(|| "Failed to query status from vrec-daemon".into()))
 }

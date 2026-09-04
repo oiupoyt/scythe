@@ -490,8 +490,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     for stream in listener.incoming() {
         match stream {
             Ok(mut stream) => {
-                let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(250)));
-                let _ = stream.set_write_timeout(Some(std::time::Duration::from_millis(250)));
+                let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(1000)));
+                let _ = stream.set_write_timeout(Some(std::time::Duration::from_millis(1000)));
                 let mut len_buf = [0u8; 4];
                 if stream.read_exact(&mut len_buf).is_ok() {
                     let len = u32::from_le_bytes(len_buf) as usize;

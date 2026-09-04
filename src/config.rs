@@ -108,8 +108,23 @@ impl VrecConfig {
         path
     }
 
+    pub fn expand_tilde(path: &str) -> PathBuf {
+        let trimmed = path.trim();
+        if trimmed.starts_with("~/") {
+            if let Some(home) = dirs::home_dir() {
+                return home.join(&trimmed[2..]);
+            }
+        } else if trimmed == "~" {
+            if let Some(home) = dirs::home_dir() {
+                return home;
+            }
+        }
+        PathBuf::from(trimmed)
+    }
+
     pub fn resolve_save_path(&self, filename: &str) -> String {
-        let mut p = PathBuf::from(&self.output_directory);
+        let mut p = Self::expand_tilde(&self.output_directory);
+        let _ = fs::create_dir_all(&p);
         p.push(filename);
         p.to_string_lossy().to_string()
     }

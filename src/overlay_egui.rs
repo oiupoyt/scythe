@@ -1,7 +1,8 @@
 use eframe::egui;
 use egui::{Color32, CornerRadius, FontId, Margin, Stroke, Vec2};
+use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use crate::config::VrecConfig;
 use crate::ipc::{self, Command, DaemonStatus};
 
@@ -9,7 +10,76 @@ use crate::ipc::{self, Command, DaemonStatus};
 pub enum OverlayTab {
     Dashboard,
     AudioMixer,
+    Recordings,
     Settings,
+}
+
+#[derive(Debug, Clone)]
+pub struct VideoClipInfo {
+    pub filename: String,
+    pub path: PathBuf,
+    pub size_bytes: u64,
+    pub modified: SystemTime,
+    pub is_replay: bool,
+}
+
+fn scan_recordings(dir_str: &str) -> Vec<VideoClipInfo> {
+    let dir = VrecConfig::expand_tilde(dir_str);
+    let mut clips = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(ext) = path.extension() {
+                    let ext_str = ext.to_string_lossy().to_lowercase();
+                    if ext_str == "mp4" || ext_str == "mkv" {
+                        let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                        let is_replay = filename.starts_with("replay_");
+                        let size_bytes = entry.metadata().map(|m| m.len()).unwrap_or(0);
+                        let modified = entry.metadata().and_then(|m| m.modified()).unwrap_or(SystemTime::UNIX_EPOCH);
+                        clips.push(VideoClipInfo {
+                            filename,
+                            path,
+                            size_bytes,
+                            modified,
+                            is_replay,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    clips.sort_by(|a, b| b.modified.cmp(&a.modified));
+    clips
+}
+
+fn format_file_size(bytes: u64) -> String {
+    if bytes >= 1024 * 1024 * 1024 {
+        format!("{:.2} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
+    } else if bytes >= 1024 * 1024 {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    } else if bytes >= 1024 {
+        format!("{:.0} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{} B", bytes)
+    }
+}
+
+fn format_system_time(time: SystemTime) -> String {
+    if let Ok(dur) = SystemTime::now().duration_since(time) {
+        let secs = dur.as_secs();
+        if secs < 60 {
+            "Just now".to_string()
+        } else if secs < 3600 {
+            format!("{} min ago", secs / 60)
+        } else if secs < 86400 {
+            format!("{} hr ago", secs / 3600)
+        } else {
+            format!("{} days ago", secs / 86400)
+        }
+    } else {
+        "Recent".to_string()
+    }
 }
 
 pub struct VrecOverlayApp {
@@ -30,6 +100,8 @@ pub struct VrecOverlayApp {
     status_rx: Receiver<DaemonStatus>,
     folder_tx: Sender<String>,
     folder_rx: Receiver<String>,
+    clips: Vec<VideoClipInfo>,
+    last_clip_scan: Instant,
 }
 
 impl VrecOverlayApp {
@@ -56,12 +128,13 @@ impl VrecOverlayApp {
                 if let Ok(s) = ipc::query_status() {
                     let _ = status_tx.send(s);
                 }
-                std::thread::sleep(Duration::from_millis(250));
+                std::thread::sleep(Duration::from_millis(300));
             }
         });
 
         // Channel for asynchronous folder picker dialog
         let (folder_tx, folder_rx) = channel::<String>();
+        let clips = scan_recordings(&output_dir);
 
         Self {
             config,
@@ -81,7 +154,14 @@ impl VrecOverlayApp {
             status_rx,
             folder_tx,
             folder_rx,
+            clips,
+            last_clip_scan: Instant::now(),
         }
+    }
+
+    pub fn refresh_clips(&mut self) {
+        self.clips = scan_recordings(&self.output_dir);
+        self.last_clip_scan = Instant::now();
     }
 
     fn poll_async_events(&mut self) {
@@ -96,10 +176,17 @@ impl VrecOverlayApp {
 
         // Drain folder chooser responses
         if let Ok(chosen_dir) = self.folder_rx.try_recv() {
-            if !chosen_dir.trim().is_empty() {
-                self.output_dir = chosen_dir;
+            let trimmed = chosen_dir.trim();
+            if !trimmed.is_empty() {
+                self.output_dir = trimmed.to_string();
+                self.refresh_clips();
                 self.set_msg("Save directory updated!");
             }
+        }
+
+        // Periodic auto-refresh for recordings tab
+        if self.current_tab == OverlayTab::Recordings && self.last_clip_scan.elapsed() > Duration::from_secs(3) {
+            self.refresh_clips();
         }
     }
 
@@ -125,18 +212,19 @@ fn render_keycap(ui: &mut egui::Ui, text: &str) {
         });
 }
 
-// Helper pill button
+// Helper pill button with glowing active state
 fn pill(ui: &mut egui::Ui, text: &str, active: bool) -> bool {
-    let fill = if active { Color32::from_rgb(37, 99, 235) } else { Color32::from_rgb(22, 28, 40) };
-    let stroke = if active { Stroke::new(1.0_f32, Color32::from_rgb(96, 165, 250)) } else { Stroke::new(1.0_f32, Color32::from_rgb(42, 53, 75)) };
-    let btn = egui::Button::new(egui::RichText::new(text).size(11.0).color(Color32::from_rgb(240, 246, 252)))
+    let fill = if active { Color32::from_rgb(37, 99, 235) } else { Color32::from_rgb(20, 26, 38) };
+    let stroke = if active { Stroke::new(1.0_f32, Color32::from_rgb(96, 165, 250)) } else { Stroke::new(1.0_f32, Color32::from_rgb(38, 48, 70)) };
+    let text_color = if active { Color32::WHITE } else { Color32::from_rgb(203, 213, 225) };
+    let btn = egui::Button::new(egui::RichText::new(text).size(11.0).color(text_color))
         .fill(fill)
         .stroke(stroke)
-        .corner_radius(CornerRadius::same(5_u8));
+        .corner_radius(CornerRadius::same(6_u8));
     ui.add(btn).clicked()
 }
 
-// Render studio level VU Meter
+// Render studio level VU Meter with graded segments
 fn render_vu_meter(ui: &mut egui::Ui, level_pct: f32, active: bool, anim_phase: f32) {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 16.0), egui::Sense::hover());
     let painter = ui.painter();
@@ -188,31 +276,31 @@ impl eframe::App for VrecOverlayApp {
 
         // Custom cyber-stealth dark theme
         let mut visuals = egui::Visuals::dark();
-        visuals.panel_fill = Color32::from_rgb(11, 14, 20);
-        visuals.window_fill = Color32::from_rgb(11, 14, 20);
-        visuals.window_stroke = Stroke::new(1.5_f32, Color32::from_rgb(38, 46, 64));
+        visuals.panel_fill = Color32::from_rgb(10, 13, 19);
+        visuals.window_fill = Color32::from_rgb(10, 13, 19);
+        visuals.window_stroke = Stroke::new(1.5_f32, Color32::from_rgb(34, 44, 64));
         visuals.window_corner_radius = CornerRadius::same(14_u8);
         ctx.set_visuals(visuals);
 
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::NONE
-                    .fill(Color32::from_rgba_premultiplied(11, 14, 20, 250))
-                    .stroke(Stroke::new(1.5_f32, Color32::from_rgb(34, 42, 60)))
+                    .fill(Color32::from_rgba_premultiplied(10, 13, 19, 252))
+                    .stroke(Stroke::new(1.5_f32, Color32::from_rgb(34, 44, 64)))
                     .corner_radius(CornerRadius::same(14_u8))
                     .inner_margin(Margin::same(16_i8)),
             )
             .show(ctx, |ui| {
                 // Top Header Bar
                 ui.horizontal(|ui| {
+                    // Logo & Brand
                     ui.label(
-                        egui::RichText::new("VREC STUDIO")
-                            .font(FontId::proportional(19.0))
+                        egui::RichText::new("VREC")
+                            .font(FontId::proportional(20.0))
                             .strong()
                             .color(Color32::from_rgb(56, 189, 248)),
                     );
 
-                    // Micro pill tag: GPU ACCELERATED
                     egui::Frame::NONE
                         .fill(Color32::from_rgb(20, 26, 38))
                         .stroke(Stroke::new(1.0_f32, Color32::from_rgb(45, 55, 78)))
@@ -220,7 +308,7 @@ impl eframe::App for VrecOverlayApp {
                         .inner_margin(Margin::symmetric(6_i8, 2_i8))
                         .show(ui, |ui| {
                             ui.label(
-                                egui::RichText::new("HARDWARE ACCELERATED")
+                                egui::RichText::new("STUDIO PRO")
                                     .font(FontId::monospace(9.0))
                                     .strong()
                                     .color(Color32::from_rgb(148, 163, 184)),
@@ -229,15 +317,17 @@ impl eframe::App for VrecOverlayApp {
 
                     ui.add_space(4.0);
 
-                    // Capsule Status Badge
+                    // Dynamic Capsule Status Badge with pulsing glow
+                    let pulse = ((self.anim_time * 3.5).sin() * 0.3 + 0.7).clamp(0.4, 1.0);
                     let (status_bg, status_border, dot_color, status_text) = if !self.daemon_connected {
                         (Color32::from_rgba_unmultiplied(100, 116, 139, 30), Color32::from_rgb(71, 85, 105), Color32::from_rgb(148, 163, 184), "CONNECTING".to_string())
                     } else if self.status.is_recording {
                         let d = self.status.recording_duration_sec;
                         let text = format!("RECORDING {:02}:{:02}:{:02}", d / 3600, (d % 3600) / 60, d % 60);
-                        (Color32::from_rgba_unmultiplied(220, 38, 38, 35), Color32::from_rgb(239, 68, 68), Color32::from_rgb(248, 113, 113), text)
+                        let glow_red = Color32::from_rgb((239.0 * pulse) as u8, 68, 68);
+                        (Color32::from_rgba_unmultiplied(220, 38, 38, 40), glow_red, glow_red, text)
                     } else if self.status.is_replay_active {
-                        let text = format!("REPLAY ARMED ({}s)", self.config.replay_duration_sec);
+                        let text = format!("REPLAY READY ({}s)", self.config.replay_duration_sec);
                         (Color32::from_rgba_unmultiplied(16, 185, 129, 30), Color32::from_rgb(34, 197, 94), Color32::from_rgb(52, 211, 153), text)
                     } else {
                         (Color32::from_rgba_unmultiplied(71, 85, 105, 30), Color32::from_rgb(71, 85, 105), Color32::from_rgb(148, 163, 184), "STANDBY".to_string())
@@ -261,30 +351,33 @@ impl eframe::App for VrecOverlayApp {
                             });
                         });
 
-                    // Navigation Tabs & Close Button on Right
+                    // Navigation Tabs & Controls on the Right
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // Close Window
                         let close_btn = egui::Button::new(egui::RichText::new("X").strong().color(Color32::from_rgb(203, 213, 225)))
-                            .fill(Color32::from_rgb(28, 33, 46))
+                            .fill(Color32::from_rgb(26, 32, 46))
                             .stroke(Stroke::new(1.0_f32, Color32::from_rgb(45, 55, 75)))
                             .corner_radius(CornerRadius::same(6_u8));
                         if ui.add_sized([28.0, 26.0], close_btn).clicked() {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                         }
 
-                        let folder_btn = egui::Button::new(egui::RichText::new("Open Videos").size(11.0).color(Color32::from_rgb(203, 213, 225)))
-                            .fill(Color32::from_rgb(24, 30, 42))
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(45, 55, 75)))
+                        // Open Folder Quick Action
+                        let folder_btn = egui::Button::new(egui::RichText::new("Open Folder").size(11.0).color(Color32::from_rgb(203, 213, 225)))
+                            .fill(Color32::from_rgb(22, 28, 40))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(42, 53, 75)))
                             .corner_radius(CornerRadius::same(6_u8));
-                        if ui.add_sized([88.0, 26.0], folder_btn).clicked() {
-                            let dir = self.output_dir.clone();
+                        if ui.add_sized([86.0, 26.0], folder_btn).clicked() {
+                            let resolved = VrecConfig::expand_tilde(&self.output_dir);
+                            let _ = std::fs::create_dir_all(&resolved);
                             std::thread::spawn(move || {
-                                let _ = std::process::Command::new("xdg-open").arg(dir).spawn();
+                                let _ = std::process::Command::new("xdg-open").arg(resolved).spawn();
                             });
                         }
 
-                        // Quick Cursor Toggle Button
+                        // Quick Cursor Toggle Capsule
                         let (cursor_label, cursor_color, cursor_bg) = if self.show_cursor {
-                            ("Cursor: ON", Color32::from_rgb(52, 211, 153), Color32::from_rgb(20, 35, 30))
+                            ("Cursor: ON", Color32::from_rgb(52, 211, 153), Color32::from_rgb(20, 36, 30))
                         } else {
                             ("Cursor: OFF", Color32::from_rgb(148, 163, 184), Color32::from_rgb(24, 30, 42))
                         };
@@ -300,41 +393,53 @@ impl eframe::App for VrecOverlayApp {
                             self.set_msg(msg);
                         }
 
-                        // Tab Switcher Pills
+                        // Tab 4: Settings
                         let settings_active = self.current_tab == OverlayTab::Settings;
-                        let settings_fill = if settings_active { Color32::from_rgb(37, 99, 235) } else { Color32::from_rgb(20, 26, 38) };
-                        let settings_stroke = if settings_active { Stroke::new(1.0_f32, Color32::from_rgb(96, 165, 250)) } else { Stroke::new(1.0_f32, Color32::from_rgb(40, 50, 72)) };
+                        let settings_fill = if settings_active { Color32::from_rgb(37, 99, 235) } else { Color32::from_rgb(18, 24, 34) };
+                        let settings_stroke = if settings_active { Stroke::new(1.0_f32, Color32::from_rgb(96, 165, 250)) } else { Stroke::new(1.0_f32, Color32::from_rgb(38, 48, 68)) };
                         let settings_btn = egui::Button::new(egui::RichText::new("Settings").size(11.5).color(Color32::WHITE))
                             .fill(settings_fill)
                             .stroke(settings_stroke)
                             .corner_radius(CornerRadius::same(6_u8));
-                        if ui.add_sized([72.0, 26.0], settings_btn).clicked() {
+                        if ui.add_sized([74.0, 26.0], settings_btn).clicked() {
                             self.current_tab = OverlayTab::Settings;
-                            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(840.0, 520.0)));
                         }
 
+                        // Tab 3: Recordings
+                        let rec_active = self.current_tab == OverlayTab::Recordings;
+                        let rec_fill = if rec_active { Color32::from_rgb(16, 185, 129) } else { Color32::from_rgb(18, 24, 34) };
+                        let rec_stroke = if rec_active { Stroke::new(1.0_f32, Color32::from_rgb(52, 211, 153)) } else { Stroke::new(1.0_f32, Color32::from_rgb(38, 48, 68)) };
+                        let rec_btn = egui::Button::new(egui::RichText::new("Recordings").size(11.5).color(Color32::WHITE))
+                            .fill(rec_fill)
+                            .stroke(rec_stroke)
+                            .corner_radius(CornerRadius::same(6_u8));
+                        if ui.add_sized([86.0, 26.0], rec_btn).clicked() {
+                            self.current_tab = OverlayTab::Recordings;
+                            self.refresh_clips();
+                        }
+
+                        // Tab 2: Audio Mixer
                         let audio_active = self.current_tab == OverlayTab::AudioMixer;
-                        let audio_fill = if audio_active { Color32::from_rgb(124, 58, 237) } else { Color32::from_rgb(20, 26, 38) };
-                        let audio_stroke = if audio_active { Stroke::new(1.0_f32, Color32::from_rgb(168, 85, 247)) } else { Stroke::new(1.0_f32, Color32::from_rgb(40, 50, 72)) };
+                        let audio_fill = if audio_active { Color32::from_rgb(124, 58, 237) } else { Color32::from_rgb(18, 24, 34) };
+                        let audio_stroke = if audio_active { Stroke::new(1.0_f32, Color32::from_rgb(168, 85, 247)) } else { Stroke::new(1.0_f32, Color32::from_rgb(38, 48, 68)) };
                         let audio_btn = egui::Button::new(egui::RichText::new("Audio Mixer").size(11.5).color(Color32::WHITE))
                             .fill(audio_fill)
                             .stroke(audio_stroke)
                             .corner_radius(CornerRadius::same(6_u8));
                         if ui.add_sized([86.0, 26.0], audio_btn).clicked() {
                             self.current_tab = OverlayTab::AudioMixer;
-                            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(840.0, 480.0)));
                         }
 
+                        // Tab 1: Dashboard
                         let dash_active = self.current_tab == OverlayTab::Dashboard;
-                        let dash_fill = if dash_active { Color32::from_rgb(37, 99, 235) } else { Color32::from_rgb(20, 26, 38) };
-                        let dash_stroke = if dash_active { Stroke::new(1.0_f32, Color32::from_rgb(96, 165, 250)) } else { Stroke::new(1.0_f32, Color32::from_rgb(40, 50, 72)) };
+                        let dash_fill = if dash_active { Color32::from_rgb(37, 99, 235) } else { Color32::from_rgb(18, 24, 34) };
+                        let dash_stroke = if dash_active { Stroke::new(1.0_f32, Color32::from_rgb(96, 165, 250)) } else { Stroke::new(1.0_f32, Color32::from_rgb(38, 48, 68)) };
                         let dash_btn = egui::Button::new(egui::RichText::new("Dashboard").size(11.5).color(Color32::WHITE))
                             .fill(dash_fill)
                             .stroke(dash_stroke)
                             .corner_radius(CornerRadius::same(6_u8));
                         if ui.add_sized([80.0, 26.0], dash_btn).clicked() {
                             self.current_tab = OverlayTab::Dashboard;
-                            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(840.0, 310.0)));
                         }
                     });
                 });
@@ -342,7 +447,7 @@ impl eframe::App for VrecOverlayApp {
                 // Toast status feedback
                 if let Some((msg, time)) = &self.status_msg {
                     if time.elapsed() < Duration::from_secs(3) {
-                        ui.add_space(4.0);
+                        ui.add_space(6.0);
                         egui::Frame::NONE
                             .fill(Color32::from_rgba_unmultiplied(16, 185, 129, 25))
                             .stroke(Stroke::new(1.0_f32, Color32::from_rgb(16, 185, 129)))
@@ -361,12 +466,12 @@ impl eframe::App for VrecOverlayApp {
 
                 ui.add_space(10.0);
 
-                // VIEW: DASHBOARD
+                // TAB 1: DASHBOARD
                 if self.current_tab == OverlayTab::Dashboard {
                     ui.columns(3, |cols| {
                         // Card 1: Instant Replay
                         let replay_border = if self.status.is_replay_active {
-                            Stroke::new(1.0_f32, Color32::from_rgb(16, 185, 129))
+                            Stroke::new(1.2_f32, Color32::from_rgb(16, 185, 129))
                         } else {
                             Stroke::new(1.0_f32, Color32::from_rgb(32, 42, 60))
                         };
@@ -374,29 +479,43 @@ impl eframe::App for VrecOverlayApp {
                             .fill(Color32::from_rgb(15, 19, 28))
                             .stroke(replay_border)
                             .corner_radius(CornerRadius::same(10_u8))
-                            .inner_margin(Margin::same(14_i8))
+                            .inner_margin(Margin::same(16_i8))
                             .show(&mut cols[0], |ui| {
-                                ui.set_min_height(160.0);
+                                ui.set_min_height(360.0);
                                 ui.vertical_centered(|ui| {
-                                    ui.label(egui::RichText::new("INSTANT REPLAY").font(FontId::monospace(11.0)).strong().color(Color32::from_rgb(148, 163, 184)));
-                                    let buf_label = format!("Buffer: {} seconds in RAM", self.config.replay_duration_sec);
-                                    ui.label(egui::RichText::new(buf_label).font(FontId::proportional(11.0)).color(Color32::from_rgb(56, 189, 248)));
-                                    ui.add_space(14.0);
-                                    let save_btn = egui::Button::new(egui::RichText::new("Save Instant Replay").strong().color(Color32::WHITE))
+                                    ui.label(egui::RichText::new("INSTANT REPLAY").font(FontId::monospace(12.0)).strong().color(Color32::from_rgb(148, 163, 184)));
+                                    ui.add_space(2.0);
+                                    let buf_label = format!("RAM Buffer: {}s Loop", self.config.replay_duration_sec);
+                                    ui.label(egui::RichText::new(buf_label).font(FontId::proportional(11.5)).color(Color32::from_rgb(56, 189, 248)));
+                                    
+                                    ui.add_space(20.0);
+                                    let save_btn = egui::Button::new(egui::RichText::new("Save Instant Replay").font(FontId::proportional(13.0)).strong().color(Color32::WHITE))
                                         .fill(Color32::from_rgb(16, 185, 129))
-                                        .corner_radius(CornerRadius::same(7_u8));
-                                    if ui.add_sized([180.0, 36.0], save_btn).clicked() {
+                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(52, 211, 153)))
+                                        .corner_radius(CornerRadius::same(8_u8));
+                                    if ui.add_sized([210.0, 42.0], save_btn).clicked() {
                                         let _ = ipc::send_command(Command::SaveReplay);
-                                        self.set_msg("Replay save command sent");
+                                        self.set_msg("Instant replay capture initiated");
+                                        self.refresh_clips();
                                     }
-                                    ui.add_space(10.0);
+                                    
+                                    ui.add_space(14.0);
+                                    ui.label(egui::RichText::new("Hotkey Trigger:").font(FontId::proportional(10.5)).color(Color32::from_rgb(100, 116, 139)));
+                                    ui.add_space(4.0);
                                     render_keycap(ui, &self.config.save_hotkey);
+                                    
+                                    ui.add_space(20.0);
+                                    ui.label(
+                                        egui::RichText::new("Continually keeps the last 60s in system RAM. Zero disk wear until saved.")
+                                            .font(FontId::proportional(10.0))
+                                            .color(Color32::from_rgb(100, 116, 139)),
+                                    );
                                 });
                             });
 
                         // Card 2: Screen Recording
                         let rec_border = if self.status.is_recording {
-                            Stroke::new(1.0_f32, Color32::from_rgb(239, 68, 68))
+                            Stroke::new(1.2_f32, Color32::from_rgb(239, 68, 68))
                         } else {
                             Stroke::new(1.0_f32, Color32::from_rgb(32, 42, 60))
                         };
@@ -404,91 +523,112 @@ impl eframe::App for VrecOverlayApp {
                             .fill(Color32::from_rgb(15, 19, 28))
                             .stroke(rec_border)
                             .corner_radius(CornerRadius::same(10_u8))
-                            .inner_margin(Margin::same(14_i8))
+                            .inner_margin(Margin::same(16_i8))
                             .show(&mut cols[1], |ui| {
-                                ui.set_min_height(160.0);
+                                ui.set_min_height(360.0);
                                 ui.vertical_centered(|ui| {
-                                    ui.label(egui::RichText::new("SCREEN RECORDING").font(FontId::monospace(11.0)).strong().color(Color32::from_rgb(148, 163, 184)));
-                                    let timer_text = if self.status.is_recording {
+                                    ui.label(egui::RichText::new("SCREEN RECORDING").font(FontId::monospace(12.0)).strong().color(Color32::from_rgb(148, 163, 184)));
+                                    ui.add_space(2.0);
+                                    let (timer_text, timer_color) = if self.status.is_recording {
                                         let d = self.status.recording_duration_sec;
-                                        format!("Active: {:02}:{:02}:{:02}", d / 3600, (d % 3600) / 60, d % 60)
+                                        (format!("Active: {:02}:{:02}:{:02}", d / 3600, (d % 3600) / 60, d % 60), Color32::from_rgb(248, 113, 113))
                                     } else {
-                                        "Status: Ready to Record".to_string()
+                                        ("Status: Standby (Ready)".to_string(), Color32::from_rgb(100, 116, 139))
                                     };
-                                    let timer_color = if self.status.is_recording { Color32::from_rgb(248, 113, 113) } else { Color32::from_rgb(100, 116, 139) };
-                                    ui.label(egui::RichText::new(timer_text).font(FontId::proportional(11.0)).color(timer_color));
-                                    ui.add_space(14.0);
-                                    let (rec_label, rec_color) = if self.status.is_recording {
-                                        ("Stop Recording", Color32::from_rgb(220, 38, 38))
+                                    ui.label(egui::RichText::new(timer_text).font(FontId::proportional(11.5)).color(timer_color));
+
+                                    ui.add_space(20.0);
+                                    let (rec_label, rec_fill, rec_stroke) = if self.status.is_recording {
+                                        ("Stop Recording", Color32::from_rgb(220, 38, 38), Color32::from_rgb(248, 113, 113))
                                     } else {
-                                        ("Start Recording", Color32::from_rgb(37, 99, 235))
+                                        ("Start Recording", Color32::from_rgb(37, 99, 235), Color32::from_rgb(96, 165, 250))
                                     };
-                                    let rec_btn = egui::Button::new(egui::RichText::new(rec_label).strong().color(Color32::WHITE))
-                                        .fill(rec_color)
-                                        .corner_radius(CornerRadius::same(7_u8));
-                                    if ui.add_sized([180.0, 36.0], rec_btn).clicked() {
+                                    let rec_btn = egui::Button::new(egui::RichText::new(rec_label).font(FontId::proportional(13.0)).strong().color(Color32::WHITE))
+                                        .fill(rec_fill)
+                                        .stroke(Stroke::new(1.0_f32, rec_stroke))
+                                        .corner_radius(CornerRadius::same(8_u8));
+                                    if ui.add_sized([210.0, 42.0], rec_btn).clicked() {
                                         let _ = ipc::send_command(Command::ToggleRecording);
                                         self.set_msg("Recording toggled");
+                                        self.refresh_clips();
                                     }
-                                    ui.add_space(10.0);
+
+                                    ui.add_space(14.0);
+                                    ui.label(egui::RichText::new("Hotkey Trigger:").font(FontId::proportional(10.5)).color(Color32::from_rgb(100, 116, 139)));
+                                    ui.add_space(4.0);
                                     render_keycap(ui, &self.config.record_hotkey);
+
+                                    ui.add_space(20.0);
+                                    ui.label(
+                                        egui::RichText::new("Direct NV12 hardware encoding stream recorded straight to disk.")
+                                            .font(FontId::proportional(10.0))
+                                            .color(Color32::from_rgb(100, 116, 139)),
+                                    );
                                 });
                             });
 
-                        // Card 3: Audio Deck
+                        // Card 3: Audio & Controls Deck
                         egui::Frame::NONE
                             .fill(Color32::from_rgb(15, 19, 28))
                             .stroke(Stroke::new(1.0_f32, Color32::from_rgb(32, 42, 60)))
                             .corner_radius(CornerRadius::same(10_u8))
-                            .inner_margin(Margin::same(14_i8))
+                            .inner_margin(Margin::same(16_i8))
                             .show(&mut cols[2], |ui| {
-                                ui.set_min_height(160.0);
+                                ui.set_min_height(360.0);
                                 ui.vertical_centered(|ui| {
-                                    ui.label(egui::RichText::new("AUDIO & CURSOR").font(FontId::monospace(11.0)).strong().color(Color32::from_rgb(148, 163, 184)));
+                                    ui.label(egui::RichText::new("AUDIO & CONTROLS").font(FontId::monospace(12.0)).strong().color(Color32::from_rgb(148, 163, 184)));
+                                    ui.add_space(2.0);
                                     let mode_name = match self.status.audio_mode.as_str() {
                                         "mic" => format!("Mic Only ({}%)", self.mic_volume_pct),
                                         "both" => format!("System + Mic ({}%)", self.mic_volume_pct),
-                                        "muted" => "Muted".to_string(),
+                                        "muted" => "Muted (Silent)".to_string(),
                                         _ => format!("System Audio ({}%)", self.system_volume_pct),
                                     };
-                                    ui.label(egui::RichText::new(mode_name).font(FontId::proportional(11.0)).color(Color32::from_rgb(168, 85, 247)));
-                                    ui.add_space(14.0);
-                                    let audio_btn = egui::Button::new(egui::RichText::new("Cycle Audio Mode").strong().color(Color32::from_rgb(226, 232, 240)))
+                                    ui.label(egui::RichText::new(mode_name).font(FontId::proportional(11.5)).color(Color32::from_rgb(168, 85, 247)));
+
+                                    ui.add_space(20.0);
+                                    let audio_btn = egui::Button::new(egui::RichText::new("Cycle Audio Mode").font(FontId::proportional(13.0)).strong().color(Color32::from_rgb(226, 232, 240)))
                                         .fill(Color32::from_rgb(28, 36, 52))
-                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(46, 60, 86)))
-                                        .corner_radius(CornerRadius::same(7_u8));
-                                    if ui.add_sized([180.0, 36.0], audio_btn).clicked() {
+                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(48, 62, 88)))
+                                        .corner_radius(CornerRadius::same(8_u8));
+                                    if ui.add_sized([210.0, 42.0], audio_btn).clicked() {
                                         let _ = ipc::send_command(Command::CycleAudioMode);
                                         self.set_msg("Audio mode cycled");
                                     }
-                                    ui.add_space(10.0);
-                                    ui.horizontal(|ui| {
-                                        render_keycap(ui, "Cycle");
-                                        ui.add_space(2.0);
-                                        render_keycap(ui, &self.config.cursor_hotkey);
-                                    });
+
+                                    ui.add_space(14.0);
+                                    ui.label(egui::RichText::new("Quick Cursor Toggle:").font(FontId::proportional(10.5)).color(Color32::from_rgb(100, 116, 139)));
+                                    ui.add_space(4.0);
+                                    render_keycap(ui, &self.config.cursor_hotkey);
+
+                                    ui.add_space(20.0);
+                                    ui.label(
+                                        egui::RichText::new("PulseAudio/PipeWire native streaming with real-time soft-knee anti-clipping.")
+                                            .font(FontId::proportional(10.0))
+                                            .color(Color32::from_rgb(100, 116, 139)),
+                                    );
                                 });
                             });
                     });
 
-                    ui.add_space(8.0);
+                    ui.add_space(12.0);
 
                     // Bottom info ribbon
                     egui::Frame::NONE
                         .fill(Color32::from_rgb(13, 16, 24))
                         .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 32, 46)))
                         .corner_radius(CornerRadius::same(6_u8))
-                        .inner_margin(Margin::symmetric(12_i8, 6_i8))
+                        .inner_margin(Margin::symmetric(14_i8, 8_i8))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 ui.label(
                                     egui::RichText::new(format!("Hardware Engine: VAAPI NV12 Direct • {} FPS • {} Mbps", self.config.fps, self.bitrate_mbps))
                                         .font(FontId::monospace(10.0))
                                         .color(Color32::from_rgb(100, 116, 139)),
-                                );
+                                    );
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     ui.label(
-                                        egui::RichText::new(format!("Save: {}", self.output_dir))
+                                        egui::RichText::new(format!("Folder: {}", self.output_dir))
                                             .font(FontId::monospace(10.0))
                                             .color(Color32::from_rgb(100, 116, 139)),
                                     );
@@ -497,9 +637,9 @@ impl eframe::App for VrecOverlayApp {
                         });
                 }
 
-                // TAB 2: AUDIO MIXER & LEVELS (Dedicated Studio Audio Tab)
+                // TAB 2: AUDIO MIXER & LEVELS
                 if self.current_tab == OverlayTab::AudioMixer {
-                    egui::ScrollArea::vertical().max_height(380.0).show(ui, |ui| {
+                    egui::ScrollArea::vertical().max_height(410.0).show(ui, |ui| {
                         // Master Channel Strips
                         ui.columns(2, |ch_cols| {
                             // Strip 1: Microphone Input
@@ -507,7 +647,7 @@ impl eframe::App for VrecOverlayApp {
                                 .fill(Color32::from_rgb(15, 19, 28))
                                 .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 44, 64)))
                                 .corner_radius(CornerRadius::same(10_u8))
-                                .inner_margin(Margin::same(14_i8))
+                                .inner_margin(Margin::same(16_i8))
                                 .show(&mut ch_cols[0], |ui| {
                                     ui.horizontal(|ui| {
                                         ui.label(
@@ -526,39 +666,39 @@ impl eframe::App for VrecOverlayApp {
                                         });
                                     });
 
-                                    ui.add_space(4.0);
+                                    ui.add_space(3.0);
                                     ui.label(
-                                        egui::RichText::new("PulseAudio/PipeWire Native Source (@DEFAULT_SOURCE@)")
+                                        egui::RichText::new("PulseAudio Native Source (@DEFAULT_SOURCE@)")
                                             .font(FontId::monospace(9.0))
                                             .color(Color32::from_rgb(100, 116, 139)),
                                     );
 
-                                    ui.add_space(8.0);
+                                    ui.add_space(10.0);
                                     ui.add(egui::Slider::new(&mut self.mic_volume_pct, 0..=150).text("Gain"));
 
-                                    ui.add_space(6.0);
+                                    ui.add_space(8.0);
                                     ui.horizontal(|ui| {
                                         ui.label(egui::RichText::new("Presets:").font(FontId::proportional(10.0)).color(Color32::from_rgb(100, 116, 139)));
-                                        if pill(ui, "30% Low", self.mic_volume_pct == 30) { self.mic_volume_pct = 30; }
+                                        if pill(ui, "30% Mellow", self.mic_volume_pct == 30) { self.mic_volume_pct = 30; }
                                         if pill(ui, "60% Optimal", self.mic_volume_pct == 60) { self.mic_volume_pct = 60; }
-                                        if pill(ui, "80% Loud", self.mic_volume_pct == 80) { self.mic_volume_pct = 80; }
+                                        if pill(ui, "80% High", self.mic_volume_pct == 80) { self.mic_volume_pct = 80; }
                                         if pill(ui, "100% Max", self.mic_volume_pct == 100) { self.mic_volume_pct = 100; }
                                     });
 
-                                    ui.add_space(10.0);
+                                    ui.add_space(12.0);
                                     ui.label(egui::RichText::new("Live Input Peak Meter").font(FontId::proportional(10.5)).color(Color32::from_rgb(148, 163, 184)));
                                     let is_mic_active = self.status.audio_mode == "mic" || self.status.audio_mode == "both";
                                     render_vu_meter(ui, self.mic_volume_pct as f32, is_mic_active, self.anim_time);
 
-                                    ui.add_space(8.0);
+                                    ui.add_space(10.0);
                                     egui::Frame::NONE
                                         .fill(Color32::from_rgba_unmultiplied(16, 185, 129, 20))
                                         .stroke(Stroke::new(1.0_f32, Color32::from_rgb(16, 185, 129)))
                                         .corner_radius(CornerRadius::same(5_u8))
-                                        .inner_margin(Margin::symmetric(8_i8, 4_i8))
+                                        .inner_margin(Margin::symmetric(8_i8, 5_i8))
                                         .show(ui, |ui| {
                                             ui.label(
-                                                egui::RichText::new("Anti-Clipping Soft-Knee Limiter Active")
+                                                egui::RichText::new("Anti-Clipping Soft-Knee Limiter Active (Smooth Peak Saturation)")
                                                     .font(FontId::monospace(9.5))
                                                     .color(Color32::from_rgb(52, 211, 153)),
                                             );
@@ -570,7 +710,7 @@ impl eframe::App for VrecOverlayApp {
                                 .fill(Color32::from_rgb(15, 19, 28))
                                 .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 44, 64)))
                                 .corner_radius(CornerRadius::same(10_u8))
-                                .inner_margin(Margin::same(14_i8))
+                                .inner_margin(Margin::same(16_i8))
                                 .show(&mut ch_cols[1], |ui| {
                                     ui.horizontal(|ui| {
                                         ui.label(
@@ -589,17 +729,17 @@ impl eframe::App for VrecOverlayApp {
                                         });
                                     });
 
-                                    ui.add_space(4.0);
+                                    ui.add_space(3.0);
                                     ui.label(
                                         egui::RichText::new("PipeWire Audio Monitor Sink (@DEFAULT_MONITOR@)")
                                             .font(FontId::monospace(9.0))
                                             .color(Color32::from_rgb(100, 116, 139)),
                                     );
 
-                                    ui.add_space(8.0);
+                                    ui.add_space(10.0);
                                     ui.add(egui::Slider::new(&mut self.system_volume_pct, 0..=150).text("Level"));
 
-                                    ui.add_space(6.0);
+                                    ui.add_space(8.0);
                                     ui.horizontal(|ui| {
                                         ui.label(egui::RichText::new("Presets:").font(FontId::proportional(10.0)).color(Color32::from_rgb(100, 116, 139)));
                                         if pill(ui, "50% Half", self.system_volume_pct == 50) { self.system_volume_pct = 50; }
@@ -607,20 +747,20 @@ impl eframe::App for VrecOverlayApp {
                                         if pill(ui, "100% Full", self.system_volume_pct == 100) { self.system_volume_pct = 100; }
                                     });
 
-                                    ui.add_space(10.0);
+                                    ui.add_space(12.0);
                                     ui.label(egui::RichText::new("Live System Output Level").font(FontId::proportional(10.5)).color(Color32::from_rgb(148, 163, 184)));
                                     let is_sys_active = self.status.audio_mode != "muted" && self.status.audio_mode != "mic";
                                     render_vu_meter(ui, self.system_volume_pct as f32, is_sys_active, self.anim_time * 0.85);
 
-                                    ui.add_space(8.0);
+                                    ui.add_space(10.0);
                                     egui::Frame::NONE
                                         .fill(Color32::from_rgba_unmultiplied(124, 58, 237, 20))
                                         .stroke(Stroke::new(1.0_f32, Color32::from_rgb(139, 92, 246)))
                                         .corner_radius(CornerRadius::same(5_u8))
-                                        .inner_margin(Margin::symmetric(8_i8, 4_i8))
+                                        .inner_margin(Margin::symmetric(8_i8, 5_i8))
                                         .show(ui, |ui| {
                                             ui.label(
-                                                egui::RichText::new("Direct PulseAudio Hardware Interceptor")
+                                                egui::RichText::new("Direct PulseAudio Hardware Interceptor (Zero Latency)")
                                                     .font(FontId::monospace(9.5))
                                                     .color(Color32::from_rgb(196, 181, 253)),
                                             );
@@ -628,22 +768,22 @@ impl eframe::App for VrecOverlayApp {
                                 });
                         });
 
-                        ui.add_space(10.0);
+                        ui.add_space(12.0);
 
-                        // Section 2: Audio Routing Selection
+                        // Audio Routing Tiles
                         egui::Frame::NONE
                             .fill(Color32::from_rgb(15, 19, 28))
                             .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 44, 64)))
                             .corner_radius(CornerRadius::same(10_u8))
-                            .inner_margin(Margin::same(12_i8))
+                            .inner_margin(Margin::same(14_i8))
                             .show(ui, |ui| {
                                 ui.label(
-                                    egui::RichText::new("STREAM AUDIO ROUTING")
+                                    egui::RichText::new("STREAM AUDIO ROUTING MODE")
                                         .font(FontId::proportional(12.0))
                                         .strong()
                                         .color(Color32::from_rgb(203, 213, 225)),
                                 );
-                                ui.add_space(6.0);
+                                ui.add_space(8.0);
                                 ui.horizontal(|ui| {
                                     if pill(ui, "System Audio Only", self.audio_mode_idx == 0) { self.audio_mode_idx = 0; }
                                     if pill(ui, "Microphone Only", self.audio_mode_idx == 1) { self.audio_mode_idx = 1; }
@@ -652,14 +792,15 @@ impl eframe::App for VrecOverlayApp {
                                 });
                             });
 
-                        ui.add_space(10.0);
+                        ui.add_space(12.0);
 
                         // Quick Apply Button for Audio
                         ui.horizontal(|ui| {
-                            let apply_audio_btn = egui::Button::new(egui::RichText::new("Apply Audio Mixer Settings").strong().color(Color32::WHITE))
+                            let apply_audio_btn = egui::Button::new(egui::RichText::new("Apply Audio Mixer Settings").font(FontId::proportional(12.5)).strong().color(Color32::WHITE))
                                 .fill(Color32::from_rgb(124, 58, 237))
+                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(168, 85, 247)))
                                 .corner_radius(CornerRadius::same(6_u8));
-                            if ui.add_sized([220.0, 32.0], apply_audio_btn).clicked() {
+                            if ui.add_sized([240.0, 36.0], apply_audio_btn).clicked() {
                                 self.config.mic_volume = self.mic_volume_pct as f32 / 100.0;
                                 self.config.system_volume = self.system_volume_pct as f32 / 100.0;
                                 self.config.audio_mode = match self.audio_mode_idx {
@@ -670,13 +811,143 @@ impl eframe::App for VrecOverlayApp {
                                 }.to_string();
                                 let _ = self.config.save();
                                 let _ = ipc::send_command(Command::ReloadConfig);
-                                self.set_msg("Audio mixer levels saved and reloaded!");
+                                self.set_msg("Audio mixer levels saved and reloaded into daemon!");
                             }
                         });
                     });
                 }
 
-                // TAB 3: SETTINGS
+                // TAB 3: RECORDINGS GALLERY
+                if self.current_tab == OverlayTab::Recordings {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new("SAVED RECORDINGS & REPLAYS")
+                                .font(FontId::proportional(13.0))
+                                .strong()
+                                .color(Color32::from_rgb(56, 189, 248)),
+                        );
+
+                        ui.label(
+                            egui::RichText::new(format!("({} clips found)", self.clips.len()))
+                                .font(FontId::monospace(11.0))
+                                .color(Color32::from_rgb(148, 163, 184)),
+                        );
+
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let refresh_btn = egui::Button::new(egui::RichText::new("Refresh").size(11.0).color(Color32::WHITE))
+                                .fill(Color32::from_rgb(30, 41, 59))
+                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(51, 65, 85)))
+                                .corner_radius(CornerRadius::same(5_u8));
+                            if ui.add_sized([70.0, 24.0], refresh_btn).clicked() {
+                                self.refresh_clips();
+                                self.set_msg("Recordings list refreshed");
+                            }
+
+                            let open_folder_btn = egui::Button::new(egui::RichText::new("Open Folder").size(11.0).color(Color32::WHITE))
+                                .fill(Color32::from_rgb(37, 99, 235))
+                                .corner_radius(CornerRadius::same(5_u8));
+                            if ui.add_sized([90.0, 24.0], open_folder_btn).clicked() {
+                                let resolved = VrecConfig::expand_tilde(&self.output_dir);
+                                let _ = std::fs::create_dir_all(&resolved);
+                                std::thread::spawn(move || {
+                                    let _ = std::process::Command::new("xdg-open").arg(resolved).spawn();
+                                });
+                            }
+                        });
+                    });
+
+                    ui.add_space(8.0);
+
+                    egui::ScrollArea::vertical().max_height(380.0).show(ui, |ui| {
+                        if self.clips.is_empty() {
+                            egui::Frame::NONE
+                                .fill(Color32::from_rgb(15, 19, 28))
+                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 44, 64)))
+                                .corner_radius(CornerRadius::same(10_u8))
+                                .inner_margin(Margin::same(24_i8))
+                                .show(ui, |ui| {
+                                    ui.vertical_centered(|ui| {
+                                        ui.label(
+                                            egui::RichText::new("NO RECORDINGS YET")
+                                                .font(FontId::monospace(13.0))
+                                                .strong()
+                                                .color(Color32::from_rgb(148, 163, 184)),
+                                        );
+                                        ui.add_space(6.0);
+                                        ui.label(
+                                            egui::RichText::new(format!("Videos will appear here as soon as you record or save a replay.\nSave Directory: {}", self.output_dir))
+                                                .font(FontId::proportional(11.0))
+                                                .color(Color32::from_rgb(100, 116, 139)),
+                                        );
+                                    });
+                                });
+                        } else {
+                            for clip in &self.clips {
+                                egui::Frame::NONE
+                                    .fill(Color32::from_rgb(15, 19, 28))
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(32, 42, 60)))
+                                    .corner_radius(CornerRadius::same(8_u8))
+                                    .inner_margin(Margin::symmetric(14_i8, 10_i8))
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            // Tag
+                                            let (tag_text, tag_fill, tag_color) = if clip.is_replay {
+                                                ("REPLAY", Color32::from_rgb(16, 185, 129), Color32::WHITE)
+                                            } else {
+                                                ("RECORD", Color32::from_rgb(37, 99, 235), Color32::WHITE)
+                                            };
+                                            egui::Frame::NONE
+                                                .fill(tag_fill)
+                                                .corner_radius(CornerRadius::same(4_u8))
+                                                .inner_margin(Margin::symmetric(6_i8, 2_i8))
+                                                .show(ui, |ui| {
+                                                    ui.label(
+                                                        egui::RichText::new(tag_text)
+                                                            .font(FontId::monospace(9.5))
+                                                            .strong()
+                                                            .color(tag_color),
+                                                    );
+                                                });
+
+                                            ui.add_space(8.0);
+
+                                            // Filename & Info
+                                            ui.vertical(|ui| {
+                                                ui.label(
+                                                    egui::RichText::new(&clip.filename)
+                                                        .font(FontId::monospace(11.5))
+                                                        .strong()
+                                                        .color(Color32::from_rgb(241, 245, 249)),
+                                                );
+                                                ui.label(
+                                                    egui::RichText::new(format!("{} • {}", format_file_size(clip.size_bytes), format_system_time(clip.modified)))
+                                                        .font(FontId::proportional(10.0))
+                                                        .color(Color32::from_rgb(148, 163, 184)),
+                                                );
+                                            });
+
+                                            // Play / Actions on Right
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                let play_btn = egui::Button::new(egui::RichText::new("Play Video").size(11.0).color(Color32::WHITE))
+                                                    .fill(Color32::from_rgb(16, 185, 129))
+                                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(52, 211, 153)))
+                                                    .corner_radius(CornerRadius::same(5_u8));
+                                                let p = clip.path.clone();
+                                                if ui.add_sized([85.0, 26.0], play_btn).clicked() {
+                                                    std::thread::spawn(move || {
+                                                        let _ = std::process::Command::new("xdg-open").arg(p).spawn();
+                                                    });
+                                                }
+                                            });
+                                        });
+                                    });
+                                ui.add_space(4.0);
+                            }
+                        }
+                    });
+                }
+
+                // TAB 4: SETTINGS
                 if self.current_tab == OverlayTab::Settings {
                     egui::ScrollArea::vertical().max_height(410.0).show(ui, |ui| {
                         // Section 1: Save Destination Directory
@@ -684,24 +955,46 @@ impl eframe::App for VrecOverlayApp {
                             .fill(Color32::from_rgb(15, 19, 28))
                             .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 44, 64)))
                             .corner_radius(CornerRadius::same(8_u8))
-                            .inner_margin(Margin::same(12_i8))
+                            .inner_margin(Margin::same(14_i8))
                             .show(ui, |ui| {
-                                ui.label(
-                                    egui::RichText::new("VIDEO SAVE DESTINATION")
-                                        .font(FontId::proportional(12.0))
-                                        .strong()
-                                        .color(Color32::from_rgb(56, 189, 248)),
-                                );
-                                ui.add_space(6.0);
                                 ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new("Folder Path:").font(FontId::proportional(11.0)).color(Color32::from_rgb(203, 213, 225)));
-                                    ui.add(egui::TextEdit::singleline(&mut self.output_dir).desired_width(420.0));
+                                    ui.label(
+                                        egui::RichText::new("DEFAULT VIDEO DIRECTORY")
+                                            .font(FontId::proportional(12.0))
+                                            .strong()
+                                            .color(Color32::from_rgb(56, 189, 248)),
+                                    );
+
+                                    let expanded = VrecConfig::expand_tilde(&self.output_dir);
+                                    let (badge_text, badge_color, badge_bg) = if expanded.exists() {
+                                        ("Directory exists", Color32::from_rgb(52, 211, 153), Color32::from_rgba_unmultiplied(16, 185, 129, 25))
+                                    } else {
+                                        ("Will create on save", Color32::from_rgb(251, 191, 36), Color32::from_rgba_unmultiplied(245, 158, 11, 25))
+                                    };
+                                    egui::Frame::NONE
+                                        .fill(badge_bg)
+                                        .stroke(Stroke::new(1.0_f32, badge_color))
+                                        .corner_radius(CornerRadius::same(4_u8))
+                                        .inner_margin(Margin::symmetric(6_i8, 1_i8))
+                                        .show(ui, |ui| {
+                                            ui.label(
+                                                egui::RichText::new(badge_text)
+                                                    .font(FontId::monospace(9.0))
+                                                    .color(badge_color),
+                                            );
+                                        });
+                                });
+
+                                ui.add_space(8.0);
+                                ui.horizontal(|ui| {
+                                    ui.add(egui::TextEdit::singleline(&mut self.output_dir).desired_width(520.0));
 
                                     let browse_btn = egui::Button::new(egui::RichText::new("Browse...").color(Color32::WHITE))
                                         .fill(Color32::from_rgb(37, 99, 235))
+                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(96, 165, 250)))
                                         .corner_radius(CornerRadius::same(5_u8));
                                     if ui.add(browse_btn).clicked() {
-                                        let cur = self.output_dir.clone();
+                                        let cur = VrecConfig::expand_tilde(&self.output_dir).to_string_lossy().to_string();
                                         let tx = self.folder_tx.clone();
                                         std::thread::spawn(move || {
                                             if let Ok(out) = std::process::Command::new("kdialog")
@@ -730,16 +1023,17 @@ impl eframe::App for VrecOverlayApp {
                                         .fill(Color32::from_rgb(30, 41, 59))
                                         .corner_radius(CornerRadius::same(5_u8));
                                     if ui.add(open_btn).clicked() {
-                                        let dir = self.output_dir.clone();
+                                        let dir = VrecConfig::expand_tilde(&self.output_dir);
+                                        let _ = std::fs::create_dir_all(&dir);
                                         std::thread::spawn(move || {
                                             let _ = std::process::Command::new("xdg-open").arg(dir).spawn();
                                         });
                                     }
                                 });
 
-                                ui.add_space(6.0);
+                                ui.add_space(8.0);
                                 ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new("Presets:").font(FontId::proportional(10.0)).color(Color32::from_rgb(100, 116, 139)));
+                                    ui.label(egui::RichText::new("Quick Presets:").font(FontId::proportional(10.0)).color(Color32::from_rgb(100, 116, 139)));
                                     let v_dir = format!("{}/Videos/vrec", std::env::var("HOME").unwrap_or_default());
                                     let c_dir = format!("{}/Videos/Captures", std::env::var("HOME").unwrap_or_default());
                                     let d_dir = format!("{}/Downloads/vrec", std::env::var("HOME").unwrap_or_default());
@@ -749,7 +1043,7 @@ impl eframe::App for VrecOverlayApp {
                                 });
                             });
 
-                        ui.add_space(8.0);
+                        ui.add_space(10.0);
 
                         // Section 2: Split Columns for Video and Replay
                         ui.columns(2, |settings_cols| {
@@ -758,10 +1052,10 @@ impl eframe::App for VrecOverlayApp {
                                 .fill(Color32::from_rgb(15, 19, 28))
                                 .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 44, 64)))
                                 .corner_radius(CornerRadius::same(8_u8))
-                                .inner_margin(Margin::same(12_i8))
+                                .inner_margin(Margin::same(14_i8))
                                 .show(&mut settings_cols[0], |ui| {
                                     ui.label(
-                                        egui::RichText::new("VIDEO QUALITY")
+                                        egui::RichText::new("VIDEO QUALITY & ENCODING")
                                             .font(FontId::proportional(12.0))
                                             .strong()
                                             .color(Color32::from_rgb(56, 189, 248)),
@@ -800,7 +1094,7 @@ impl eframe::App for VrecOverlayApp {
                                     });
 
                                     ui.add_space(8.0);
-                                    ui.label(egui::RichText::new("Codec: Hardware VAAPI H.264 (NV12 Direct)").font(FontId::monospace(9.0)).color(Color32::from_rgb(100, 116, 139)));
+                                    ui.label(egui::RichText::new("Codec: Hardware VAAPI H.264 (NV12 Direct Buffer Sharing)").font(FontId::monospace(9.0)).color(Color32::from_rgb(100, 116, 139)));
                                 });
 
                             // Column 2: Replay Buffer & Hotkeys
@@ -808,7 +1102,7 @@ impl eframe::App for VrecOverlayApp {
                                 .fill(Color32::from_rgb(15, 19, 28))
                                 .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 44, 64)))
                                 .corner_radius(CornerRadius::same(8_u8))
-                                .inner_margin(Margin::same(12_i8))
+                                .inner_margin(Margin::same(14_i8))
                                 .show(&mut settings_cols[1], |ui| {
                                     ui.label(
                                         egui::RichText::new("REPLAY BUFFER & HOTKEYS")
@@ -837,7 +1131,7 @@ impl eframe::App for VrecOverlayApp {
                                         ui.label(egui::RichText::new("Save:").font(FontId::monospace(10.0)).color(Color32::from_rgb(148, 163, 184)));
                                         render_keycap(ui, &self.config.save_hotkey);
                                     });
-                                    ui.add_space(4.0);
+                                    ui.add_space(6.0);
                                     ui.horizontal(|ui| {
                                         ui.label(egui::RichText::new("Record:").font(FontId::monospace(10.0)).color(Color32::from_rgb(148, 163, 184)));
                                         render_keycap(ui, &self.config.record_hotkey);
@@ -848,16 +1142,18 @@ impl eframe::App for VrecOverlayApp {
                                 });
                         });
 
-                        ui.add_space(12.0);
+                        ui.add_space(14.0);
 
                         // Actions Bar: Save & Apply
                         ui.horizontal(|ui| {
-                            let apply_btn = egui::Button::new(egui::RichText::new("Save & Apply All Settings").strong().color(Color32::WHITE))
+                            let apply_btn = egui::Button::new(egui::RichText::new("Save & Apply All Settings").font(FontId::proportional(12.5)).strong().color(Color32::WHITE))
                                 .fill(Color32::from_rgb(37, 99, 235))
+                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(96, 165, 250)))
                                 .corner_radius(CornerRadius::same(6_u8));
-                            if ui.add_sized([230.0, 34.0], apply_btn).clicked() {
+                            if ui.add_sized([240.0, 36.0], apply_btn).clicked() {
                                 self.config.output_directory = self.output_dir.clone();
-                                let _ = std::fs::create_dir_all(&self.output_dir);
+                                let resolved = VrecConfig::expand_tilde(&self.output_dir);
+                                let _ = std::fs::create_dir_all(&resolved);
                                 self.config.replay_duration_sec = self.replay_sec;
                                 self.config.record_bitrate_kbps = self.bitrate_mbps * 1000;
                                 self.config.replay_bitrate_kbps = self.bitrate_mbps * 1000;
@@ -873,13 +1169,14 @@ impl eframe::App for VrecOverlayApp {
                                 }.to_string();
                                 let _ = self.config.save();
                                 let _ = ipc::send_command(Command::ReloadConfig);
+                                self.refresh_clips();
                                 self.set_msg("Settings saved and reloaded into daemon!");
                             }
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 ui.label(
-                                    egui::RichText::new("Settings saved to ~/.config/vrec/config.json")
-                                        .font(FontId::monospace(9.0))
+                                    egui::RichText::new("Saved to ~/.config/vrec/config.json")
+                                        .font(FontId::monospace(9.5))
                                         .color(Color32::from_rgb(100, 116, 139)),
                                 );
                             });
@@ -895,9 +1192,9 @@ pub fn run_egui_overlay() {
         viewport: egui::ViewportBuilder::default()
             .with_title("vrec")
             .with_app_id("vrec-overlay")
-            .with_inner_size([840.0, 310.0])
-            .with_min_inner_size([720.0, 260.0])
-            .with_max_inner_size([960.0, 600.0])
+            .with_inner_size([880.0, 520.0])
+            .with_min_inner_size([800.0, 480.0])
+            .with_max_inner_size([1024.0, 640.0])
             .with_resizable(true)
             .with_decorations(false)
             .with_transparent(true)
