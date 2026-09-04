@@ -3,4 +3,5 @@
 scratch/
 *.orig
 *.obOCNTS
-*.py
+/*.py
+!packaging/**/*.py
