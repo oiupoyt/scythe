@@ -7,6 +7,7 @@ pub struct VaapiEncoder {
     hw_device_ctx: *mut AVBufferRef,
     hw_frames_ctx: *mut AVBufferRef,
     sws_ctx: *mut SwsContext,
+    cached_nv12: *mut AVFrame,
     next_pts: i64,
 }
 
@@ -113,6 +114,7 @@ impl VaapiEncoder {
                 hw_device_ctx,
                 hw_frames_ctx: hw_frames_ref,
                 sws_ctx: ptr::null_mut(),
+                cached_nv12: ptr::null_mut(),
                 next_pts: 0,
             })
         }
@@ -143,7 +145,7 @@ impl VaapiEncoder {
                         dst_row.copy_from_slice(src_row);
                     }
 
-                    let mut nv12_frame = av_frame_alloc();
+                    let nv12_frame = av_frame_alloc();
                     (*nv12_frame).format = AVPixelFormat::AV_PIX_FMT_NV12 as i32;
                     (*nv12_frame).width = *width as i32;
                     (*nv12_frame).height = *height as i32;
@@ -184,15 +186,19 @@ impl VaapiEncoder {
                         av_packet_free(&mut pkt);
                     }
                     av_frame_free(&mut hw_frame);
-                    av_frame_free(&mut nv12_frame);
+                    if !self.cached_nv12.is_null() {
+                        av_frame_free(&mut self.cached_nv12);
+                    }
+                    self.cached_nv12 = nv12_frame;
                     av_frame_free(&mut bgra_frame);
                 }
                 Frame::DmaBuf { width: dma_width, height: dma_height, format, modifier, fd, stride, offset } => {
+                    let mmap_size = (*stride as usize) * (*dma_height as usize);
                     let mut drm_desc = AVDRMFrameDescriptor {
                         nb_objects: 1,
                         objects: [AVDRMObjectDescriptor {
                             fd: *fd,
-                            size: 0,
+                            size: mmap_size,
                             format_modifier: *modifier,
                         }, std::mem::zeroed(), std::mem::zeroed(), std::mem::zeroed()],
                         nb_layers: 1,
@@ -265,7 +271,7 @@ impl VaapiEncoder {
                                     }
                                     libc::munmap(ptr, mmap_size);
 
-                                    let mut nv12_frame = av_frame_alloc();
+                                    let nv12_frame = av_frame_alloc();
                                     (*nv12_frame).format = AVPixelFormat::AV_PIX_FMT_NV12 as i32;
                                     (*nv12_frame).width = *dma_width as i32;
                                     (*nv12_frame).height = *dma_height as i32;
@@ -310,7 +316,10 @@ impl VaapiEncoder {
                                     }
                                     av_frame_free(&mut fresh_hw_frame);
 
-                                    av_frame_free(&mut nv12_frame);
+                                    if !self.cached_nv12.is_null() {
+                                        av_frame_free(&mut self.cached_nv12);
+                                    }
+                                    self.cached_nv12 = nv12_frame;
                                     av_frame_free(&mut bgra_frame);
                                 } else {
                                     eprintln!("mmap failed on dma-buf fd {}: {}", *fd, std::io::Error::last_os_error());
@@ -334,11 +343,54 @@ impl VaapiEncoder {
         }
         Ok(packets)
     }
+
+    pub fn encode_cached_frame(&mut self) -> Result<Vec<crate::ring::Packet>, String> {
+        let mut packets = Vec::new();
+        unsafe {
+            if self.cached_nv12.is_null() {
+                return Ok(packets);
+            }
+
+            let mut fresh_hw_frame = av_frame_alloc();
+            (*fresh_hw_frame).format = AVPixelFormat::AV_PIX_FMT_VAAPI as i32;
+            let get_buf_ret = av_hwframe_get_buffer(self.hw_frames_ctx, fresh_hw_frame, 0);
+            if get_buf_ret < 0 {
+                av_frame_free(&mut fresh_hw_frame);
+                return Err("Failed to get hw frame buffer".into());
+            }
+
+            let transfer_ret = av_hwframe_transfer_data(fresh_hw_frame, self.cached_nv12, 0);
+            if transfer_ret < 0 {
+                av_frame_free(&mut fresh_hw_frame);
+                return Err("Failed to transfer cached data to hw frame".into());
+            }
+
+            (*fresh_hw_frame).pts = self.next_pts;
+            self.next_pts += 1;
+
+            let send_ret = avcodec_send_frame(self.codec_ctx, fresh_hw_frame);
+            if send_ret >= 0 {
+                let mut pkt = av_packet_alloc();
+                while avcodec_receive_packet(self.codec_ctx, pkt) >= 0 {
+                    let new_pkt = av_packet_alloc();
+                    av_packet_move_ref(new_pkt, pkt);
+                    packets.push(crate::ring::Packet::new(new_pkt));
+                }
+                av_packet_free(&mut pkt);
+            }
+            av_frame_free(&mut fresh_hw_frame);
+        }
+        Ok(packets)
+    }
 }
 
 impl Drop for VaapiEncoder {
     fn drop(&mut self) {
         unsafe {
+            if !self.cached_nv12.is_null() {
+                av_frame_free(&mut self.cached_nv12);
+                self.cached_nv12 = ptr::null_mut();
+            }
             if !self.sws_ctx.is_null() {
                 sws_freeContext(self.sws_ctx);
                 self.sws_ctx = ptr::null_mut();
@@ -544,6 +596,29 @@ impl WindowsHwEncoder {
         }
         Ok(packets)
     }
+
+    #[cfg(target_os = "windows")]
+    pub fn encode_cached_frame(&mut self) -> Result<Vec<crate::ring::Packet>, String> {
+        let mut packets = Vec::new();
+        unsafe {
+            if self.sw_frame.is_null() {
+                return Ok(packets);
+            }
+            (*self.sw_frame).pts = self.next_pts;
+            self.next_pts += 1;
+
+            if avcodec_send_frame(self.codec_ctx, self.sw_frame) >= 0 {
+                let mut pkt = av_packet_alloc();
+                while avcodec_receive_packet(self.codec_ctx, pkt) >= 0 {
+                    let new_pkt = av_packet_alloc();
+                    av_packet_move_ref(new_pkt, pkt);
+                    packets.push(crate::ring::Packet::new(new_pkt));
+                }
+                av_packet_free(&mut pkt);
+            }
+        }
+        Ok(packets)
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -737,6 +812,25 @@ mod tests {
             assert!((flags & (AV_CODEC_FLAG_GLOBAL_HEADER as i32)) != 0, "Audio encoder must have GLOBAL_HEADER flag");
             assert!((*enc.codec_ctx).extradata_size > 0, "Audio encoder extradata must be populated");
         }
+    }
+
+    #[test]
+    fn test_audio_encode_sine_wave() {
+        let mut enc = AudioEncoder::new(48000, 2).expect("AudioEncoder creation");
+        // Generate 48000 stereo samples of 440Hz sine wave (1.0s)
+        let mut pcm = Vec::with_capacity(48000 * 2);
+        for i in 0..48000 {
+            let val = ((i as f32 * 440.0 * 2.0 * std::f32::consts::PI) / 48000.0).sin() * 0.8;
+            pcm.push(val); // L
+            pcm.push(val); // R
+        }
+
+        let packets = enc.encode_pcm(&pcm).expect("encode_pcm");
+        println!("Encoded {} AAC packets from sine wave", packets.len());
+        assert!(!packets.is_empty(), "Must produce AAC packets");
+        let total_size: usize = packets.iter().map(|p| unsafe { (*p.ptr).size as usize }).sum();
+        println!("Total AAC packet bytes: {}", total_size);
+        assert!(total_size > 1000, "AAC packets must not be empty or silence");
     }
 
     #[test]

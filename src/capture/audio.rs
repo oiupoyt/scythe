@@ -87,17 +87,38 @@ fn spawn_parec_stream(
 
     let mut stdout = child.stdout.take().ok_or("Failed to open parec stdout")?;
     std::thread::spawn(move || {
-        let mut buf = [0u8; 4096];
+        let mut remainder = Vec::with_capacity(4);
+        let mut read_buf = [0u8; 4096];
         loop {
-            match stdout.read(&mut buf) {
+            match stdout.read(&mut read_buf) {
                 Ok(0) => break,
                 Ok(n) => {
-                    let floats_count = n / 4;
+                    let total_len = remainder.len() + n;
+                    let full_bytes = total_len - (total_len % 4);
+                    if full_bytes == 0 {
+                        remainder.extend_from_slice(&read_buf[..n]);
+                        continue;
+                    }
+
+                    let mut combined = Vec::with_capacity(total_len);
+                    combined.extend_from_slice(&remainder);
+                    combined.extend_from_slice(&read_buf[..n]);
+
+                    let floats_count = full_bytes / 4;
                     let mut floats = Vec::with_capacity(floats_count);
                     for i in 0..floats_count {
-                        let b = [buf[i * 4], buf[i * 4 + 1], buf[i * 4 + 2], buf[i * 4 + 3]];
+                        let b = [
+                            combined[i * 4],
+                            combined[i * 4 + 1],
+                            combined[i * 4 + 2],
+                            combined[i * 4 + 3],
+                        ];
                         floats.push(f32::from_le_bytes(b));
                     }
+
+                    remainder.clear();
+                    remainder.extend_from_slice(&combined[full_bytes..]);
+
                     if sender.send(floats).is_err() {
                         break;
                     }

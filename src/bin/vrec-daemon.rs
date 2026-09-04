@@ -46,6 +46,7 @@ fn ensure_wayland_env() {
 }
 
 #[tokio::main]
+#[allow(unused_assignments)]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     ensure_wayland_env();
 
@@ -121,10 +122,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (frame_tx, frame_rx) = bounded::<Frame>(5);
     let (cmd_tx, cmd_rx) = bounded::<Command>(10);
     let (mux_tx, mux_rx) = bounded::<Vec<Packet>>(1);
-    let (audio_tx, audio_rx) = bounded::<Vec<f32>>(100);
+    let (audio_tx, audio_rx) = bounded::<Vec<f32>>(500);
     let initial_config = vrec::config::VrecConfig::load();
-    let audio_info = vrec::capture::audio::AudioCapture::new_with_device_and_mode(
-        audio_tx,
+    let audio_capture_initial = vrec::capture::audio::AudioCapture::new_with_device_and_mode(
+        audio_tx.clone(),
         Some(&initial_config.audio_device),
         &initial_config.audio_mode,
     ).ok();
@@ -145,9 +146,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         loop {
             match source.next_frame() {
                 Ok(frame) => {
-                    if capture_tx.send(frame).is_err() {
-                        break;
-                    }
+                    let _ = capture_tx.try_send(frame);
                 }
                 Err(e) => {
                     eprintln!("Capture error: {}", e);
@@ -161,6 +160,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let rec_start_clone = Arc::clone(&record_start_state);
     let replay_state_clone = Arc::clone(&replay_enabled_state);
     let audio_muted_clone = Arc::clone(&audio_muted_state);
+    let audio_tx_clone = audio_tx.clone();
+    let audio_info = audio_capture_initial.as_ref().map(|(_, sr, ch)| (*sr, *ch));
+    #[allow(unused_variables, unused_assignments)]
+    let mut audio_capture = audio_capture_initial.map(|(c, _, _)| c);
 
     thread::spawn(move || {
         let mut config = vrec::config::VrecConfig::load();
@@ -170,10 +173,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             .expect("Failed to init encoder");
         let codec_ctx_ptr = encoder.codec_ctx() as usize;
         
-        let mut audio_encoder = if let Some(ref info) = audio_info {
-            vrec::encoder::AudioEncoder::new(info.1 as i32, info.2 as i32).ok()
+        let mut audio_encoder = if let Some((sr, ch)) = audio_info {
+            vrec::encoder::AudioEncoder::new(sr as i32, ch as i32).ok()
         } else {
-            None
+            vrec::encoder::AudioEncoder::new(48000, 2).ok()
         };
         let audio_codec_ctx_ptr = audio_encoder.as_ref().map(|e| e.codec_ctx() as usize); 
         
@@ -185,7 +188,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut normal_recording = false;
         let mut normal_waiting_keyframe = false;
         let mut rec_base_video_pts: i64 = 0;
-        let mut rec_base_audio_pts: i64 = 0;
+        let mut rec_base_audio_pts: i64 = -1;
 
         thread::spawn(move || {
             while let Ok(drain) = mux_rx.recv() {
@@ -205,11 +208,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 };
 
                 let first_video_pts = drain[first_v_idx].pts();
-                let first_audio_pts = if let Some(a_tb) = audio_time_base {
-                    unsafe { ffmpeg_next::ffi::av_rescale_q(first_video_pts, video_time_base, a_tb) }
-                } else {
-                    0
-                };
+
+                // Find the audio packet in the ring buffer closest in arrival to the first video keyframe
+                let first_audio_pts = drain
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, p)| p.stream_index() == 1)
+                    .min_by_key(|(i, _)| i.abs_diff(first_v_idx))
+                    .map(|(_, p)| p.pts())
+                    .unwrap_or(0);
 
                 let mut prepared: Vec<(i64, Packet)> = Vec::with_capacity(drain.len());
                 for (i, p) in drain.iter().enumerate() {
@@ -264,6 +271,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             }
         });
 
+        let mut ticker = crossbeam_channel::tick(std::time::Duration::from_nanos(1_000_000_000 / config.fps.max(1) as u64));
+        let mut latest_frame: Option<Frame> = None;
+        let mut has_new_frame = false;
+
         loop {
             crossbeam_channel::select! {
                 recv(cmd_rx) -> cmd_res => {
@@ -272,13 +283,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                             Command::ReloadConfig => {
                                 config = vrec::config::VrecConfig::load();
                                 replay_state_clone.store(config.replay_enabled, Ordering::SeqCst);
-                                println!("Daemon config reloaded!");
+                                audio_muted_clone.store(config.audio_mode == "muted", Ordering::SeqCst);
+                                println!("Daemon config reloaded! Audio mode: {}", config.audio_mode);
                                 let new_capacity = (config.replay_duration_sec * 120).max(120) as usize;
                                 if ring.capacity().get() != new_capacity {
                                     ring = HeapRb::<Packet>::new(new_capacity);
                                     println!("Replay buffer resized to {} packets.", new_capacity);
                                 }
                                 vrec::hyprland_binds::register_hyprland_binds(&config);
+                                audio_capture = match vrec::capture::audio::AudioCapture::new_with_device_and_mode(
+                                    audio_tx_clone.clone(),
+                                    Some(&config.audio_device),
+                                    &config.audio_mode,
+                                ) {
+                                    Ok((c, _, _)) => {
+                                        println!("Audio capture reloaded for mode: {}", config.audio_mode);
+                                        Some(c)
+                                    }
+                                    Err(e) => {
+                                        eprintln!("Failed to reload audio capture: {}", e);
+                                        None
+                                    }
+                                };
+                                ticker = crossbeam_channel::tick(std::time::Duration::from_nanos(1_000_000_000 / config.fps.max(1) as u64));
                             },
                             Command::SaveReplay => {
                                 if config.replay_enabled {
@@ -292,6 +319,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                     normal_recording = true;
                                     normal_waiting_keyframe = true;
                                     rec_state_clone.store(true, Ordering::SeqCst);
+                                    rec_base_audio_pts = -1;
                                     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
                                     rec_start_clone.store(now, Ordering::SeqCst);
                                     println!("StartRecording requested, waiting for keyframe...");
@@ -305,7 +333,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                 normal_recording = false;
                                 normal_waiting_keyframe = false;
                                 rec_base_video_pts = 0;
-                                rec_base_audio_pts = 0;
+                                rec_base_audio_pts = -1;
                                 rec_state_clone.store(false, Ordering::SeqCst);
                                 rec_start_clone.store(0, Ordering::SeqCst);
                             },
@@ -318,13 +346,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                     normal_recording = false;
                                     normal_waiting_keyframe = false;
                                     rec_base_video_pts = 0;
-                                    rec_base_audio_pts = 0;
+                                    rec_base_audio_pts = -1;
                                     rec_state_clone.store(false, Ordering::SeqCst);
                                     rec_start_clone.store(0, Ordering::SeqCst);
                                 } else {
                                     normal_recording = true;
                                     normal_waiting_keyframe = true;
                                     rec_state_clone.store(true, Ordering::SeqCst);
+                                    rec_base_audio_pts = -1;
                                     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
                                     rec_start_clone.store(now, Ordering::SeqCst);
                                     println!("ToggleRecording: StartRecording requested, waiting for keyframe...");
@@ -339,69 +368,81 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         }
                     }
                 },
+                recv(audio_rx) -> audio_res => {
+                    if let Ok(mut audio_chunk) = audio_res {
+                        if audio_muted_clone.load(Ordering::Relaxed) {
+                            for sample in audio_chunk.iter_mut() {
+                                *sample = 0.0;
+                            }
+                        }
+                        if let Some(enc) = audio_encoder.as_mut()
+                            && let Ok(audio_packets) = enc.encode_pcm(&audio_chunk) {
+                                for mut pkt in audio_packets {
+                                    pkt.set_stream_index(1);
+                                    if config.replay_enabled {
+                                        ring.push_overwrite(pkt.clone());
+                                    }
+                                    if normal_recording && !normal_waiting_keyframe
+                                        && let Some(muxer) = normal_muxer.as_mut() {
+                                            if rec_base_audio_pts < 0 {
+                                                rec_base_audio_pts = pkt.pts();
+                                            }
+                                            if pkt.pts() >= rec_base_audio_pts {
+                                                let rebased = pkt.rebased(rec_base_audio_pts);
+                                                let _ = muxer.write_packet(&rebased);
+                                            }
+                                        }
+                                }
+                            }
+                    }
+                },
                 recv(frame_rx) -> frame_res => {
-                    let frame = match frame_res {
-                        Ok(f) => f,
-                        Err(_) => break,
+                    if let Ok(f) = frame_res {
+                        latest_frame = Some(f);
+                        has_new_frame = true;
+                    }
+                },
+                recv(ticker) -> _ => {
+                    let packets_res = if has_new_frame {
+                        has_new_frame = false;
+                        if let Some(ref f) = latest_frame {
+                            encoder.encode_frame(f)
+                        } else {
+                            Ok(Vec::new())
+                        }
+                    } else {
+                        encoder.encode_cached_frame()
                     };
 
-            while let Ok(mut audio_chunk) = audio_rx.try_recv() {
-                if audio_muted_clone.load(Ordering::Relaxed) {
-                    for sample in audio_chunk.iter_mut() {
-                        *sample = 0.0;
-                    }
-                }
-                if let Some(enc) = audio_encoder.as_mut()
-                    && let Ok(audio_packets) = enc.encode_pcm(&audio_chunk) {
-                        for mut pkt in audio_packets {
-                            pkt.set_stream_index(1);
+                    if let Ok(packets) = packets_res {
+                        for mut pkt in packets {
+                            pkt.set_stream_index(0);
                             if config.replay_enabled {
                                 ring.push_overwrite(pkt.clone());
                             }
-                            if normal_recording && !normal_waiting_keyframe
-                                && let Some(muxer) = normal_muxer.as_mut() {
-                                    if pkt.pts() >= rec_base_audio_pts {
-                                        let rebased = pkt.rebased(rec_base_audio_pts);
-                                        let _ = muxer.write_packet(&rebased);
-                                    }
+                            if normal_recording {
+                                if normal_waiting_keyframe && pkt.is_keyframe() {
+                                    normal_waiting_keyframe = false;
+                                    rec_base_video_pts = pkt.pts();
+                                    rec_base_audio_pts = -1;
+                                    let codec_ctx = codec_ctx_ptr as *mut ffmpeg_next::ffi::AVCodecContext;
+                                    let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+                                    let filename = format!("record_{}.mp4", ts);
+                                    let full_path = config.resolve_save_path(&filename);
+                                    let audio_codec_ctx = audio_codec_ctx_ptr.map(|p| p as *mut ffmpeg_next::ffi::AVCodecContext);
+                                    normal_muxer = unsafe { Muxer::new(&full_path, codec_ctx, audio_codec_ctx).ok() };
+                                    println!("Started normal recording to {}", full_path);
                                 }
-                        }
-                    }
-            }
-
-            if let Ok(packets) = encoder.encode_frame(&frame) {
-                for mut pkt in packets {
-                    pkt.set_stream_index(0);
-                    if config.replay_enabled {
-                        ring.push_overwrite(pkt.clone());
-                    }
-                    if normal_recording {
-                        if normal_waiting_keyframe && pkt.is_keyframe() {
-                            normal_waiting_keyframe = false;
-                            rec_base_video_pts = pkt.pts();
-                            rec_base_audio_pts = if let Some(a_tb) = audio_time_base {
-                                unsafe { ffmpeg_next::ffi::av_rescale_q(rec_base_video_pts, video_time_base, a_tb) }
-                            } else {
-                                0
-                            };
-                            let codec_ctx = codec_ctx_ptr as *mut ffmpeg_next::ffi::AVCodecContext;
-                            let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
-                            let filename = format!("record_{}.mp4", ts);
-                            let full_path = config.resolve_save_path(&filename);
-                            let audio_codec_ctx = audio_codec_ctx_ptr.map(|p| p as *mut ffmpeg_next::ffi::AVCodecContext);
-                            normal_muxer = unsafe { Muxer::new(&full_path, codec_ctx, audio_codec_ctx).ok() };
-                            println!("Started normal recording to {}", full_path);
-                        }
-                        
-                        if !normal_waiting_keyframe
-                            && let Some(muxer) = normal_muxer.as_mut() {
-                                let rebased = pkt.rebased(rec_base_video_pts);
-                                let _ = muxer.write_packet(&rebased);
+                                
+                                if !normal_waiting_keyframe
+                                    && let Some(muxer) = normal_muxer.as_mut() {
+                                        let rebased = pkt.rebased(rec_base_video_pts);
+                                        let _ = muxer.write_packet(&rebased);
+                                }
+                            }
                         }
                     }
                 }
-            }
-        }
     }
 }
     });
@@ -477,6 +518,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                     }.to_string();
                                     let _ = cfg.save();
                                     println!("Audio mode cycled to: {}", cfg.audio_mode);
+                                    let _ = cmd_tx.try_send(Command::ReloadConfig);
                                 },
                                 Command::StopDaemon => {
                                     println!("StopDaemon requested: Finalizing active recordings...");
