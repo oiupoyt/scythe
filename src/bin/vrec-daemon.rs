@@ -76,6 +76,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let session_type = env::var("XDG_SESSION_TYPE").unwrap_or_else(|_| "x11".to_string());
     println!("Detected session type: {}", session_type);
 
+    let initial_config = vrec::config::VrecConfig::load();
+
     let mut source: Box<dyn FrameSource> = if std::env::args().any(|a| a == "--mock") {
         println!("Initializing MOCK capture...");
         Box::new(vrec::capture::mock::MockCapture::new())
@@ -92,8 +94,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     } else if session_type.to_lowercase() == "wayland" {
         #[cfg(target_os = "linux")]
         {
-            println!("Initializing Wayland capture...");
-            Box::new(vrec::capture::wayland::WaylandCapture::new().await?)
+            println!("Initializing Wayland capture (cursor: {})...", initial_config.show_cursor);
+            Box::new(vrec::capture::wayland::WaylandCapture::new_with_cursor(initial_config.show_cursor).await?)
         }
         #[cfg(not(target_os = "linux"))]
         {
@@ -123,7 +125,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (cmd_tx, cmd_rx) = bounded::<Command>(10);
     let (mux_tx, mux_rx) = bounded::<Vec<Packet>>(1);
     let (audio_tx, audio_rx) = bounded::<Vec<f32>>(500);
-    let initial_config = vrec::config::VrecConfig::load();
     let audio_capture_initial = vrec::capture::audio::AudioCapture::new_with_device_and_mode(
         audio_tx.clone(),
         Some(&initial_config.audio_device),
@@ -281,7 +282,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     if let Ok(cmd) = cmd_res {
                         match cmd {
                             Command::ReloadConfig => {
-                                config = vrec::config::VrecConfig::load();
+                                let new_config = vrec::config::VrecConfig::load();
+                                if new_config.show_cursor != config.show_cursor {
+                                    println!("Cursor display changed ({} -> {}). Restarting daemon for new capture session...", config.show_cursor, new_config.show_cursor);
+                                    if let Some(mut m) = normal_muxer.take() {
+                                        let _ = m.finalize();
+                                    }
+                                    std::thread::sleep(std::time::Duration::from_millis(150));
+                                    std::process::exit(0);
+                                }
+                                config = new_config;
                                 replay_state_clone.store(config.replay_enabled, Ordering::SeqCst);
                                 audio_muted_clone.store(config.audio_mode == "muted", Ordering::SeqCst);
                                 println!("Daemon config reloaded! Audio mode: {}", config.audio_mode);
@@ -501,12 +511,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                         is_replay_active: replay_enabled_state.load(Ordering::SeqCst),
                                         audio_muted: audio_muted_state.load(Ordering::SeqCst),
                                         audio_mode: cfg.audio_mode,
+                                        show_cursor: cfg.show_cursor,
                                     };
                                     if let Ok(resp) = serde_json::to_vec(&status) {
                                         let len_resp = (resp.len() as u32).to_le_bytes();
                                         let _ = stream.write_all(&len_resp);
                                         let _ = stream.write_all(&resp);
                                     }
+                                },
+                                Command::ToggleCursor => {
+                                    let mut cfg = vrec::config::VrecConfig::load();
+                                    cfg.show_cursor = !cfg.show_cursor;
+                                    let _ = cfg.save();
+                                    println!("Cursor display toggled to: {}. Restarting daemon for new capture session...", cfg.show_cursor);
+                                    let _ = cmd_tx.send(Command::StopRecording);
+                                    std::thread::sleep(std::time::Duration::from_millis(150));
+                                    std::process::exit(0);
                                 },
                                 Command::CycleAudioMode => {
                                     let mut cfg = vrec::config::VrecConfig::load();

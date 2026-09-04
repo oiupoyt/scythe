@@ -21,6 +21,7 @@ pub struct VrecOverlayApp {
     bitrate_mbps: u32,
     target_fps: u32,
     audio_mode_idx: usize,
+    show_cursor: bool,
     status_msg: Option<(String, Instant)>,
     status_rx: Receiver<DaemonStatus>,
     folder_tx: Sender<String>,
@@ -34,6 +35,7 @@ impl VrecOverlayApp {
         let bitrate_mbps = (config.record_bitrate_kbps / 1000).max(1);
         let target_fps = config.fps;
         let output_dir = config.output_directory.clone();
+        let show_cursor = config.show_cursor;
         let audio_mode_idx = match config.audio_mode.as_str() {
             "mic" => 1,
             "both" => 2,
@@ -65,6 +67,7 @@ impl VrecOverlayApp {
             bitrate_mbps,
             target_fps,
             audio_mode_idx,
+            show_cursor,
             status_msg: None,
             status_rx,
             folder_tx,
@@ -75,6 +78,9 @@ impl VrecOverlayApp {
     fn poll_async_events(&mut self) {
         // Drain any status updates from background thread
         while let Ok(s) = self.status_rx.try_recv() {
+            if self.current_tab == OverlayTab::Dashboard {
+                self.show_cursor = s.show_cursor;
+            }
             self.status = s;
             self.daemon_connected = true;
         }
@@ -215,6 +221,24 @@ impl eframe::App for VrecOverlayApp {
                             });
                         }
 
+                        // Quick Cursor Toggle Button
+                        let (cursor_label, cursor_color, cursor_bg) = if self.show_cursor {
+                            ("Cursor: ON", Color32::from_rgb(52, 211, 153), Color32::from_rgb(20, 35, 30))
+                        } else {
+                            ("Cursor: OFF", Color32::from_rgb(148, 163, 184), Color32::from_rgb(24, 30, 42))
+                        };
+                        let cursor_btn = egui::Button::new(egui::RichText::new(cursor_label).size(11.0).color(cursor_color))
+                            .fill(cursor_bg)
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(45, 55, 75)))
+                            .corner_radius(CornerRadius::same(6_u8));
+                        if ui.add_sized([84.0, 26.0], cursor_btn).clicked() {
+                            self.show_cursor = !self.show_cursor;
+                            self.config.show_cursor = self.show_cursor;
+                            let _ = ipc::send_command(Command::ToggleCursor);
+                            let msg = if self.show_cursor { "Cursor set to ON" } else { "Cursor set to OFF" };
+                            self.set_msg(msg);
+                        }
+
                         // Tab Switcher Pills
                         let settings_active = self.current_tab == OverlayTab::Settings;
                         let settings_fill = if settings_active { Color32::from_rgb(37, 99, 235) } else { Color32::from_rgb(24, 29, 41) };
@@ -225,7 +249,7 @@ impl eframe::App for VrecOverlayApp {
                             .corner_radius(CornerRadius::same(6_u8));
                         if ui.add_sized([78.0, 26.0], settings_btn).clicked() {
                             self.current_tab = OverlayTab::Settings;
-                            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(780.0, 480.0)));
+                            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(820.0, 490.0)));
                         }
 
                         let dash_active = self.current_tab == OverlayTab::Dashboard;
@@ -237,7 +261,7 @@ impl eframe::App for VrecOverlayApp {
                             .corner_radius(CornerRadius::same(6_u8));
                         if ui.add_sized([84.0, 26.0], dash_btn).clicked() {
                             self.current_tab = OverlayTab::Dashboard;
-                            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(780.0, 280.0)));
+                            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(820.0, 280.0)));
                         }
                     });
                 });
@@ -523,6 +547,15 @@ impl eframe::App for VrecOverlayApp {
                                         if pill(ui, "50M", self.bitrate_mbps == 50) { self.bitrate_mbps = 50; }
                                     });
 
+                                    ui.add_space(10.0);
+
+                                    // Mouse Cursor Capture
+                                    ui.label(egui::RichText::new("Mouse Cursor Capture").font(FontId::proportional(11.0)).color(Color32::from_rgb(203, 213, 225)));
+                                    ui.horizontal(|ui| {
+                                        if pill(ui, "Show Cursor", self.show_cursor) { self.show_cursor = true; }
+                                        if pill(ui, "Hide Cursor", !self.show_cursor) { self.show_cursor = false; }
+                                    });
+
                                     ui.add_space(8.0);
                                     ui.label(egui::RichText::new("Codec: Hardware VAAPI H.264 (NV12 Direct)").font(FontId::monospace(9.0)).color(Color32::from_rgb(100, 116, 139)));
                                 });
@@ -589,6 +622,7 @@ impl eframe::App for VrecOverlayApp {
                                 self.config.record_bitrate_kbps = self.bitrate_mbps * 1000;
                                 self.config.replay_bitrate_kbps = self.bitrate_mbps * 1000;
                                 self.config.fps = self.target_fps;
+                                self.config.show_cursor = self.show_cursor;
                                 self.config.audio_mode = match self.audio_mode_idx {
                                     1 => "mic",
                                     2 => "both",
@@ -619,9 +653,9 @@ pub fn run_egui_overlay() {
         viewport: egui::ViewportBuilder::default()
             .with_title("vrec")
             .with_app_id("vrec-overlay")
-            .with_inner_size([780.0, 280.0])
-            .with_min_inner_size([680.0, 240.0])
-            .with_max_inner_size([880.0, 560.0])
+            .with_inner_size([820.0, 280.0])
+            .with_min_inner_size([720.0, 240.0])
+            .with_max_inner_size([920.0, 560.0])
             .with_resizable(true)
             .with_decorations(false)
             .with_transparent(true)

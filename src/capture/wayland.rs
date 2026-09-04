@@ -8,6 +8,10 @@ pub struct WaylandCapture {
 
 impl WaylandCapture {
     pub async fn new() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        Self::new_with_cursor(true).await
+    }
+
+    pub async fn new_with_cursor(show_cursor: bool) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let proxy = Screencast::new().await.map_err(|e| {
             format!(
                 "Failed to initialize XDG ScreenCast portal ({:?}).\n\
@@ -23,10 +27,16 @@ impl WaylandCapture {
         let session = proxy.create_session(Default::default()).await.map_err(|e| {
             format!("Failed to create ScreenCast portal session: {:?}", e)
         })?;
+
+        let cursor_mode = if show_cursor {
+            CursorMode::Embedded
+        } else {
+            CursorMode::Hidden
+        };
         
         let select_opts = ashpd::desktop::screencast::SelectSourcesOptions::default()
             .set_multiple(false)
-            .set_cursor_mode(CursorMode::Embedded)
+            .set_cursor_mode(cursor_mode)
             .set_sources(SourceType::Monitor | SourceType::Monitor)
             .set_persist_mode(PersistMode::DoNot);
             

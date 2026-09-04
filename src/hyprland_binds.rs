@@ -87,6 +87,7 @@ pub fn register_hyprland_binds(config: &VrecConfig) {
         (&config.menu_hotkey, "exec, vrec-ui --menu"),
         (&config.save_hotkey, "exec, vrec-ui --save"),
         (&config.record_hotkey, "exec, vrec-ui --record"),
+        (&config.cursor_hotkey, "exec, vrec-ui --cursor"),
     ];
 
     for (hotkey, action) in binds {
@@ -124,6 +125,7 @@ pub fn unregister_hyprland_binds(config: &VrecConfig) {
         &config.menu_hotkey,
         &config.save_hotkey,
         &config.record_hotkey,
+        &config.cursor_hotkey,
     ];
 
     for hotkey in hotkeys {

@@ -87,6 +87,26 @@ fn handle_toggle_recording() -> Result<(), Box<dyn std::error::Error + Send + Sy
     }
 }
 
+fn handle_toggle_cursor() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ensure_daemon_running();
+    let current_cursor = query_status().ok().map(|s| s.show_cursor).unwrap_or(true);
+    let next_cursor = !current_cursor;
+    match send_command(Command::ToggleCursor) {
+        Ok(()) => {
+            if next_cursor {
+                show_notification("Cursor: Visible in recording");
+            } else {
+                show_notification("Cursor: Hidden from recording");
+            }
+            Ok(())
+        }
+        Err(e) => {
+            show_notification("Error: failed to connect to vrec-daemon");
+            Err(e)
+        }
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     ensure_wayland_env();
 
@@ -103,6 +123,9 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             }
             "--record" | "--toggle" => {
                 return handle_toggle_recording();
+            }
+            "--cursor" | "--toggle-cursor" => {
+                return handle_toggle_cursor();
             }
             "--start" => {
                 return send_with_notification(Command::StartRecording, "Recording started");
@@ -123,6 +146,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 println!("  vrec-ui --menu         Open overlay menu");
                 println!("  vrec-ui --save         Save instant replay and show notification");
                 println!("  vrec-ui --record       Toggle normal recording on/off (with notification)");
+                println!("  vrec-ui --cursor       Toggle mouse cursor recording on/off (with notification)");
                 println!("  vrec-ui --start        Start normal recording");
                 println!("  vrec-ui --stop         Stop normal recording");
                 println!("  vrec-ui --reload       Reload daemon configuration");
@@ -159,12 +183,14 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let hotkey_menu = HotKey::new(Some(Modifiers::ALT), Code::KeyZ);
     let hotkey_save = HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyR);
     let hotkey_record = HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::F9);
+    let hotkey_cursor = HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::F10);
 
     let _ = manager.register(hotkey_menu);
     let _ = manager.register(hotkey_save);
     let _ = manager.register(hotkey_record);
+    let _ = manager.register(hotkey_cursor);
 
-    println!("Listening for global hotkeys (Alt+Z for overlay, Ctrl+Shift+R for replay, Ctrl+Shift+F9 for recording)...");
+    println!("Listening for global hotkeys (Alt+Z for overlay, Ctrl+Shift+R for replay, Ctrl+Shift+F9 for recording, Ctrl+Shift+F10 for cursor)...");
 
     let receiver = GlobalHotKeyEvent::receiver();
     loop {
@@ -176,6 +202,8 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 let _ = send_with_notification(Command::SaveReplay, "Replay saved");
             } else if event.id == hotkey_record.id() {
                 let _ = handle_toggle_recording();
+            } else if event.id == hotkey_cursor.id() {
+                let _ = handle_toggle_cursor();
             }
         }
         std::thread::sleep(std::time::Duration::from_millis(50));

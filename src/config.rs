@@ -15,6 +15,7 @@ fn default_theme() -> String { "dark".to_string() }
 fn default_save_hotkey() -> String { "Ctrl+Shift+R".to_string() }
 fn default_menu_hotkey() -> String { "Alt+Z".to_string() }
 fn default_record_hotkey() -> String { "Ctrl+Shift+F9".to_string() }
+fn default_cursor_hotkey() -> String { "Ctrl+Shift+F10".to_string() }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct VrecConfig {
@@ -35,6 +36,8 @@ pub struct VrecConfig {
     pub video_codec: String,
     #[serde(default = "VrecConfig::default_output_directory")]
     pub output_directory: String,
+    #[serde(default = "default_true")]
+    pub show_cursor: bool,
     #[serde(default = "default_audio_device")]
     pub audio_device: String,
     #[serde(default = "default_audio_mode")]
@@ -52,6 +55,8 @@ pub struct VrecConfig {
     pub menu_hotkey: String,
     #[serde(default = "default_record_hotkey")]
     pub record_hotkey: String,
+    #[serde(default = "default_cursor_hotkey")]
+    pub cursor_hotkey: String,
 }
 
 impl Default for VrecConfig {
@@ -66,6 +71,7 @@ impl Default for VrecConfig {
             fps: 60,
             video_codec: "h264".to_string(),
             output_directory: Self::default_output_directory(),
+            show_cursor: true,
             audio_device: "default".to_string(),
             audio_mode: "system".to_string(),
             
@@ -75,6 +81,7 @@ impl Default for VrecConfig {
             save_hotkey: "Ctrl+Shift+R".to_string(),
             menu_hotkey: "Alt+Z".to_string(),
             record_hotkey: "Ctrl+Shift+F9".to_string(),
+            cursor_hotkey: "Ctrl+Shift+F10".to_string(),
         }
     }
 }
@@ -138,9 +145,11 @@ mod tests {
         assert_eq!(cfg.fps, 60);
         assert_eq!(cfg.video_codec, "h264");
         assert_eq!(cfg.audio_mode, "system");
+        assert!(cfg.show_cursor);
         let json = serde_json::to_string(&cfg).unwrap();
         let parsed: VrecConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.replay_duration_sec, 60);
         assert_eq!(parsed.audio_mode, "system");
+        assert!(parsed.show_cursor);
     }
 }

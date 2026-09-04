@@ -8,6 +8,7 @@ pub enum Command {
     ToggleRecording,
     ToggleAudio,
     CycleAudioMode,
+    ToggleCursor,
     ReloadConfig,
     StopDaemon,
     ShowOverlay,
@@ -22,6 +23,12 @@ pub struct DaemonStatus {
     pub audio_muted: bool,
     #[serde(default = "default_audio_mode_str")]
     pub audio_mode: String,
+    #[serde(default = "default_true")]
+    pub show_cursor: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_audio_mode_str() -> String {
