@@ -137,7 +137,7 @@ jobs:
                   $env:Path += ";C:\Program Files (x86)\NSIS"
               }
           }
-          makensis packaging/windows/vrec-standalone.nsi
+          makensis packaging/windows/vrec-installer.nsi
           Compress-Archive -Path dist/bundle/* -DestinationPath dist/vrec-windows-x64.zip
 
       - name: Upload Windows Artifacts
@@ -145,7 +145,7 @@ jobs:
         with:
           name: windows-packages
           path: |
-            dist/vrec.exe
+            dist/vrec-setup.exe
             dist/vrec-windows-x64.zip
 
   publish-release:
@@ -180,7 +180,7 @@ jobs:
             - Multi-channel audio routing (System audio, Microphone, Combined, and Mute)
 
             ### Packages
-            - Windows Standalone: `vrec.exe` (Single standalone executable, zero install required)
+            - Windows Setup: `vrec-setup.exe` (Official installer with Start Menu & Desktop shortcuts)
             - Windows Portable: `vrec-windows-x64.zip` (Zip with all binaries & runtime DLLs)
             - Universal Linux: `vrec-x86_64.AppImage`
             - Debian / Ubuntu / Mint: `vrec_0.1.0_amd64.deb`
