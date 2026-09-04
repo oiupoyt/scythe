@@ -29,8 +29,8 @@ fn scan_recordings(dir_str: &str) -> Vec<VideoClipInfo> {
     if let Ok(entries) = std::fs::read_dir(&dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_file() {
-                if let Some(ext) = path.extension() {
+            if path.is_file()
+                && let Some(ext) = path.extension() {
                     let ext_str = ext.to_string_lossy().to_lowercase();
                     if ext_str == "mp4" || ext_str == "mkv" {
                         let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
@@ -45,11 +45,10 @@ fn scan_recordings(dir_str: &str) -> Vec<VideoClipInfo> {
                             is_replay,
                         });
                     }
-                }
             }
         }
     }
-    clips.sort_by(|a, b| b.modified.cmp(&a.modified));
+    clips.sort_by_key(|b| std::cmp::Reverse(b.modified));
     clips
 }
 
@@ -102,6 +101,12 @@ pub struct VrecOverlayApp {
     folder_rx: Receiver<String>,
     clips: Vec<VideoClipInfo>,
     last_clip_scan: Instant,
+}
+
+impl Default for VrecOverlayApp {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl VrecOverlayApp {
@@ -445,8 +450,8 @@ impl eframe::App for VrecOverlayApp {
                 });
 
                 // Toast status feedback
-                if let Some((msg, time)) = &self.status_msg {
-                    if time.elapsed() < Duration::from_secs(3) {
+                if let Some((msg, time)) = &self.status_msg
+                    && time.elapsed() < Duration::from_secs(3) {
                         ui.add_space(6.0);
                         egui::Frame::NONE
                             .fill(Color32::from_rgba_unmultiplied(16, 185, 129, 25))
@@ -461,7 +466,6 @@ impl eframe::App for VrecOverlayApp {
                                         .strong(),
                                 );
                             });
-                    }
                 }
 
                 ui.add_space(10.0);

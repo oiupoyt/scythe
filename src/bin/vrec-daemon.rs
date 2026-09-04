@@ -17,8 +17,8 @@ fn ensure_wayland_env() {
     {
         let runtime_dir = env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| format!("/run/user/{}", unsafe { libc::getuid() }));
         unsafe {
-            if env::var("WAYLAND_DISPLAY").is_err() {
-                if let Ok(entries) = std::fs::read_dir(&runtime_dir) {
+            if env::var("WAYLAND_DISPLAY").is_err()
+                && let Ok(entries) = std::fs::read_dir(&runtime_dir) {
                     for entry in entries.flatten() {
                         let name = entry.file_name().to_string_lossy().to_string();
                         if name.starts_with("wayland-") && !name.ends_with(".lock") {
@@ -27,7 +27,6 @@ fn ensure_wayland_env() {
                             break;
                         }
                     }
-                }
             }
             if env::var("DBUS_SESSION_BUS_ADDRESS").is_err() {
                 let bus_path = format!("{}/bus", runtime_dir);
@@ -235,8 +234,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                             };
                             prepared.push((time_us, rebased));
                         }
-                    } else if p.stream_index() == 1 {
-                        if p.pts() >= first_audio_pts {
+                    } else if p.stream_index() == 1
+                        && p.pts() >= first_audio_pts {
                             let rebased = p.rebased(first_audio_pts);
                             let time_us = if let Some(a_tb) = audio_time_base {
                                 unsafe {
@@ -250,7 +249,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                 0
                             };
                             prepared.push((time_us, rebased));
-                        }
                     }
                 }
 

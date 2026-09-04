@@ -110,14 +110,13 @@ impl VrecConfig {
 
     pub fn expand_tilde(path: &str) -> PathBuf {
         let trimmed = path.trim();
-        if trimmed.starts_with("~/") {
+        if let Some(sub) = trimmed.strip_prefix("~/") {
             if let Some(home) = dirs::home_dir() {
-                return home.join(&trimmed[2..]);
+                return home.join(sub);
             }
-        } else if trimmed == "~" {
-            if let Some(home) = dirs::home_dir() {
+        } else if trimmed == "~"
+            && let Some(home) = dirs::home_dir() {
                 return home;
-            }
         }
         PathBuf::from(trimmed)
     }
@@ -131,10 +130,9 @@ impl VrecConfig {
 
     pub fn load() -> Self {
         let path = Self::config_path();
-        if let Ok(content) = fs::read_to_string(&path) {
-            if let Ok(cfg) = serde_json::from_str(&content) {
+        if let Ok(content) = fs::read_to_string(&path)
+            && let Ok(cfg) = serde_json::from_str(&content) {
                 return cfg;
-            }
         }
         let default_cfg = Self::default();
         let _ = default_cfg.save();

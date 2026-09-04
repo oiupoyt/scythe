@@ -37,7 +37,7 @@ impl WaylandCapture {
         let select_opts = ashpd::desktop::screencast::SelectSourcesOptions::default()
             .set_multiple(false)
             .set_cursor_mode(cursor_mode)
-            .set_sources(SourceType::Monitor | SourceType::Monitor)
+            .set_sources(SourceType::Monitor | SourceType::Window)
             .set_persist_mode(PersistMode::DoNot);
             
         proxy.select_sources(&session, select_opts).await.map_err(|e| {

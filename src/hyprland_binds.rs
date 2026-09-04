@@ -171,8 +171,8 @@ pub fn spawn_hyprland_reload_watcher() {
 
     std::thread::spawn(|| {
         loop {
-            if let Some(sock_path) = get_hyprland_socket2() {
-                if let Ok(stream) = UnixStream::connect(&sock_path) {
+            if let Some(sock_path) = get_hyprland_socket2()
+                && let Ok(stream) = UnixStream::connect(&sock_path) {
                     let reader = BufReader::new(stream);
                     for line in reader.lines().map_while(Result::ok) {
                         if line.starts_with("configreloaded") {
@@ -181,7 +181,6 @@ pub fn spawn_hyprland_reload_watcher() {
                             register_hyprland_binds(&config);
                         }
                     }
-                }
             }
             std::thread::sleep(std::time::Duration::from_secs(3));
         }

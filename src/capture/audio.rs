@@ -275,12 +275,11 @@ impl AudioCapture {
         let find_mic_device = || -> Option<cpal::Device> {
             if let Some(target) = device_name
                 && target != "default"
-                && !target.trim().is_empty() {
-                    if let Ok(devs) = host.input_devices() {
-                        for d in devs {
-                            if get_device_name(&d) == target {
-                                return Some(d);
-                            }
+                && !target.trim().is_empty()
+                && let Ok(devs) = host.input_devices() {
+                    for d in devs {
+                        if get_device_name(&d) == target {
+                            return Some(d);
                         }
                     }
                 }
