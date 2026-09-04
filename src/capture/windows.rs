@@ -56,8 +56,7 @@ impl WindowsCapture {
             let output = adapter.EnumOutputs(0)?;
             let output1: IDXGIOutput1 = output.cast()?;
 
-            let mut desc = DXGI_OUTPUT_DESC::default();
-            output.GetDesc(&mut desc)?;
+            let desc = output.GetDesc()?;
             let width = (desc.DesktopCoordinates.right - desc.DesktopCoordinates.left) as u32;
             let height = (desc.DesktopCoordinates.bottom - desc.DesktopCoordinates.top) as u32;
 
