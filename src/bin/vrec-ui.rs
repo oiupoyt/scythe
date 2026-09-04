@@ -1,5 +1,5 @@
 use vrec::ipc::{Command, send_command, query_status};
-use vrec::overlay::{show_menu_overlay, show_notification};
+use vrec::overlay::show_notification;
 use std::env;
 use global_hotkey::{GlobalHotKeyManager, hotkey::{HotKey, Modifiers, Code}, GlobalHotKeyEvent};
 
@@ -98,7 +98,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             }
             "--menu" => {
                 ensure_daemon_running();
-                show_menu_overlay();
+                vrec::overlay_egui::run_egui_overlay();
                 return Ok(());
             }
             "--record" | "--toggle" => {
@@ -148,6 +148,8 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             println!("     You can bind `vrec-ui --menu` or `vrec-ui --save` in your system shortcut settings.");
         } else {
             println!("wlroots/Hyprland compositor detected.");
+            vrec::hyprland_binds::register_hyprland_binds(&vrec::config::VrecConfig::load());
+            vrec::hyprland_binds::spawn_hyprland_reload_watcher();
         }
     } else {
         println!("X11 session detected.");
@@ -169,7 +171,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if let Ok(event) = receiver.try_recv() {
             if event.id == hotkey_menu.id() {
                 ensure_daemon_running();
-                show_menu_overlay();
+                vrec::overlay_egui::run_egui_overlay();
             } else if event.id == hotkey_save.id() {
                 let _ = send_with_notification(Command::SaveReplay, "Replay saved");
             } else if event.id == hotkey_record.id() {

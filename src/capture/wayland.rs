@@ -28,7 +28,7 @@ impl WaylandCapture {
             .set_multiple(false)
             .set_cursor_mode(CursorMode::Embedded)
             .set_sources(SourceType::Monitor | SourceType::Monitor)
-            .set_persist_mode(PersistMode::Application);
+            .set_persist_mode(PersistMode::DoNot);
             
         proxy.select_sources(&session, select_opts).await.map_err(|e| {
             format!("Failed to select ScreenCast sources: {:?}", e)

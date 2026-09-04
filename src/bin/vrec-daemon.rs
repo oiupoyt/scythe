@@ -105,6 +105,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         &initial_config.audio_mode,
     ).ok();
 
+    // Automatically register dynamic keybindings on Hyprland if active (no config edits needed)
+    vrec::hyprland_binds::register_hyprland_binds(&initial_config);
+    vrec::hyprland_binds::spawn_hyprland_reload_watcher();
+
     let is_recording_state = Arc::new(AtomicBool::new(false));
     let record_start_state = Arc::new(AtomicU64::new(0));
     let replay_enabled_state = Arc::new(AtomicBool::new(true));
@@ -197,6 +201,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                     ring = HeapRb::<Packet>::new(new_capacity);
                                     println!("Replay buffer resized to {} packets.", new_capacity);
                                 }
+                                vrec::hyprland_binds::register_hyprland_binds(&config);
                             },
                             Command::SaveReplay => {
                                 if config.replay_enabled {
@@ -382,6 +387,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                 },
                                 Command::StopDaemon => {
                                     println!("StopDaemon requested: Finalizing active recordings...");
+                                    vrec::hyprland_binds::unregister_hyprland_binds(&vrec::config::VrecConfig::load());
                                     let _ = cmd_tx.send(Command::StopRecording);
                                     std::thread::sleep(std::time::Duration::from_millis(350));
                                     break;
