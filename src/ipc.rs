@@ -30,6 +30,7 @@ fn default_audio_mode_str() -> String {
 
 pub fn send_command(cmd: Command) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     use std::io::Write;
+    use std::time::Duration;
 
     let payload = serde_json::to_vec(&cmd)?;
     let len_buf = (payload.len() as u32).to_le_bytes();
@@ -39,6 +40,8 @@ pub fn send_command(cmd: Command) -> Result<(), Box<dyn std::error::Error + Send
         use std::os::unix::net::UnixStream;
         let socket_path = format!("{}/vrec.sock", std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string()));
         let mut stream = UnixStream::connect(&socket_path)?;
+        let _ = stream.set_write_timeout(Some(Duration::from_millis(250)));
+        let _ = stream.set_read_timeout(Some(Duration::from_millis(250)));
         stream.write_all(&len_buf)?;
         stream.write_all(&payload)?;
     }
@@ -47,6 +50,8 @@ pub fn send_command(cmd: Command) -> Result<(), Box<dyn std::error::Error + Send
     {
         use std::net::TcpStream;
         let mut stream = TcpStream::connect("127.0.0.1:42069")?;
+        let _ = stream.set_write_timeout(Some(Duration::from_millis(250)));
+        let _ = stream.set_read_timeout(Some(Duration::from_millis(250)));
         stream.write_all(&len_buf)?;
         stream.write_all(&payload)?;
     }
@@ -56,6 +61,7 @@ pub fn send_command(cmd: Command) -> Result<(), Box<dyn std::error::Error + Send
 
 pub fn query_status() -> Result<DaemonStatus, Box<dyn std::error::Error + Send + Sync>> {
     use std::io::{Read, Write};
+    use std::time::Duration;
 
     let payload = serde_json::to_vec(&Command::GetStatus)?;
     let len_buf = (payload.len() as u32).to_le_bytes();
@@ -64,13 +70,19 @@ pub fn query_status() -> Result<DaemonStatus, Box<dyn std::error::Error + Send +
     let mut stream = {
         use std::os::unix::net::UnixStream;
         let socket_path = format!("{}/vrec.sock", std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string()));
-        UnixStream::connect(&socket_path)?
+        let s = UnixStream::connect(&socket_path)?;
+        let _ = s.set_write_timeout(Some(Duration::from_millis(250)));
+        let _ = s.set_read_timeout(Some(Duration::from_millis(250)));
+        s
     };
 
     #[cfg(windows)]
     let mut stream = {
         use std::net::TcpStream;
-        TcpStream::connect("127.0.0.1:42069")?
+        let s = TcpStream::connect("127.0.0.1:42069")?;
+        let _ = s.set_write_timeout(Some(Duration::from_millis(250)));
+        let _ = s.set_read_timeout(Some(Duration::from_millis(250)));
+        s
     };
 
     stream.write_all(&len_buf)?;

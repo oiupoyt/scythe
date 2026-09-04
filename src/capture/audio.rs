@@ -4,7 +4,19 @@ use std::collections::VecDeque;
 use std::thread;
 
 pub struct AudioCapture {
+    #[cfg(unix)]
+    _processes: Vec<std::process::Child>,
     _streams: Vec<cpal::Stream>,
+}
+
+impl Drop for AudioCapture {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        for child in &mut self._processes {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
 }
 
 pub fn get_device_name(dev: &cpal::Device) -> String {
@@ -14,17 +26,88 @@ pub fn get_device_name(dev: &cpal::Device) -> String {
 }
 
 pub fn list_input_devices() -> Vec<String> {
-    let host = cpal::default_host();
     let mut names = Vec::new();
-    if let Ok(devices) = host.input_devices() {
-        for dev in devices {
-            let name = get_device_name(&dev);
-            if !names.contains(&name) {
-                names.push(name);
+    #[cfg(unix)]
+    {
+        // Try pactl sources first for PulseAudio/PipeWire
+        if let Ok(out) = std::process::Command::new("pactl").args(["list", "short", "sources"]).output() {
+            let text = String::from_utf8_lossy(&out.stdout);
+            for line in text.lines() {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 2 {
+                    names.push(parts[1].to_string());
+                }
+            }
+        }
+    }
+    if names.is_empty() {
+        let host = cpal::default_host();
+        if let Ok(devices) = host.input_devices() {
+            for dev in devices {
+                let name = get_device_name(&dev);
+                if !names.contains(&name) {
+                    names.push(name);
+                }
             }
         }
     }
     names
+}
+
+#[cfg(unix)]
+fn is_parec_available() -> bool {
+    std::process::Command::new("parec")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+#[cfg(unix)]
+fn spawn_parec_stream(
+    device: &str,
+    sender: Sender<Vec<f32>>,
+) -> Result<std::process::Child, Box<dyn std::error::Error + Send + Sync>> {
+    use std::io::Read;
+
+    let mut child = std::process::Command::new("parec")
+        .args([
+            "-d", device,
+            "--format=float32le",
+            "--rate=48000",
+            "--channels=2",
+            "--raw",
+            "--latency-msec=20",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+
+    let mut stdout = child.stdout.take().ok_or("Failed to open parec stdout")?;
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 4096];
+        loop {
+            match stdout.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    let floats_count = n / 4;
+                    let mut floats = Vec::with_capacity(floats_count);
+                    for i in 0..floats_count {
+                        let b = [buf[i * 4], buf[i * 4 + 1], buf[i * 4 + 2], buf[i * 4 + 3]];
+                        floats.push(f32::from_le_bytes(b));
+                    }
+                    if sender.send(floats).is_err() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    Ok(child)
 }
 
 impl AudioCapture {
@@ -44,19 +127,100 @@ impl AudioCapture {
         device_name: Option<&str>,
         audio_mode: &str,
     ) -> Result<(Self, u32, u16), Box<dyn std::error::Error + Send + Sync>> {
-        let host = cpal::default_host();
-
         if audio_mode == "muted" {
             println!("Audio capture mode: MUTED (No audio recorded)");
-            return Ok((Self { _streams: Vec::new() }, 48000, 2));
+            return Ok((Self {
+                #[cfg(unix)]
+                _processes: Vec::new(),
+                _streams: Vec::new(),
+            }, 48000, 2));
         }
 
-        // Helper to find monitor device (system sound)
+        #[cfg(unix)]
+        if is_parec_available() {
+            println!("Using native PulseAudio/PipeWire parec capture (48000 Hz, 2 channels)...");
+            match audio_mode {
+                "mic" => {
+                    let mic_target = device_name
+                        .filter(|d| *d != "default" && !d.trim().is_empty())
+                        .unwrap_or("@DEFAULT_SOURCE@");
+                    let child = spawn_parec_stream(mic_target, sender)?;
+                    println!("Audio capture mode: MICROPHONE ONLY [{}] (48000 Hz, 2 ch)", mic_target);
+                    return Ok((Self {
+                        _processes: vec![child],
+                        _streams: Vec::new(),
+                    }, 48000, 2));
+                }
+                "both" => {
+                    let (sys_tx, sys_rx) = crossbeam_channel::bounded::<Vec<f32>>(100);
+                    let (mic_tx, mic_rx) = crossbeam_channel::bounded::<Vec<f32>>(100);
+
+                    let sys_child = spawn_parec_stream("@DEFAULT_MONITOR@", sys_tx)?;
+                    let mic_target = device_name
+                        .filter(|d| *d != "default" && !d.trim().is_empty())
+                        .unwrap_or("@DEFAULT_SOURCE@");
+                    let mic_child = spawn_parec_stream(mic_target, mic_tx)?;
+
+                    let out_tx = sender;
+                    thread::spawn(move || {
+                        let mut sys_q: VecDeque<f32> = VecDeque::with_capacity(16384);
+                        let mut mic_q: VecDeque<f32> = VecDeque::with_capacity(16384);
+
+                        loop {
+                            while let Ok(chunk) = sys_rx.try_recv() {
+                                sys_q.extend(chunk);
+                            }
+                            while let Ok(chunk) = mic_rx.try_recv() {
+                                mic_q.extend(chunk);
+                            }
+
+                            let avail = sys_q.len().min(mic_q.len());
+                            if avail >= 480 {
+                                let mut mixed = Vec::with_capacity(avail);
+                                for _ in 0..avail {
+                                    let s = sys_q.pop_front().unwrap_or(0.0);
+                                    let m = mic_q.pop_front().unwrap_or(0.0);
+                                    mixed.push((s + m * 0.9).clamp(-1.0, 1.0));
+                                }
+                                let _ = out_tx.try_send(mixed);
+                            } else if sys_q.len() > 4800 {
+                                let chunk: Vec<f32> = sys_q.drain(..960.min(sys_q.len())).collect();
+                                let _ = out_tx.try_send(chunk);
+                            } else if mic_q.len() > 4800 {
+                                let chunk: Vec<f32> = mic_q.drain(..960.min(mic_q.len())).collect();
+                                let _ = out_tx.try_send(chunk);
+                            }
+
+                            thread::sleep(std::time::Duration::from_millis(4));
+                        }
+                    });
+
+                    println!("Audio capture mode: BOTH (System [@DEFAULT_MONITOR@] + Mic [{}]) (48000 Hz, 2 ch)", mic_target);
+                    return Ok((Self {
+                        _processes: vec![sys_child, mic_child],
+                        _streams: Vec::new(),
+                    }, 48000, 2));
+                }
+                _ => {
+                    // System audio only
+                    let child = spawn_parec_stream("@DEFAULT_MONITOR@", sender)?;
+                    println!("Audio capture mode: SYSTEM AUDIO ONLY [@DEFAULT_MONITOR@] (48000 Hz, 2 ch)");
+                    return Ok((Self {
+                        _processes: vec![child],
+                        _streams: Vec::new(),
+                    }, 48000, 2));
+                }
+            }
+        }
+
+        // Fallback: CPAL
+        let host = cpal::default_host();
+
         let find_system_device = || -> Option<cpal::Device> {
             if let Ok(devs) = host.input_devices() {
                 for d in devs {
                     let n = get_device_name(&d).to_lowercase();
-                    if n.contains("monitor") {
+                    if n.contains("pipewire") || n.contains("pulse") || n.contains("monitor") {
                         return Some(d);
                     }
                 }
@@ -64,7 +228,6 @@ impl AudioCapture {
             host.default_input_device()
         };
 
-        // Helper to find microphone device
         let find_mic_device = || -> Option<cpal::Device> {
             if let Some(target) = device_name
                 && target != "default"
@@ -80,7 +243,7 @@ impl AudioCapture {
             if let Ok(devs) = host.input_devices() {
                 for d in devs {
                     let n = get_device_name(&d).to_lowercase();
-                    if !n.contains("monitor") {
+                    if !n.contains("discard") && !n.contains("null") && !n.contains("monitor") {
                         return Some(d);
                     }
                 }
@@ -88,7 +251,6 @@ impl AudioCapture {
             host.default_input_device()
         };
 
-        // Helper to build a stream for a device
         let build_stream = |dev: &cpal::Device, tx: Sender<Vec<f32>>| -> Result<(cpal::Stream, u32, u16), Box<dyn std::error::Error + Send + Sync>> {
             let config = dev.default_input_config()?;
             let sample_rate = config.sample_rate();
@@ -131,7 +293,11 @@ impl AudioCapture {
                 let name = get_device_name(&dev);
                 let (stream, sr, ch) = build_stream(&dev, sender)?;
                 println!("Audio capture mode: MICROPHONE ONLY [{}] ({} Hz, {} ch)", name, sr, ch);
-                Ok((Self { _streams: vec![stream] }, sr, ch))
+                Ok((Self {
+                    #[cfg(unix)]
+                    _processes: Vec::new(),
+                    _streams: vec![stream],
+                }, sr, ch))
             }
             "both" => {
                 let sys_dev = find_system_device().ok_or("No system audio monitor found")?;
@@ -181,16 +347,89 @@ impl AudioCapture {
                 });
 
                 println!("Audio capture mode: BOTH (System [{}] + Mic [{}]) ({} Hz, {} ch)", sys_name, mic_name, sr, ch);
-                Ok((Self { _streams: vec![sys_stream, mic_stream] }, sr, ch))
+                Ok((Self {
+                    #[cfg(unix)]
+                    _processes: Vec::new(),
+                    _streams: vec![sys_stream, mic_stream],
+                }, sr, ch))
             }
             _ => {
-                // "system" is default
                 let dev = find_system_device().ok_or("No audio device available")?;
                 let name = get_device_name(&dev);
                 let (stream, sr, ch) = build_stream(&dev, sender)?;
                 println!("Audio capture mode: SYSTEM SOUNDS ONLY [{}] ({} Hz, {} ch)", name, sr, ch);
-                Ok((Self { _streams: vec![stream] }, sr, ch))
+                Ok((Self {
+                    #[cfg(unix)]
+                    _processes: Vec::new(),
+                    _streams: vec![stream],
+                }, sr, ch))
             }
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_audio_probe() {
+        // 1. Test System audio
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let sys_cap = AudioCapture::new_with_device_and_mode(tx, None, "system");
+        assert!(sys_cap.is_ok(), "System audio capture failed: {:?}", sys_cap.err());
+        let mut got_sys_samples = false;
+        let start = std::time::Instant::now();
+        while start.elapsed() < std::time::Duration::from_millis(600) {
+            if let Ok(samples) = rx.try_recv() {
+                if !samples.is_empty() {
+                    got_sys_samples = true;
+                    println!("Received {} system audio samples", samples.len());
+                    break;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(got_sys_samples, "Did not receive any system audio samples");
+        drop(sys_cap);
+
+        // 2. Test Mic audio
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mic_cap = AudioCapture::new_with_device_and_mode(tx, None, "mic");
+        assert!(mic_cap.is_ok(), "Mic audio capture failed: {:?}", mic_cap.err());
+        let mut got_mic_samples = false;
+        let start = std::time::Instant::now();
+        while start.elapsed() < std::time::Duration::from_millis(600) {
+            if let Ok(samples) = rx.try_recv() {
+                if !samples.is_empty() {
+                    got_mic_samples = true;
+                    println!("Received {} mic audio samples", samples.len());
+                    break;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(got_mic_samples, "Did not receive any mic audio samples");
+        drop(mic_cap);
+
+        // 3. Test Both (Mixed) audio
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let both_cap = AudioCapture::new_with_device_and_mode(tx, None, "both");
+        assert!(both_cap.is_ok(), "Both audio capture failed: {:?}", both_cap.err());
+        let mut got_both_samples = false;
+        let start = std::time::Instant::now();
+        while start.elapsed() < std::time::Duration::from_millis(600) {
+            if let Ok(samples) = rx.try_recv() {
+                if !samples.is_empty() {
+                    got_both_samples = true;
+                    println!("Received {} mixed audio samples", samples.len());
+                    break;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(got_both_samples, "Did not receive any mixed audio samples");
+        drop(both_cap);
+    }
+}
+

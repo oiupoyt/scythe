@@ -48,6 +48,30 @@ fn ensure_wayland_env() {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     ensure_wayland_env();
+
+    #[cfg(unix)]
+    let _lock_file = {
+        let runtime_dir = env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| format!("/run/user/{}", unsafe { libc::getuid() }));
+        let lock_path = format!("{}/vrec.lock", runtime_dir);
+        match std::fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(&lock_path)
+        {
+            Ok(file) => {
+                use std::os::unix::io::AsRawFd;
+                let res = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+                if res != 0 {
+                    eprintln!("Another instance of vrec-daemon is already running. Exiting.");
+                    return Ok(());
+                }
+                Some(file)
+            }
+            Err(_) => None,
+        }
+    };
     let session_type = env::var("XDG_SESSION_TYPE").unwrap_or_else(|_| "x11".to_string());
     println!("Detected session type: {}", session_type);
 
@@ -344,6 +368,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     for stream in listener.incoming() {
         match stream {
             Ok(mut stream) => {
+                let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(250)));
+                let _ = stream.set_write_timeout(Some(std::time::Duration::from_millis(250)));
                 let mut len_buf = [0u8; 4];
                 if stream.read_exact(&mut len_buf).is_ok() {
                     let len = u32::from_le_bytes(len_buf) as usize;
