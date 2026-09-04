@@ -153,7 +153,7 @@ pub fn show_menu_overlay() {
         let badge_label = Label::new(Some("GPU ACCELERATED"));
         badge_label.style_context().add_class("badge-tag");
         let spacer = Box::new(Orientation::Horizontal, 0);
-        let close_btn = Button::with_label("✕");
+        let close_btn = Button::with_label("X");
         close_btn.style_context().add_class("close-btn");
 
         header_box.pack_start(&title_label, false, false, 0);
