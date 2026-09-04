@@ -111,6 +111,8 @@ jobs:
             mingw-w64-x86_64-ffmpeg
             mingw-w64-x86_64-pkg-config
             mingw-w64-x86_64-clang
+            mingw-w64-x86_64-ntldd
+            python3
 
       - name: Build Release Binaries (Windows)
         shell: msys2 {0}
@@ -119,20 +121,34 @@ jobs:
           BINDGEN_EXTRA_CLANG_ARGS: "--target=x86_64-w64-windows-gnu"
         run: |
           cargo build --release
+          mkdir -p dist/bundle
+          cp target/release/vrec-daemon.exe dist/bundle/
+          cp target/release/vrec-ui.exe dist/bundle/
+          python3 packaging/windows/bundle_deps.py dist/bundle
 
-      - name: Package Windows Zip
+      - name: Package Windows Standalone (.exe), Installer, and Zip
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path dist/vrec-windows-x64
-          Copy-Item target/release/vrec-daemon.exe dist/vrec-windows-x64/
-          Copy-Item target/release/vrec-ui.exe dist/vrec-windows-x64/
-          Compress-Archive -Path dist/vrec-windows-x64 -DestinationPath dist/vrec-windows-x64.zip
+          if (!(Get-Command makensis -ErrorAction SilentlyContinue)) {
+              if (Test-Path "C:\Program Files (x86)\NSIS\makensis.exe") {
+                  $env:Path += ";C:\Program Files (x86)\NSIS"
+              } else {
+                  choco install nsis -y --no-progress
+                  $env:Path += ";C:\Program Files (x86)\NSIS"
+              }
+          }
+          makensis packaging/windows/vrec-standalone.nsi
+          makensis packaging/windows/vrec-installer.nsi
+          Compress-Archive -Path dist/bundle/* -DestinationPath dist/vrec-windows-x64.zip
 
       - name: Upload Windows Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: windows-package
-          path: dist/vrec-windows-x64.zip
+          name: windows-packages
+          path: |
+            dist/vrec.exe
+            dist/vrec-setup.exe
+            dist/vrec-windows-x64.zip
 
   publish-release:
     name: Publish GitHub Release
@@ -166,14 +182,16 @@ jobs:
             - Multi-channel audio routing (System audio, Microphone, Combined, and Mute)
 
             ### Packages
-            - Windows: `vrec-windows-x64.zip`
+            - Windows Standalone: `vrec.exe` (Single standalone executable, zero install required)
+            - Windows Setup: `vrec-setup.exe` (Full installer with Start Menu & Desktop shortcuts)
+            - Windows Portable: `vrec-windows-x64.zip` (Zip with all binaries & runtime DLLs)
             - Universal Linux: `vrec-x86_64.AppImage`
             - Debian / Ubuntu / Mint: `vrec_0.1.0_amd64.deb`
             - Fedora / RHEL / openSUSE: `vrec-0.1.0-2.x86_64.rpm`
             - Generic Linux: `vrec-linux-x86_64.tar.gz`
           files: |
             artifacts/linux-packages/*
-            artifacts/windows-package/*
+            artifacts/windows-packages/*
           draft: false
           prerelease: false
           generate_release_notes: false

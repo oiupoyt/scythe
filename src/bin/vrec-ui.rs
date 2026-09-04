@@ -35,16 +35,34 @@ fn ensure_wayland_env() {
     }
 }
 
+fn get_daemon_cmd() -> std::process::Command {
+    if let Ok(mut path) = std::env::current_exe() {
+        path.pop();
+        #[cfg(target_os = "windows")]
+        let candidate = path.join("vrec-daemon.exe");
+        #[cfg(not(target_os = "windows"))]
+        let candidate = path.join("vrec-daemon");
+
+        if candidate.exists() {
+            return std::process::Command::new(candidate);
+        }
+    }
+    #[cfg(target_os = "windows")]
+    return std::process::Command::new("vrec-daemon.exe");
+    #[cfg(not(target_os = "windows"))]
+    return std::process::Command::new("vrec-daemon");
+}
+
 fn ensure_daemon_running() {
     if query_status().is_err() {
         println!("vrec-daemon not running. Auto-launching vrec-daemon...");
-        let _ = std::process::Command::new("vrec-daemon")
+        let _ = get_daemon_cmd()
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn();
-        for _ in 0..15 {
-            std::thread::sleep(std::time::Duration::from_millis(100));
+        for _ in 0..20 {
+            std::thread::sleep(std::time::Duration::from_millis(150));
             if query_status().is_ok() {
                 println!("vrec-daemon successfully connected.");
                 break;
