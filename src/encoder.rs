@@ -1,5 +1,6 @@
 use ffmpeg_next::ffi::*;
 use std::ptr;
+use std::collections::HashMap;
 use crate::capture::Frame;
 
 pub struct VaapiEncoder {
@@ -7,8 +8,12 @@ pub struct VaapiEncoder {
     hw_device_ctx: *mut AVBufferRef,
     hw_frames_ctx: *mut AVBufferRef,
     sws_ctx: *mut SwsContext,
-    cached_nv12: *mut AVFrame,
+    staged_nv12: *mut AVFrame,
+    hw_frame: *mut AVFrame,
     next_pts: i64,
+    has_frame: bool,
+    #[cfg(unix)]
+    dma_mmap_cache: HashMap<i32, (*mut libc::c_void, usize)>,
 }
 
 impl VaapiEncoder {
@@ -109,14 +114,71 @@ impl VaapiEncoder {
                 return Err("Failed to open h264_vaapi encoder".into());
             }
 
+            let staged_nv12 = av_frame_alloc();
+            (*staged_nv12).format = AVPixelFormat::AV_PIX_FMT_NV12 as i32;
+            (*staged_nv12).width = width as i32;
+            (*staged_nv12).height = height as i32;
+            av_frame_get_buffer(staged_nv12, 32);
+
+            let hw_frame = av_frame_alloc();
+            (*hw_frame).format = AVPixelFormat::AV_PIX_FMT_VAAPI as i32;
+
+            let sws_ctx = sws_getContext(
+                width as i32,
+                height as i32,
+                AVPixelFormat::AV_PIX_FMT_BGRA,
+                width as i32,
+                height as i32,
+                AVPixelFormat::AV_PIX_FMT_NV12,
+                2,
+                ptr::null_mut(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+            );
+
             Ok(Self {
                 codec_ctx,
                 hw_device_ctx,
                 hw_frames_ctx: hw_frames_ref,
-                sws_ctx: ptr::null_mut(),
-                cached_nv12: ptr::null_mut(),
+                sws_ctx,
+                staged_nv12,
+                hw_frame,
                 next_pts: 0,
+                has_frame: false,
+                #[cfg(unix)]
+                dma_mmap_cache: HashMap::new(),
             })
+        }
+    }
+
+    unsafe fn send_staged_frame(&mut self, packets: &mut Vec<crate::ring::Packet>) -> Result<(), String> {
+        unsafe {
+            av_frame_unref(self.hw_frame);
+            let ret = av_hwframe_get_buffer(self.hw_frames_ctx, self.hw_frame, 0);
+            if ret < 0 {
+                return Err("Failed to get hw frame buffer".into());
+            }
+
+            let transfer_ret = av_hwframe_transfer_data(self.hw_frame, self.staged_nv12, 0);
+            if transfer_ret < 0 {
+                av_frame_unref(self.hw_frame);
+                return Err("Failed to transfer staged nv12 data to hw frame".into());
+            }
+
+            (*self.hw_frame).pts = self.next_pts;
+            self.next_pts += 1;
+
+            if avcodec_send_frame(self.codec_ctx, self.hw_frame) >= 0 {
+                let mut pkt = av_packet_alloc();
+                while avcodec_receive_packet(self.codec_ctx, pkt) >= 0 {
+                    let new_pkt = av_packet_alloc();
+                    av_packet_move_ref(new_pkt, pkt);
+                    packets.push(crate::ring::Packet::new(new_pkt));
+                }
+                av_packet_free(&mut pkt);
+            }
+            av_frame_unref(self.hw_frame);
+            Ok(())
         }
     }
 
@@ -128,108 +190,68 @@ impl VaapiEncoder {
         let mut packets = Vec::new();
         unsafe {
             match frame {
-                Frame::Raw { width, height, stride: in_stride, data } => {
-                    let mut bgra_frame = av_frame_alloc();
-                    (*bgra_frame).format = AVPixelFormat::AV_PIX_FMT_BGRA as i32;
-                    (*bgra_frame).width = *width as i32;
-                    (*bgra_frame).height = *height as i32;
-                    av_frame_get_buffer(bgra_frame, 32);
-
-                    let bgra_stride = (*bgra_frame).linesize[0] as usize;
-                    for y in 0..(*height as usize) {
-                        let src_row = &data[y * (*in_stride as usize) .. y * (*in_stride as usize) + (*width as usize) * 4];
-                        let dst_row = std::slice::from_raw_parts_mut(
-                            (*bgra_frame).data[0].add(y * bgra_stride),
-                            (*width as usize) * 4
-                        );
-                        dst_row.copy_from_slice(src_row);
-                    }
-
-                    let nv12_frame = av_frame_alloc();
-                    (*nv12_frame).format = AVPixelFormat::AV_PIX_FMT_NV12 as i32;
-                    (*nv12_frame).width = *width as i32;
-                    (*nv12_frame).height = *height as i32;
-                    av_frame_get_buffer(nv12_frame, 32);
-
-                    if self.sws_ctx.is_null() {
-                        self.sws_ctx = sws_getContext(
-                            *width as i32, *height as i32, AVPixelFormat::AV_PIX_FMT_BGRA,
-                            *width as i32, *height as i32, AVPixelFormat::AV_PIX_FMT_NV12,
-                            2, ptr::null_mut(), ptr::null_mut(), ptr::null_mut()
-                        );
-                    }
-                    
+                Frame::Raw { width: _, height, stride: in_stride, data } => {
+                    let src_slices: [*const u8; 4] = [data.as_ptr(), ptr::null(), ptr::null(), ptr::null()];
+                    let src_strides: [i32; 4] = [*in_stride as i32, 0, 0, 0];
                     sws_scale(
                         self.sws_ctx,
-                        (*bgra_frame).data.as_ptr() as *const *const u8,
-                        (*bgra_frame).linesize.as_ptr(),
+                        src_slices.as_ptr(),
+                        src_strides.as_ptr(),
                         0,
                         *height as i32,
-                        (*nv12_frame).data.as_ptr(),
-                        (*nv12_frame).linesize.as_ptr()
+                        (*self.staged_nv12).data.as_ptr(),
+                        (*self.staged_nv12).linesize.as_ptr(),
                     );
-
-                    let mut hw_frame = av_frame_alloc();
-                    av_hwframe_get_buffer(self.hw_frames_ctx, hw_frame, 0);
-                    av_hwframe_transfer_data(hw_frame, nv12_frame, 0);
-
-                    (*hw_frame).pts = self.next_pts;
-                    self.next_pts += 1;
-
-                    if avcodec_send_frame(self.codec_ctx, hw_frame) >= 0 {
-                        let mut pkt = av_packet_alloc();
-                        while avcodec_receive_packet(self.codec_ctx, pkt) >= 0 {
-                            let new_pkt = av_packet_alloc();
-                            av_packet_move_ref(new_pkt, pkt);
-                            packets.push(crate::ring::Packet::new(new_pkt));
-                        }
-                        av_packet_free(&mut pkt);
-                    }
-                    av_frame_free(&mut hw_frame);
-                    if !self.cached_nv12.is_null() {
-                        av_frame_free(&mut self.cached_nv12);
-                    }
-                    self.cached_nv12 = nv12_frame;
-                    av_frame_free(&mut bgra_frame);
+                    self.has_frame = true;
+                    self.send_staged_frame(&mut packets)?;
                 }
                 Frame::DmaBuf { width: dma_width, height: dma_height, format, modifier, fd, stride, offset } => {
                     let mmap_size = (*stride as usize) * (*dma_height as usize);
-                    let mut drm_desc = AVDRMFrameDescriptor {
-                        nb_objects: 1,
-                        objects: [AVDRMObjectDescriptor {
-                            fd: *fd,
-                            size: mmap_size,
-                            format_modifier: *modifier,
-                        }, std::mem::zeroed(), std::mem::zeroed(), std::mem::zeroed()],
-                        nb_layers: 1,
-                        layers: [AVDRMLayerDescriptor {
-                            format: *format,
-                            nb_planes: 1,
-                            planes: [AVDRMPlaneDescriptor {
-                                object_index: 0,
-                                offset: *offset as isize,
-                                pitch: *stride as isize,
+                    let mut mapped_direct = false;
+
+                    let desc = av_malloc(std::mem::size_of::<AVDRMFrameDescriptor>()) as *mut AVDRMFrameDescriptor;
+                    if !desc.is_null() {
+                        *desc = AVDRMFrameDescriptor {
+                            nb_objects: 1,
+                            objects: [AVDRMObjectDescriptor {
+                                fd: *fd,
+                                size: mmap_size,
+                                format_modifier: *modifier,
                             }, std::mem::zeroed(), std::mem::zeroed(), std::mem::zeroed()],
-                        }, std::mem::zeroed(), std::mem::zeroed(), std::mem::zeroed()],
-                    };
+                            nb_layers: 1,
+                            layers: [AVDRMLayerDescriptor {
+                                format: *format,
+                                nb_planes: 1,
+                                planes: [AVDRMPlaneDescriptor {
+                                    object_index: 0,
+                                    offset: *offset as isize,
+                                    pitch: *stride as isize,
+                                }, std::mem::zeroed(), std::mem::zeroed(), std::mem::zeroed()],
+                            }, std::mem::zeroed(), std::mem::zeroed(), std::mem::zeroed()],
+                        };
 
-                    let mut drm_frame = av_frame_alloc();
-                    (*drm_frame).format = AVPixelFormat::AV_PIX_FMT_DRM_PRIME as i32;
-                    (*drm_frame).width = *dma_width as i32;
-                    (*drm_frame).height = *dma_height as i32;
-                    (*drm_frame).data[0] = &mut drm_desc as *mut _ as *mut u8;
+                        let mut drm_frame = av_frame_alloc();
+                        (*drm_frame).format = AVPixelFormat::AV_PIX_FMT_DRM_PRIME as i32;
+                        (*drm_frame).width = *dma_width as i32;
+                        (*drm_frame).height = *dma_height as i32;
+                        (*drm_frame).data[0] = desc as *mut u8;
+                        (*drm_frame).buf[0] = av_buffer_create(
+                            desc as *mut u8,
+                            std::mem::size_of::<AVDRMFrameDescriptor>(),
+                            None,
+                            ptr::null_mut(),
+                            0,
+                        );
 
-                    let mut hw_frame = av_frame_alloc();
-                    (*hw_frame).format = AVPixelFormat::AV_PIX_FMT_VAAPI as i32;
+                        let mut direct_hw = av_frame_alloc();
+                        (*direct_hw).format = AVPixelFormat::AV_PIX_FMT_VAAPI as i32;
+                        (*direct_hw).hw_frames_ctx = av_buffer_ref(self.hw_frames_ctx);
 
-                    let ret = av_hwframe_get_buffer(self.hw_frames_ctx, hw_frame, 0);
-                    if ret >= 0 {
-                        let map_ret = av_hwframe_map(hw_frame, drm_frame, 0);
-                        if map_ret >= 0 {
-                            (*hw_frame).pts = self.next_pts;
+                        if av_hwframe_map(direct_hw, drm_frame, 0) >= 0 {
+                            (*direct_hw).pts = self.next_pts;
                             self.next_pts += 1;
 
-                            if avcodec_send_frame(self.codec_ctx, hw_frame) >= 0 {
+                            if avcodec_send_frame(self.codec_ctx, direct_hw) >= 0 {
                                 let mut pkt = av_packet_alloc();
                                 while avcodec_receive_packet(self.codec_ctx, pkt) >= 0 {
                                     let new_pkt = av_packet_alloc();
@@ -237,103 +259,58 @@ impl VaapiEncoder {
                                     packets.push(crate::ring::Packet::new(new_pkt));
                                 }
                                 av_packet_free(&mut pkt);
+                                mapped_direct = true;
                             }
-                        } else {
-                            #[cfg(unix)]
-                            {
-                                let mmap_size = (*stride as usize) * (*dma_height as usize);
-                                let ptr = libc::mmap(
-                                    ptr::null_mut(),
-                                    mmap_size,
-                                    libc::PROT_READ,
-                                    libc::MAP_SHARED,
-                                    *fd,
-                                    *offset as libc::off_t,
-                                );
-                                if ptr != libc::MAP_FAILED {
-                                    let mut bgra_frame = av_frame_alloc();
-                                    (*bgra_frame).format = AVPixelFormat::AV_PIX_FMT_BGRA as i32;
-                                    (*bgra_frame).width = *dma_width as i32;
-                                    (*bgra_frame).height = *dma_height as i32;
-                                    av_frame_get_buffer(bgra_frame, 32);
+                        }
+                        av_frame_free(&mut direct_hw);
+                        av_frame_free(&mut drm_frame);
+                    }
 
-                                    let bgra_stride = (*bgra_frame).linesize[0] as usize;
-                                    for y in 0..(*dma_height as usize) {
-                                        let src_row = std::slice::from_raw_parts(
-                                            (ptr as *const u8).add(y * (*stride as usize)),
-                                            (*dma_width as usize) * 4
-                                        );
-                                        let dst_row = std::slice::from_raw_parts_mut(
-                                            (*bgra_frame).data[0].add(y * bgra_stride),
-                                            (*dma_width as usize) * 4
-                                        );
-                                        dst_row.copy_from_slice(src_row);
-                                    }
-                                    libc::munmap(ptr, mmap_size);
-
-                                    let nv12_frame = av_frame_alloc();
-                                    (*nv12_frame).format = AVPixelFormat::AV_PIX_FMT_NV12 as i32;
-                                    (*nv12_frame).width = *dma_width as i32;
-                                    (*nv12_frame).height = *dma_height as i32;
-                                    av_frame_get_buffer(nv12_frame, 32);
-
-                                    if self.sws_ctx.is_null() {
-                                        self.sws_ctx = sws_getContext(
-                                            *dma_width as i32, *dma_height as i32, AVPixelFormat::AV_PIX_FMT_BGRA,
-                                            *dma_width as i32, *dma_height as i32, AVPixelFormat::AV_PIX_FMT_NV12,
-                                            2, ptr::null_mut(), ptr::null_mut(), ptr::null_mut()
-                                        );
-                                    }
-
-                                    sws_scale(
-                                        self.sws_ctx,
-                                        (*bgra_frame).data.as_ptr() as *const *const u8,
-                                        (*bgra_frame).linesize.as_ptr(),
-                                        0,
-                                        *dma_height as i32,
-                                        (*nv12_frame).data.as_ptr(),
-                                        (*nv12_frame).linesize.as_ptr()
+                    if !mapped_direct {
+                        #[cfg(unix)]
+                        {
+                            let ptr = match self.dma_mmap_cache.get(fd) {
+                                Some(&(p, _)) => p,
+                                None => {
+                                    let p = libc::mmap(
+                                        ptr::null_mut(),
+                                        mmap_size,
+                                        libc::PROT_READ,
+                                        libc::MAP_SHARED,
+                                        *fd,
+                                        *offset as libc::off_t,
                                     );
-
-                                    let mut fresh_hw_frame = av_frame_alloc();
-                                    (*fresh_hw_frame).format = AVPixelFormat::AV_PIX_FMT_VAAPI as i32;
-                                    let get_buf_ret = av_hwframe_get_buffer(self.hw_frames_ctx, fresh_hw_frame, 0);
-                                    let transfer_ret = av_hwframe_transfer_data(fresh_hw_frame, nv12_frame, 0);
-                                    (*fresh_hw_frame).pts = self.next_pts;
-                                    self.next_pts += 1;
-
-                                    let send_ret = avcodec_send_frame(self.codec_ctx, fresh_hw_frame);
-                                    if send_ret >= 0 {
-                                        let mut pkt = av_packet_alloc();
-                                        while avcodec_receive_packet(self.codec_ctx, pkt) >= 0 {
-                                            let new_pkt = av_packet_alloc();
-                                            av_packet_move_ref(new_pkt, pkt);
-                                            packets.push(crate::ring::Packet::new(new_pkt));
+                                    if p != libc::MAP_FAILED {
+                                        if self.dma_mmap_cache.len() >= 16 {
+                                            for (_, (old_p, old_size)) in self.dma_mmap_cache.drain() {
+                                                libc::munmap(old_p, old_size);
+                                            }
                                         }
-                                        av_packet_free(&mut pkt);
+                                        self.dma_mmap_cache.insert(*fd, (p, mmap_size));
+                                        p
                                     } else {
-                                        eprintln!("get_buf: {}, transfer: {}, send_ret: {}", get_buf_ret, transfer_ret, send_ret);
+                                        libc::MAP_FAILED
                                     }
-                                    av_frame_free(&mut fresh_hw_frame);
-
-                                    if !self.cached_nv12.is_null() {
-                                        av_frame_free(&mut self.cached_nv12);
-                                    }
-                                    self.cached_nv12 = nv12_frame;
-                                    av_frame_free(&mut bgra_frame);
-                                } else {
-                                    eprintln!("mmap failed on dma-buf fd {}: {}", *fd, std::io::Error::last_os_error());
                                 }
-                            }
-                            #[cfg(not(unix))]
-                            {
-                                eprintln!("DMA-BUF mmap is only supported on Unix");
+                            };
+
+                            if ptr != libc::MAP_FAILED {
+                                let src_slices: [*const u8; 4] = [ptr as *const u8, ptr::null(), ptr::null(), ptr::null()];
+                                let src_strides: [i32; 4] = [*stride as i32, 0, 0, 0];
+                                sws_scale(
+                                    self.sws_ctx,
+                                    src_slices.as_ptr(),
+                                    src_strides.as_ptr(),
+                                    0,
+                                    *dma_height as i32,
+                                    (*self.staged_nv12).data.as_ptr(),
+                                    (*self.staged_nv12).linesize.as_ptr(),
+                                );
+                                self.has_frame = true;
+                                self.send_staged_frame(&mut packets)?;
                             }
                         }
                     }
-
-                    av_frame_free(&mut hw_frame);
-                    av_frame_free(&mut drm_frame);
                 }
                 #[cfg(target_os = "windows")]
                 Frame::D3D11Texture { handle, .. } => {
@@ -346,39 +323,11 @@ impl VaapiEncoder {
 
     pub fn encode_cached_frame(&mut self) -> Result<Vec<crate::ring::Packet>, String> {
         let mut packets = Vec::new();
+        if !self.has_frame {
+            return Ok(packets);
+        }
         unsafe {
-            if self.cached_nv12.is_null() {
-                return Ok(packets);
-            }
-
-            let mut fresh_hw_frame = av_frame_alloc();
-            (*fresh_hw_frame).format = AVPixelFormat::AV_PIX_FMT_VAAPI as i32;
-            let get_buf_ret = av_hwframe_get_buffer(self.hw_frames_ctx, fresh_hw_frame, 0);
-            if get_buf_ret < 0 {
-                av_frame_free(&mut fresh_hw_frame);
-                return Err("Failed to get hw frame buffer".into());
-            }
-
-            let transfer_ret = av_hwframe_transfer_data(fresh_hw_frame, self.cached_nv12, 0);
-            if transfer_ret < 0 {
-                av_frame_free(&mut fresh_hw_frame);
-                return Err("Failed to transfer cached data to hw frame".into());
-            }
-
-            (*fresh_hw_frame).pts = self.next_pts;
-            self.next_pts += 1;
-
-            let send_ret = avcodec_send_frame(self.codec_ctx, fresh_hw_frame);
-            if send_ret >= 0 {
-                let mut pkt = av_packet_alloc();
-                while avcodec_receive_packet(self.codec_ctx, pkt) >= 0 {
-                    let new_pkt = av_packet_alloc();
-                    av_packet_move_ref(new_pkt, pkt);
-                    packets.push(crate::ring::Packet::new(new_pkt));
-                }
-                av_packet_free(&mut pkt);
-            }
-            av_frame_free(&mut fresh_hw_frame);
+            self.send_staged_frame(&mut packets)?;
         }
         Ok(packets)
     }
@@ -387,9 +336,17 @@ impl VaapiEncoder {
 impl Drop for VaapiEncoder {
     fn drop(&mut self) {
         unsafe {
-            if !self.cached_nv12.is_null() {
-                av_frame_free(&mut self.cached_nv12);
-                self.cached_nv12 = ptr::null_mut();
+            #[cfg(unix)]
+            for (_, (p, size)) in self.dma_mmap_cache.drain() {
+                if !p.is_null() && p != libc::MAP_FAILED {
+                    libc::munmap(p, size);
+                }
+            }
+            if !self.staged_nv12.is_null() {
+                av_frame_free(&mut self.staged_nv12);
+            }
+            if !self.hw_frame.is_null() {
+                av_frame_free(&mut self.hw_frame);
             }
             if !self.sws_ctx.is_null() {
                 sws_freeContext(self.sws_ctx);
@@ -407,6 +364,7 @@ impl Drop for VaapiEncoder {
         }
     }
 }
+
 
 #[cfg(target_os = "windows")]
 pub struct WindowsHwEncoder {
@@ -648,6 +606,7 @@ pub struct AudioEncoder {
     codec_ctx: *mut AVCodecContext,
     swr_ctx: *mut SwrContext,
     enc_frame: *mut AVFrame,
+    staging_out_frame: *mut AVFrame,
     next_pts: i64,
     frame_size: i32,
     channels: i32,
@@ -704,10 +663,18 @@ impl AudioEncoder {
             (*enc_frame).sample_rate = sample_rate;
             av_frame_get_buffer(enc_frame, 0);
 
+            let staging_out_frame = av_frame_alloc();
+            (*staging_out_frame).nb_samples = 8192;
+            (*staging_out_frame).format = AVSampleFormat::AV_SAMPLE_FMT_FLTP as i32;
+            (*staging_out_frame).ch_layout = (*codec_ctx).ch_layout;
+            (*staging_out_frame).sample_rate = sample_rate;
+            av_frame_get_buffer(staging_out_frame, 0);
+
             Ok(Self {
                 codec_ctx,
                 swr_ctx,
                 enc_frame,
+                staging_out_frame,
                 next_pts: 0,
                 frame_size,
                 channels,
@@ -724,43 +691,42 @@ impl AudioEncoder {
         let mut packets = Vec::new();
         unsafe {
             let nb_samples = data.len() as i32 / self.channels;
-            
-            // Allocate input frame (interleaved FLT)
-            let mut in_frame = av_frame_alloc();
-            (*in_frame).nb_samples = nb_samples;
-            (*in_frame).format = AVSampleFormat::AV_SAMPLE_FMT_FLT as i32;
-            (*in_frame).ch_layout = (*self.codec_ctx).ch_layout;
-            (*in_frame).sample_rate = (*self.codec_ctx).sample_rate;
-            av_frame_get_buffer(in_frame, 0);
-            
-            std::slice::from_raw_parts_mut((*in_frame).data[0], data.len() * 4)
-                .copy_from_slice(std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 4));
+            if nb_samples <= 0 {
+                return Ok(packets);
+            }
 
-            // Allocate output frame (planar FLTP)
-            let mut out_frame = av_frame_alloc();
-            (*out_frame).nb_samples = nb_samples;
-            (*out_frame).format = AVSampleFormat::AV_SAMPLE_FMT_FLTP as i32;
-            (*out_frame).ch_layout = (*self.codec_ctx).ch_layout;
-            (*out_frame).sample_rate = (*self.codec_ctx).sample_rate;
-            av_frame_get_buffer(out_frame, 0);
+            if (*self.staging_out_frame).nb_samples < nb_samples {
+                av_frame_unref(self.staging_out_frame);
+                (*self.staging_out_frame).nb_samples = nb_samples.max(8192);
+                (*self.staging_out_frame).format = AVSampleFormat::AV_SAMPLE_FMT_FLTP as i32;
+                (*self.staging_out_frame).ch_layout = (*self.codec_ctx).ch_layout;
+                (*self.staging_out_frame).sample_rate = (*self.codec_ctx).sample_rate;
+                av_frame_get_buffer(self.staging_out_frame, 0);
+            }
 
+            let in_ptr = [data.as_ptr() as *const u8, ptr::null()];
             swr_convert(
                 self.swr_ctx,
-                (*out_frame).data.as_mut_ptr(),
+                (*self.staging_out_frame).data.as_mut_ptr(),
                 nb_samples,
-                (*in_frame).data.as_ptr() as *mut _,
-                nb_samples
+                in_ptr.as_ptr() as *mut _,
+                nb_samples,
             );
-            
-            av_audio_fifo_write(self.fifo, (*out_frame).data.as_mut_ptr() as *mut *mut std::ffi::c_void, nb_samples);
 
-            av_frame_free(&mut in_frame);
-            av_frame_free(&mut out_frame);
+            av_audio_fifo_write(
+                self.fifo,
+                (*self.staging_out_frame).data.as_mut_ptr() as *mut *mut std::ffi::c_void,
+                nb_samples,
+            );
 
             // Read exactly frame_size chunks from FIFO and encode
             while av_audio_fifo_size(self.fifo) >= self.frame_size {
-                av_audio_fifo_read(self.fifo, (*self.enc_frame).data.as_mut_ptr() as *mut *mut std::ffi::c_void, self.frame_size);
-                
+                av_audio_fifo_read(
+                    self.fifo,
+                    (*self.enc_frame).data.as_mut_ptr() as *mut *mut std::ffi::c_void,
+                    self.frame_size,
+                );
+
                 (*self.enc_frame).pts = self.next_pts;
                 self.next_pts += self.frame_size as i64;
 
@@ -782,6 +748,9 @@ impl AudioEncoder {
 impl Drop for AudioEncoder {
     fn drop(&mut self) {
         unsafe {
+            if !self.staging_out_frame.is_null() {
+                av_frame_free(&mut self.staging_out_frame);
+            }
             if !self.enc_frame.is_null() {
                 av_frame_free(&mut self.enc_frame);
             }

@@ -534,9 +534,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                             && let Ok(audio_packets) = enc.encode_pcm(&audio_chunk) {
                                 for mut pkt in audio_packets {
                                     pkt.set_stream_index(1);
-                                    if config.replay_enabled {
-                                        ring.push_overwrite(pkt.clone());
-                                    }
                                     if normal_recording && !normal_waiting_keyframe
                                         && let Some(muxer) = normal_muxer.as_mut() {
                                             if rec_base_audio_pts < 0 {
@@ -547,6 +544,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                                 let _ = muxer.write_packet(&rebased);
                                             }
                                         }
+                                    if config.replay_enabled {
+                                        ring.push_overwrite(pkt);
+                                    }
                                 }
                             }
                     }
@@ -572,9 +572,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     if let Ok(packets) = packets_res {
                         for mut pkt in packets {
                             pkt.set_stream_index(0);
-                            if config.replay_enabled {
-                                ring.push_overwrite(pkt.clone());
-                            }
                             if normal_recording {
                                 if normal_waiting_keyframe && pkt.is_keyframe() {
                                     normal_waiting_keyframe = false;
@@ -594,6 +591,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                         let rebased = pkt.rebased(rec_base_video_pts);
                                         let _ = muxer.write_packet(&rebased);
                                 }
+                            }
+                            if config.replay_enabled {
+                                ring.push_overwrite(pkt);
                             }
                         }
                     }
