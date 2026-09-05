@@ -233,6 +233,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 return send_command(Command::ReloadConfig);
             }
             "--status" => {
+                ensure_daemon_running();
                 match query_status() {
                     Ok(st) => {
                         println!("Daemon Status:");
