@@ -178,3 +178,20 @@ pub fn query_status() -> Result<DaemonStatus, Box<dyn std::error::Error + Send +
 
     Err(last_err.unwrap_or_else(|| "Failed to query status from scythe-daemon".into()))
 }
+
+pub fn get_overlay_pid_path() -> std::path::PathBuf {
+    #[cfg(unix)]
+    {
+        let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+            .unwrap_or_else(|_| format!("/run/user/{}", unsafe { libc::getuid() }));
+        std::path::PathBuf::from(runtime_dir).join("scythe-overlay.pid")
+    }
+    #[cfg(not(unix))]
+    {
+        std::env::temp_dir().join("scythe-overlay.pid")
+    }
+}
+
+pub fn clean_overlay_pid() {
+    let _ = std::fs::remove_file(get_overlay_pid_path());
+}

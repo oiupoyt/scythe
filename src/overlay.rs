@@ -1007,14 +1007,14 @@ pub fn show_menu_overlay() {
             }
             /* Frosted Settings Panel */
             .settings-panel {
-                background-color: rgba(15, 22, 32, 0.90);
+                background-color: #0f1620;
                 border: 1px solid rgba(255, 255, 255, 0.16);
                 border-radius: 18px;
                 padding: 20px 26px;
                 box-shadow: 0px 24px 64px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.2);
             }
             .settings-section-card {
-                background-color: rgba(24, 32, 46, 0.55);
+                background-color: #18202e;
                 border: 1px solid rgba(255, 255, 255, 0.08);
                 border-radius: 12px;
                 padding: 14px 18px;
@@ -1140,7 +1140,7 @@ pub fn show_menu_overlay() {
         window.connect_key_press_event(move |_, key| {
             if key.keyval() == gdk::keys::constants::Escape {
                 w_esc.close();
-                gtk::glib::Propagation::Stop
+                std::process::exit(0);
             } else {
                 gtk::glib::Propagation::Proceed
             }

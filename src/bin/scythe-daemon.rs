@@ -36,6 +36,21 @@ fn ensure_wayland_env() {
                     env::set_var("DBUS_SESSION_BUS_ADDRESS", format!("unix:path={}", bus_path));
                 }
             }
+            if env::var("HYPRLAND_INSTANCE_SIGNATURE").is_err() {
+                let hypr_dir = std::path::Path::new(&runtime_dir).join("hypr");
+                if let Ok(entries) = std::fs::read_dir(&hypr_dir) {
+                    for entry in entries.flatten() {
+                        if entry.path().is_dir() {
+                            let sig = entry.file_name().to_string_lossy().to_string();
+                            if !sig.is_empty() {
+                                env::set_var("HYPRLAND_INSTANCE_SIGNATURE", &sig);
+                                println!("Auto-detected Hyprland instance signature: {}", sig);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
             if env::var("XDG_CURRENT_DESKTOP").is_err() {
                 env::set_var("XDG_CURRENT_DESKTOP", "Hyprland");
             }

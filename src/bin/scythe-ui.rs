@@ -29,6 +29,20 @@ fn ensure_wayland_env() {
                     env::set_var("DBUS_SESSION_BUS_ADDRESS", format!("unix:path={}", bus_path));
                 }
             }
+            if env::var("HYPRLAND_INSTANCE_SIGNATURE").is_err() {
+                let hypr_dir = std::path::Path::new(&runtime_dir).join("hypr");
+                if let Ok(entries) = std::fs::read_dir(&hypr_dir) {
+                    for entry in entries.flatten() {
+                        if entry.path().is_dir() {
+                            let sig = entry.file_name().to_string_lossy().to_string();
+                            if !sig.is_empty() {
+                                env::set_var("HYPRLAND_INSTANCE_SIGNATURE", &sig);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
             if env::var("XDG_CURRENT_DESKTOP").is_err() && env::var("WAYLAND_DISPLAY").is_ok() {
                 env::set_var("XDG_CURRENT_DESKTOP", "Hyprland");
             }
@@ -114,6 +128,53 @@ fn get_ui_cmd() -> std::process::Command {
     cmd
 }
 
+fn check_and_toggle_overlay() -> bool {
+    let pid_path = scythe::ipc::get_overlay_pid_path();
+    if pid_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&pid_path) {
+            if let Ok(pid) = content.trim().parse::<i32>() {
+                #[cfg(unix)]
+                {
+                    let exists = unsafe { libc::kill(pid, 0) == 0 };
+                    if exists && pid != std::process::id() as i32 {
+                        let proc_cmd = format!("/proc/{}/cmdline", pid);
+                        let is_scythe = std::fs::read_to_string(&proc_cmd)
+                            .map(|cmd| cmd.contains("scythe") || cmd.contains("vrec"))
+                            .unwrap_or(false);
+                        if is_scythe {
+                            // Overlay already open: toggle it closed instantly!
+                            unsafe { libc::kill(pid, libc::SIGTERM) };
+                            let _ = std::fs::remove_file(&pid_path);
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        let _ = std::fs::remove_file(&pid_path);
+    }
+
+    let my_pid = std::process::id().to_string();
+    let _ = std::fs::write(&pid_path, my_pid);
+    false
+}
+
+fn ensure_daemon_running_async() {
+    #[cfg(unix)]
+    {
+        use std::os::unix::net::UnixStream;
+        if UnixStream::connect(scythe::ipc::get_socket_path()).is_ok()
+            || UnixStream::connect(scythe::ipc::get_legacy_socket_path()).is_ok() {
+            return;
+        }
+    }
+    let _ = get_daemon_cmd()
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+}
+
 fn ensure_daemon_running() {
     if query_status().is_err() {
         let _ = get_daemon_cmd()
@@ -122,7 +183,7 @@ fn ensure_daemon_running() {
             .stderr(std::process::Stdio::null())
             .spawn();
         for _ in 0..15 {
-            std::thread::sleep(std::time::Duration::from_millis(100));
+            std::thread::sleep(std::time::Duration::from_millis(80));
             if query_status().is_ok() {
                 break;
             }
@@ -219,17 +280,29 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 return send_with_notification(Command::SaveReplay, "Replay saved");
             }
             "--menu" => {
-                ensure_daemon_running();
+                ensure_daemon_running_async();
                 ensure_hotkeys_running();
-                #[cfg(not(target_os = "linux"))]
+                if check_and_toggle_overlay() {
+                    return Ok(());
+                }
                 scythe::overlay_egui::run_egui_overlay();
-                #[cfg(target_os = "linux")]
-                scythe::overlay::show_menu_overlay();
                 return Ok(());
             }
             "--egui" => {
+                ensure_daemon_running_async();
+                ensure_hotkeys_running();
+                if check_and_toggle_overlay() {
+                    return Ok(());
+                }
+                scythe::overlay_egui::run_egui_overlay();
+                return Ok(());
+            }
+            "--gtk" => {
                 ensure_daemon_running();
                 ensure_hotkeys_running();
+                #[cfg(target_os = "linux")]
+                scythe::overlay::show_menu_overlay();
+                #[cfg(not(target_os = "linux"))]
                 scythe::overlay_egui::run_egui_overlay();
                 return Ok(());
             }
@@ -278,6 +351,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 println!("Usage:");
                 println!("  scythe-ui                Open the interactive overlay UI menu (default)");
                 println!("  scythe-ui --menu         Open the interactive overlay UI menu");
+                println!("  scythe-ui --gtk          Open legacy GTK layer-shell overlay (Linux)");
                 println!("  scythe-ui --hotkeys      Run global hotkey manager in background");
                 println!("  scythe-ui --status       Query current daemon status");
                 println!("  scythe-ui --save         Save instant replay and show notification");
@@ -292,12 +366,12 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             _ => {}
         }
     } else {
-        ensure_daemon_running();
+        ensure_daemon_running_async();
         ensure_hotkeys_running();
-        #[cfg(not(target_os = "linux"))]
+        if check_and_toggle_overlay() {
+            return Ok(());
+        }
         scythe::overlay_egui::run_egui_overlay();
-        #[cfg(target_os = "linux")]
-        scythe::overlay::show_menu_overlay();
         return Ok(());
     }
 

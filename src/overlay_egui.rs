@@ -1495,10 +1495,10 @@ impl eframe::App for ScytheOverlayApp {
                 self.replay_dropdown_open = false;
                 self.record_dropdown_open = false;
                 self.update_window_size(ctx);
-            } else if self.current_view != ShadowPlayView::MainHud {
-                self.switch_view(ShadowPlayView::MainHud, ctx);
             } else {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                crate::ipc::clean_overlay_pid();
+                std::process::exit(0);
             }
         }
 
@@ -1538,4 +1538,6 @@ pub fn run_egui_overlay() {
         options,
         Box::new(|_cc| Ok(Box::new(ScytheOverlayApp::new()))),
     );
+
+    crate::ipc::clean_overlay_pid();
 }
