@@ -113,7 +113,16 @@ pub fn register_hyprland_binds(config: &ScytheConfig) {
         .args(["eval", r#"hl.layer_rule({ match = { namespace = "scythe-notification" }, blur = true, ignore_alpha = 0.1 })"#])
         .output();
     let _ = Command::new("hyprctl")
-        .args(["eval", r#"hl.window_rule({ match = { class = "scythe-overlay" }, float = true, pin = true, stay_focused = true, move = "0 0", size = "100% 100%" })"#])
+        .args(["eval", r#"hl.window_rule({ match = { class = "scythe-overlay" }, float = true, pin = true, move = "0 0", size = "100% 100%" })"#])
+        .output();
+    let _ = Command::new("hyprctl")
+        .args(["eval", r#"hl.window_rule({ match = { title = "Select Recordings Directory" }, float = true, pin = true, stay_focused = true, center = true })"#])
+        .output();
+    let _ = Command::new("hyprctl")
+        .args(["eval", r#"hl.window_rule({ match = { class = "kdialog" }, float = true, pin = true, stay_focused = true, center = true })"#])
+        .output();
+    let _ = Command::new("hyprctl")
+        .args(["eval", r#"hl.window_rule({ match = { class = "org.kde.kdialog" }, float = true, pin = true, stay_focused = true, center = true })"#])
         .output();
     let _ = Command::new("hyprctl")
         .args(["eval", r#"hl.layer_rule({ match = { namespace = "vrec-overlay" }, blur = true, ignore_alpha = 0.1 })"#])
@@ -125,19 +134,28 @@ pub fn register_hyprland_binds(config: &ScytheConfig) {
         "move 0 0, class:^(scythe-overlay)$",
         "size 100% 100%, class:^(scythe-overlay)$",
         "pin, class:^(scythe-overlay)$",
-        "stayfocused, class:^(scythe-overlay)$",
         "noborder, class:^(scythe-overlay)$",
+        "float, title:^(Select Recordings Directory)$",
+        "pin, title:^(Select Recordings Directory)$",
+        "stayfocused, title:^(Select Recordings Directory)$",
+        "center, title:^(Select Recordings Directory)$",
+        "float, class:^(kdialog)$",
+        "pin, class:^(kdialog)$",
+        "stayfocused, class:^(kdialog)$",
+        "center, class:^(kdialog)$",
+        "float, class:^(org.kde.kdialog)$",
+        "pin, class:^(org.kde.kdialog)$",
+        "stayfocused, class:^(org.kde.kdialog)$",
+        "center, class:^(org.kde.kdialog)$",
         "float, class:^(scythe-hud)$",
         "move 0 0, class:^(scythe-hud)$",
         "size 100% 100%, class:^(scythe-hud)$",
         "pin, class:^(scythe-hud)$",
-        "stayfocused, class:^(scythe-hud)$",
         "noborder, class:^(scythe-hud)$",
         "float, class:^(vrec-overlay)$",
         "move 0 0, class:^(vrec-overlay)$",
         "size 100% 100%, class:^(vrec-overlay)$",
         "pin, class:^(vrec-overlay)$",
-        "stayfocused, class:^(vrec-overlay)$",
         "noborder, class:^(vrec-overlay)$",
     ];
     for rule in legacy_rules {
