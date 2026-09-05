@@ -1,6 +1,6 @@
 use gtk::prelude::*;
 use gtk::{
-    Application, ApplicationWindow, Box, Button, CheckButton, ComboBoxText, CssProvider,
+    Application, ApplicationWindow, Box, Button, ComboBoxText, CssProvider,
     DrawingArea, Entry, Label, Orientation, Revealer, RevealerTransitionType, Scale,
     ScrolledWindow, SpinButton, Stack, StackTransitionType, StyleContext, Switch,
 };
@@ -67,7 +67,7 @@ pub fn show_notification(message: &str) {
                 window.init_layer_shell();
                 window.set_layer(Layer::Overlay);
                 window.set_namespace("vrec-notification");
-                window.set_layer_shell_margin(gtk_layer_shell::Edge::Top, 45);
+                window.set_layer_shell_margin(gtk_layer_shell::Edge::Top, 40);
                 window.set_anchor(gtk_layer_shell::Edge::Top, true);
             }
 
@@ -90,19 +90,19 @@ pub fn show_notification(message: &str) {
                     background: transparent !important;
                 }
                 .notify-box {
-                    background-color: rgba(14, 18, 26, 0.94);
-                    border-radius: 10px;
-                    border: 1px solid #76b900;
-                    box-shadow: 0px 8px 32px rgba(0, 0, 0, 0.8);
-                    padding: 8px 20px;
+                    background-color: rgba(18, 24, 36, 0.78);
+                    border-radius: 12px;
+                    border: 1px solid rgba(118, 185, 0, 0.6);
+                    box-shadow: 0px 16px 40px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+                    padding: 8px 22px;
                 }
                 .notify-badge {
                     background-color: #76b900;
                     color: #0b1204;
-                    font-size: 10px;
-                    font-weight: 800;
+                    font-size: 10.5px;
+                    font-weight: 900;
                     border-radius: 4px;
-                    padding: 2px 6px;
+                    padding: 2px 7px;
                 }
                 .notify-label {
                     color: #ffffff;
@@ -144,88 +144,90 @@ pub fn show_notification(message: &str) {
     }
 }
 
-// Vector Icon Drawing Helpers (NVIDIA ShadowPlay & GPU Screen Recorder Style)
-fn draw_replay_icon(cr: &gtk::cairo::Context, is_active: bool) {
-    let cx = 28.0;
-    let cy = 28.0;
-    let r = 16.0;
+// Vector Icon Drawing Helpers (Centered & Antialiased)
+fn draw_replay_icon(cr: &gtk::cairo::Context, width: f64, height: f64, is_active: bool) {
+    let cx = width / 2.0;
+    let cy = height / 2.0;
+    let r = 24.0;
 
     if is_active {
         cr.set_source_rgb(0.463, 0.725, 0.0); // #76b900 NVIDIA green
     } else {
-        cr.set_source_rgb(0.58, 0.64, 0.72); // #94a3b8
+        cr.set_source_rgb(0.60, 0.68, 0.78); // #94a3b8
     }
-    cr.set_line_width(3.2);
+    cr.set_line_width(3.8);
     cr.arc(cx, cy, r, 0.25 * PI, 1.80 * PI);
     let _ = cr.stroke();
 
-    // Arrowhead at top-left
+    // Arrowhead at start of arc
     let a_x = cx + r * (0.25 * PI).cos();
     let a_y = cy + r * (0.25 * PI).sin();
     cr.move_to(a_x, a_y);
-    cr.line_to(a_x - 7.0, a_y);
-    cr.line_to(a_x, a_y - 7.0);
+    cr.line_to(a_x - 9.0, a_y + 1.0);
+    cr.line_to(a_x - 1.0, a_y - 9.0);
     cr.close_path();
     let _ = cr.fill();
 
-    // Play triangle in center
-    let tri_r = 6.0;
-    cr.move_to(cx + tri_r, cy);
-    cr.line_to(cx - tri_r * 0.6, cy - tri_r * 0.86);
-    cr.line_to(cx - tri_r * 0.6, cy + tri_r * 0.86);
+    // Centered play triangle
+    let tri_r = 8.5;
+    let tri_cx = cx + 1.0;
+    let tri_cy = cy;
+    cr.move_to(tri_cx + tri_r, tri_cy);
+    cr.line_to(tri_cx - tri_r * 0.6, tri_cy - tri_r * 0.86);
+    cr.line_to(tri_cx - tri_r * 0.6, tri_cy + tri_r * 0.86);
     cr.close_path();
     let _ = cr.fill();
 }
 
-fn draw_record_icon(cr: &gtk::cairo::Context, is_recording: bool) {
-    let cx = 28.0;
-    let cy = 28.0;
+fn draw_record_icon(cr: &gtk::cairo::Context, width: f64, height: f64, is_recording: bool) {
+    let cx = width / 2.0;
+    let cy = height / 2.0;
     if is_recording {
-        // Glowing red recording indicator
+        // Glowing red recording indicator with halo
         cr.set_source_rgba(0.937, 0.267, 0.267, 0.25);
-        cr.arc(cx, cy, 22.0, 0.0, PI * 2.0);
+        cr.arc(cx, cy, 32.0, 0.0, PI * 2.0);
         let _ = cr.fill();
 
         cr.set_source_rgb(0.937, 0.267, 0.267); // #ef4444
-        cr.set_line_width(2.8);
-        cr.arc(cx, cy, 18.0, 0.0, PI * 2.0);
+        cr.set_line_width(3.5);
+        cr.arc(cx, cy, 26.0, 0.0, PI * 2.0);
         let _ = cr.stroke();
 
         cr.set_source_rgb(0.937, 0.267, 0.267);
-        cr.arc(cx, cy, 9.0, 0.0, PI * 2.0);
+        cr.arc(cx, cy, 13.0, 0.0, PI * 2.0);
         let _ = cr.fill();
     } else {
-        cr.set_source_rgb(0.58, 0.64, 0.72); // #94a3b8
-        cr.set_line_width(2.5);
-        cr.arc(cx, cy, 17.0, 0.0, PI * 2.0);
+        cr.set_source_rgb(0.60, 0.68, 0.78); // #94a3b8
+        cr.set_line_width(3.2);
+        cr.arc(cx, cy, 25.0, 0.0, PI * 2.0);
         let _ = cr.stroke();
 
         cr.set_source_rgb(0.88, 0.91, 0.94);
-        cr.arc(cx, cy, 8.0, 0.0, PI * 2.0);
+        cr.arc(cx, cy, 12.0, 0.0, PI * 2.0);
         let _ = cr.fill();
     }
 }
 
-fn draw_gear_icon(cr: &gtk::cairo::Context) {
-    let cx = 28.0;
-    let cy = 28.0;
-    let r = 16.0;
+fn draw_gear_icon(cr: &gtk::cairo::Context, width: f64, height: f64) {
+    let cx = width / 2.0;
+    let cy = height / 2.0;
+    let r = 24.0;
 
-    cr.set_source_rgb(0.58, 0.64, 0.72); // #94a3b8
-    cr.set_line_width(2.2);
+    cr.set_source_rgb(0.60, 0.68, 0.78); // #94a3b8
+    cr.set_line_width(3.0);
     cr.arc(cx, cy, r * 0.75, 0.0, PI * 2.0);
     let _ = cr.stroke();
 
-    cr.arc(cx, cy, r * 0.30, 0.0, PI * 2.0);
+    cr.arc(cx, cy, r * 0.32, 0.0, PI * 2.0);
     let _ = cr.stroke();
 
     for i in 0..8 {
         let angle = i as f64 * (PI / 4.0);
         let p_in_x = cx + angle.cos() * (r * 0.68);
         let p_in_y = cy + angle.sin() * (r * 0.68);
-        let p_out_x = cx + angle.cos() * (r * 1.05);
-        let p_out_y = cy + angle.sin() * (r * 1.05);
-        cr.set_line_width(3.0);
+        let p_out_x = cx + angle.cos() * (r * 1.08);
+        let p_out_y = cy + angle.sin() * (r * 1.08);
+        cr.set_line_width(4.2);
         cr.move_to(p_in_x, p_in_y);
         cr.line_to(p_out_x, p_out_y);
         let _ = cr.stroke();
@@ -262,8 +264,8 @@ pub fn show_menu_overlay() {
             window.set_layer(Layer::Overlay);
             window.set_namespace("vrec-overlay");
             window.set_keyboard_interactivity(true);
-            // Position at upper ~20-25% of the screen, just like GPU Screen Recorder UI
-            window.set_layer_shell_margin(gtk_layer_shell::Edge::Top, 110);
+            // Shifted higher towards the top (50px margin) per user feedback
+            window.set_layer_shell_margin(gtk_layer_shell::Edge::Top, 50);
             window.set_anchor(gtk_layer_shell::Edge::Top, true);
         }
 
@@ -294,13 +296,13 @@ pub fn show_menu_overlay() {
         stack.set_homogeneous(false);
 
         // =========================================================================
-        // PAGE 1: 3 SQUARE CARDS WITH DROPDOWN MENUS (NVIDIA ShadowPlay Exact Match)
+        // PAGE 1: 3 FROSTED GLASS CARDS WITH CONTEXTUAL DROPDOWNS
         // =========================================================================
-        let hud_page = Box::new(Orientation::Vertical, 8);
+        let hud_page = Box::new(Orientation::Vertical, 10);
         hud_page.style_context().add_class("hud-wrapper");
-        hud_page.set_size_request(720, -1);
+        hud_page.set_size_request(740, -1);
 
-        // Top Bar (Floating frosted strip)
+        // Top Bar (Frosted glass header strip, no "X" button)
         let header_box = Box::new(Orientation::Horizontal, 10);
         header_box.style_context().add_class("header-bar");
 
@@ -315,43 +317,50 @@ pub fn show_menu_overlay() {
 
         let spacer = Box::new(Orientation::Horizontal, 0);
 
-        let close_btn = Button::with_label("✕");
-        close_btn.style_context().add_class("close-btn");
+        let esc_hint = Label::new(Some("Esc to Close"));
+        esc_hint.style_context().add_class("esc-pill");
 
         header_box.pack_start(&brand_badge, false, false, 0);
         header_box.pack_start(&title_label, false, false, 4);
         header_box.pack_start(&status_banner, false, false, 12);
         header_box.pack_start(&spacer, true, true, 0);
-        header_box.pack_start(&close_btn, false, false, 0);
+        header_box.pack_start(&esc_hint, false, false, 0);
 
         // Row of 3 Cards
-        let cards_box = Box::new(Orientation::Horizontal, 14);
+        let cards_box = Box::new(Orientation::Horizontal, 16);
         cards_box.style_context().add_class("cards-container");
         cards_box.set_halign(gtk::Align::Center);
 
-        // State Trackers for Dynamic Drawing
+        // State Trackers for Vector Redraws
         let replay_active_state = Arc::new(AtomicBool::new(config.replay_enabled));
         let record_active_state = Arc::new(AtomicBool::new(false));
 
         // -------------------------------------------------------------------------
-        // CARD 1: INSTANT REPLAY (With Attached Dropdown Menu)
+        // CARD 1: INSTANT REPLAY
         // -------------------------------------------------------------------------
         let replay_col = Box::new(Orientation::Vertical, 0);
-        replay_col.set_size_request(215, -1);
+        replay_col.set_size_request(225, -1);
 
         let replay_card_btn = Button::new();
         replay_card_btn.style_context().add_class("card-btn");
-        replay_card_btn.set_size_request(215, 180);
+        replay_card_btn.set_size_request(225, 195);
 
         let replay_card_inner = Box::new(Orientation::Vertical, 6);
+        replay_card_inner.set_valign(gtk::Align::Center);
+        replay_card_inner.set_halign(gtk::Align::Center);
+
         let replay_title_lbl = Label::new(Some("INSTANT REPLAY"));
         replay_title_lbl.style_context().add_class("card-title");
 
         let replay_icon_area = DrawingArea::new();
-        replay_icon_area.set_size_request(56, 56);
+        replay_icon_area.set_size_request(76, 76);
+        replay_icon_area.set_valign(gtk::Align::Center);
+        replay_icon_area.set_halign(gtk::Align::Center);
         let r_state_clone = Arc::clone(&replay_active_state);
-        replay_icon_area.connect_draw(move |_, cr| {
-            draw_replay_icon(cr, r_state_clone.load(Ordering::Relaxed));
+        replay_icon_area.connect_draw(move |w, cr| {
+            let width = w.allocated_width() as f64;
+            let height = w.allocated_height() as f64;
+            draw_replay_icon(cr, width, height, r_state_clone.load(Ordering::Relaxed));
             gtk::glib::Propagation::Proceed
         });
 
@@ -365,7 +374,7 @@ pub fn show_menu_overlay() {
         replay_sub_lbl.style_context().add_class("card-sub");
 
         replay_card_inner.pack_start(&replay_title_lbl, false, false, 0);
-        replay_card_inner.pack_start(&replay_icon_area, true, true, 4);
+        replay_card_inner.pack_start(&replay_icon_area, false, false, 6);
         replay_card_inner.pack_start(&replay_status_lbl, false, false, 0);
         replay_card_inner.pack_start(&replay_sub_lbl, false, false, 2);
         replay_card_btn.add(&replay_card_inner);
@@ -375,7 +384,7 @@ pub fn show_menu_overlay() {
         replay_revealer.set_transition_type(RevealerTransitionType::SlideDown);
         replay_revealer.set_transition_duration(150);
 
-        let replay_menu_box = Box::new(Orientation::Vertical, 2);
+        let replay_menu_box = Box::new(Orientation::Vertical, 3);
         replay_menu_box.style_context().add_class("dropdown-menu");
 
         let replay_toggle_item = Button::with_label(if config.replay_enabled { "Turn off" } else { "Turn on" });
@@ -396,24 +405,31 @@ pub fn show_menu_overlay() {
         replay_col.pack_start(&replay_revealer, false, false, 0);
 
         // -------------------------------------------------------------------------
-        // CARD 2: RECORD (With Attached Dropdown Menu)
+        // CARD 2: RECORD
         // -------------------------------------------------------------------------
         let record_col = Box::new(Orientation::Vertical, 0);
-        record_col.set_size_request(215, -1);
+        record_col.set_size_request(225, -1);
 
         let record_card_btn = Button::new();
         record_card_btn.style_context().add_class("card-btn");
-        record_card_btn.set_size_request(215, 180);
+        record_card_btn.set_size_request(225, 195);
 
         let record_card_inner = Box::new(Orientation::Vertical, 6);
+        record_card_inner.set_valign(gtk::Align::Center);
+        record_card_inner.set_halign(gtk::Align::Center);
+
         let record_title_lbl = Label::new(Some("RECORD"));
         record_title_lbl.style_context().add_class("card-title");
 
         let record_icon_area = DrawingArea::new();
-        record_icon_area.set_size_request(56, 56);
+        record_icon_area.set_size_request(76, 76);
+        record_icon_area.set_valign(gtk::Align::Center);
+        record_icon_area.set_halign(gtk::Align::Center);
         let rec_state_clone = Arc::clone(&record_active_state);
-        record_icon_area.connect_draw(move |_, cr| {
-            draw_record_icon(cr, rec_state_clone.load(Ordering::Relaxed));
+        record_icon_area.connect_draw(move |w, cr| {
+            let width = w.allocated_width() as f64;
+            let height = w.allocated_height() as f64;
+            draw_record_icon(cr, width, height, rec_state_clone.load(Ordering::Relaxed));
             gtk::glib::Propagation::Proceed
         });
 
@@ -424,7 +440,7 @@ pub fn show_menu_overlay() {
         record_sub_lbl.style_context().add_class("card-sub");
 
         record_card_inner.pack_start(&record_title_lbl, false, false, 0);
-        record_card_inner.pack_start(&record_icon_area, true, true, 4);
+        record_card_inner.pack_start(&record_icon_area, false, false, 6);
         record_card_inner.pack_start(&record_status_lbl, false, false, 0);
         record_card_inner.pack_start(&record_sub_lbl, false, false, 2);
         record_card_btn.add(&record_card_inner);
@@ -434,7 +450,7 @@ pub fn show_menu_overlay() {
         record_revealer.set_transition_type(RevealerTransitionType::SlideDown);
         record_revealer.set_transition_duration(150);
 
-        let record_menu_box = Box::new(Orientation::Vertical, 2);
+        let record_menu_box = Box::new(Orientation::Vertical, 3);
         record_menu_box.style_context().add_class("dropdown-menu");
 
         let record_toggle_item = Button::with_label("Start (Ctrl+Shift+F9)");
@@ -451,23 +467,30 @@ pub fn show_menu_overlay() {
         record_col.pack_start(&record_revealer, false, false, 0);
 
         // -------------------------------------------------------------------------
-        // CARD 3: SETTINGS (Direct Click to Settings Page)
+        // CARD 3: SETTINGS
         // -------------------------------------------------------------------------
         let settings_col = Box::new(Orientation::Vertical, 0);
-        settings_col.set_size_request(215, -1);
+        settings_col.set_size_request(225, -1);
 
         let settings_card_btn = Button::new();
         settings_card_btn.style_context().add_class("card-btn");
-        settings_card_btn.set_size_request(215, 180);
+        settings_card_btn.set_size_request(225, 195);
 
         let settings_card_inner = Box::new(Orientation::Vertical, 6);
+        settings_card_inner.set_valign(gtk::Align::Center);
+        settings_card_inner.set_halign(gtk::Align::Center);
+
         let settings_title_lbl = Label::new(Some("SETTINGS"));
         settings_title_lbl.style_context().add_class("card-title");
 
         let settings_icon_area = DrawingArea::new();
-        settings_icon_area.set_size_request(56, 56);
-        settings_icon_area.connect_draw(|_, cr| {
-            draw_gear_icon(cr);
+        settings_icon_area.set_size_request(76, 76);
+        settings_icon_area.set_valign(gtk::Align::Center);
+        settings_icon_area.set_halign(gtk::Align::Center);
+        settings_icon_area.connect_draw(|w, cr| {
+            let width = w.allocated_width() as f64;
+            let height = w.allocated_height() as f64;
+            draw_gear_icon(cr, width, height);
             gtk::glib::Propagation::Proceed
         });
 
@@ -478,14 +501,14 @@ pub fn show_menu_overlay() {
         settings_sub_lbl.style_context().add_class("card-sub");
 
         settings_card_inner.pack_start(&settings_title_lbl, false, false, 0);
-        settings_card_inner.pack_start(&settings_icon_area, true, true, 4);
+        settings_card_inner.pack_start(&settings_icon_area, false, false, 6);
         settings_card_inner.pack_start(&settings_status_lbl, false, false, 0);
         settings_card_inner.pack_start(&settings_sub_lbl, false, false, 2);
         settings_card_btn.add(&settings_card_inner);
 
         settings_col.pack_start(&settings_card_btn, false, false, 0);
 
-        // Pack the 3 columns
+        // Pack 3 columns
         cards_box.pack_start(&replay_col, false, false, 0);
         cards_box.pack_start(&record_col, false, false, 0);
         cards_box.pack_start(&settings_col, false, false, 0);
@@ -494,62 +517,76 @@ pub fn show_menu_overlay() {
         hud_page.pack_start(&cards_box, true, true, 0);
 
         // =========================================================================
-        // PAGE 2: UNIFIED SETTINGS PANEL (Containing Mouse Cursor, Audio, Video, Storage)
+        // PAGE 2: REVAMPED CLEAN FROSTED GLASS SETTINGS PANEL
         // =========================================================================
-        let settings_page = Box::new(Orientation::Vertical, 10);
+        let settings_page = Box::new(Orientation::Vertical, 12);
         settings_page.style_context().add_class("settings-panel");
-        settings_page.set_size_request(740, -1);
+        settings_page.set_size_request(760, -1);
 
-        // Settings Header Bar with Back Button
+        // Header with Back Button (No "X" button)
         let settings_header = Box::new(Orientation::Horizontal, 12);
         let back_btn = Button::with_label("< Back to Overlay");
         back_btn.style_context().add_class("back-btn");
 
-        let settings_page_title = Label::new(Some("RECORDER SETTINGS & HARDWARE TUNING"));
+        let settings_page_title = Label::new(Some("RECORDER SETTINGS"));
         settings_page_title.style_context().add_class("settings-title");
 
         let settings_spacer = Box::new(Orientation::Horizontal, 0);
 
-        let settings_close_btn = Button::with_label("✕");
-        settings_close_btn.style_context().add_class("close-btn");
+        let settings_esc_hint = Label::new(Some("Esc to Close"));
+        settings_esc_hint.style_context().add_class("esc-pill");
 
         settings_header.pack_start(&back_btn, false, false, 0);
-        settings_header.pack_start(&settings_page_title, false, false, 8);
+        settings_header.pack_start(&settings_page_title, false, false, 10);
         settings_header.pack_start(&settings_spacer, true, true, 0);
-        settings_header.pack_start(&settings_close_btn, false, false, 0);
+        settings_header.pack_start(&settings_esc_hint, false, false, 0);
 
-        // Scrolled Settings Body
+        // Scrollable Body
         let scroll = ScrolledWindow::new(gtk::Adjustment::NONE, gtk::Adjustment::NONE);
         scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-        scroll.set_min_content_height(420);
-        scroll.set_max_content_height(460);
+        scroll.set_min_content_height(440);
+        scroll.set_max_content_height(480);
 
-        let settings_body = Box::new(Orientation::Vertical, 12);
-        settings_body.set_margin_start(6);
-        settings_body.set_margin_end(6);
+        let settings_body = Box::new(Orientation::Vertical, 10);
+        settings_body.set_margin_start(4);
+        settings_body.set_margin_end(4);
 
         // -------------------------------------------------------------------------
-        // SECTION 1: DISPLAY & CAPTURE (Mouse Cursor toggle prominently inside)
+        // SECTION 1: DISPLAY & CAPTURE (With Mouse Cursor Switch!)
         // -------------------------------------------------------------------------
-        let sec1_lbl = Label::new(Some("DISPLAY & CAPTURE"));
-        sec1_lbl.style_context().add_class("section-header");
-        sec1_lbl.set_halign(gtk::Align::Start);
-        settings_body.pack_start(&sec1_lbl, false, false, 0);
+        let sec1_card = Box::new(Orientation::Vertical, 8);
+        sec1_card.style_context().add_class("settings-section-card");
+
+        let sec1_hdr = Label::new(Some("DISPLAY & CAPTURE"));
+        sec1_hdr.style_context().add_class("section-header");
+        sec1_hdr.set_halign(gtk::Align::Start);
+        sec1_card.pack_start(&sec1_hdr, false, false, 0);
+
+        // 1.1 Mouse Cursor Toggle Row
+        let cursor_row = Box::new(Orientation::Horizontal, 12);
+        let cursor_text_box = Box::new(Orientation::Vertical, 2);
+        let cursor_title = Label::new(Some("Record Mouse Cursor"));
+        cursor_title.style_context().add_class("setting-row-title");
+        cursor_title.set_halign(gtk::Align::Start);
+        let cursor_desc = Label::new(Some("Capture the mouse pointer in gameplay recordings and instant replays"));
+        cursor_desc.style_context().add_class("sub-info-label");
+        cursor_desc.set_halign(gtk::Align::Start);
+        cursor_text_box.pack_start(&cursor_title, false, false, 0);
+        cursor_text_box.pack_start(&cursor_desc, false, false, 0);
+
+        let cursor_switch = Switch::new();
+        cursor_switch.set_active(config.show_cursor);
+        cursor_switch.set_valign(gtk::Align::Center);
+
+        let cursor_sp = Box::new(Orientation::Horizontal, 0);
+        cursor_row.pack_start(&cursor_text_box, false, false, 0);
+        cursor_row.pack_start(&cursor_sp, true, true, 0);
+        cursor_row.pack_start(&cursor_switch, false, false, 0);
+        sec1_card.pack_start(&cursor_row, false, false, 4);
 
         let sec1_grid = gtk::Grid::new();
         sec1_grid.set_column_spacing(18);
         sec1_grid.set_row_spacing(8);
-
-        // 1.1 Mouse Cursor Checkbox
-        let cursor_lbl = Label::new(Some("Mouse Cursor:"));
-        cursor_lbl.set_halign(gtk::Align::Start);
-        let cursor_box = Box::new(Orientation::Horizontal, 10);
-        let cursor_check = CheckButton::with_label("Record Mouse Cursor");
-        cursor_check.set_active(config.show_cursor);
-        let cursor_desc = Label::new(Some("(Include mouse pointer in video & replays)"));
-        cursor_desc.style_context().add_class("sub-info-label");
-        cursor_box.pack_start(&cursor_check, false, false, 0);
-        cursor_box.pack_start(&cursor_desc, false, false, 0);
 
         // 1.2 Target Framerate (FPS)
         let fps_lbl = Label::new(Some("Target Framerate:"));
@@ -582,31 +619,33 @@ pub fn show_menu_overlay() {
         }
 
         // 1.4 Video Codec
-        let codec_lbl = Label::new(Some("Video Codec:"));
+        let codec_lbl = Label::new(Some("Encoder Codec:"));
         codec_lbl.set_halign(gtk::Align::Start);
         let codec_combo = ComboBoxText::new();
-        codec_combo.append(Some("h264"), "H.264 / AVC (NVENC / VAAPI - Universal)");
+        codec_combo.append(Some("h264"), "H.264 / AVC (Fast & Universal)");
         codec_combo.append(Some("hevc"), "HEVC / H.265 (High Efficiency)");
-        codec_combo.append(Some("av1"), "AV1 (Next-Generation High Fidelity)");
+        codec_combo.append(Some("av1"), "AV1 (Next-Generation Quality)");
         codec_combo.set_active_id(Some(&config.video_codec));
 
-        sec1_grid.attach(&cursor_lbl, 0, 0, 1, 1);
-        sec1_grid.attach(&cursor_box, 1, 0, 1, 1);
-        sec1_grid.attach(&fps_lbl, 0, 1, 1, 1);
-        sec1_grid.attach(&fps_box, 1, 1, 1, 1);
-        sec1_grid.attach(&bit_lbl, 0, 2, 1, 1);
-        sec1_grid.attach(&bit_box, 1, 2, 1, 1);
-        sec1_grid.attach(&codec_lbl, 0, 3, 1, 1);
-        sec1_grid.attach(&codec_combo, 1, 3, 1, 1);
-        settings_body.pack_start(&sec1_grid, false, false, 0);
+        sec1_grid.attach(&fps_lbl, 0, 0, 1, 1);
+        sec1_grid.attach(&fps_box, 1, 0, 1, 1);
+        sec1_grid.attach(&bit_lbl, 0, 1, 1, 1);
+        sec1_grid.attach(&bit_box, 1, 1, 1, 1);
+        sec1_grid.attach(&codec_lbl, 0, 2, 1, 1);
+        sec1_grid.attach(&codec_combo, 1, 2, 1, 1);
+        sec1_card.pack_start(&sec1_grid, false, false, 2);
+        settings_body.pack_start(&sec1_card, false, false, 0);
 
         // -------------------------------------------------------------------------
         // SECTION 2: INSTANT REPLAY BUFFER
         // -------------------------------------------------------------------------
-        let sec2_lbl = Label::new(Some("INSTANT REPLAY BUFFER"));
-        sec2_lbl.style_context().add_class("section-header");
-        sec2_lbl.set_halign(gtk::Align::Start);
-        settings_body.pack_start(&sec2_lbl, false, false, 4);
+        let sec2_card = Box::new(Orientation::Vertical, 8);
+        sec2_card.style_context().add_class("settings-section-card");
+
+        let sec2_hdr = Label::new(Some("INSTANT REPLAY BUFFER"));
+        sec2_hdr.style_context().add_class("section-header");
+        sec2_hdr.set_halign(gtk::Align::Start);
+        sec2_card.pack_start(&sec2_hdr, false, false, 0);
 
         let sec2_grid = gtk::Grid::new();
         sec2_grid.set_column_spacing(18);
@@ -628,15 +667,19 @@ pub fn show_menu_overlay() {
 
         sec2_grid.attach(&dur_lbl, 0, 0, 1, 1);
         sec2_grid.attach(&dur_box, 1, 0, 1, 1);
-        settings_body.pack_start(&sec2_grid, false, false, 0);
+        sec2_card.pack_start(&sec2_grid, false, false, 2);
+        settings_body.pack_start(&sec2_card, false, false, 0);
 
         // -------------------------------------------------------------------------
-        // SECTION 3: AUDIO & SOUND ROUTING
+        // SECTION 3: AUDIO ROUTING & LEVELS
         // -------------------------------------------------------------------------
-        let sec3_lbl = Label::new(Some("AUDIO & SOUND ROUTING"));
-        sec3_lbl.style_context().add_class("section-header");
-        sec3_lbl.set_halign(gtk::Align::Start);
-        settings_body.pack_start(&sec3_lbl, false, false, 4);
+        let sec3_card = Box::new(Orientation::Vertical, 8);
+        sec3_card.style_context().add_class("settings-section-card");
+
+        let sec3_hdr = Label::new(Some("AUDIO ROUTING & SOUND"));
+        sec3_hdr.style_context().add_class("section-header");
+        sec3_hdr.set_halign(gtk::Align::Start);
+        sec3_card.pack_start(&sec3_hdr, false, false, 0);
 
         let sec3_grid = gtk::Grid::new();
         sec3_grid.set_column_spacing(18);
@@ -648,10 +691,10 @@ pub fn show_menu_overlay() {
         audio_mode_combo.append(Some("system"), "System Sounds Only (Game / Desktop)");
         audio_mode_combo.append(Some("mic"), "Microphone Only");
         audio_mode_combo.append(Some("both"), "Both Combined (System Sounds + Microphone)");
-        audio_mode_combo.append(Some("muted"), "Muted (No Audio Recording)");
+        audio_mode_combo.append(Some("muted"), "Muted (No Audio)");
         audio_mode_combo.set_active_id(Some(&config.audio_mode));
 
-        let audio_dev_lbl = Label::new(Some("Input Device:"));
+        let audio_dev_lbl = Label::new(Some("Recording Device:"));
         audio_dev_lbl.set_halign(gtk::Align::Start);
         let audio_dev_combo = ComboBoxText::new();
         audio_dev_combo.append(Some("default"), "Default Recording Device");
@@ -680,15 +723,19 @@ pub fn show_menu_overlay() {
         sec3_grid.attach(&sys_vol_scale, 1, 2, 1, 1);
         sec3_grid.attach(&mic_vol_lbl, 0, 3, 1, 1);
         sec3_grid.attach(&mic_vol_scale, 1, 3, 1, 1);
-        settings_body.pack_start(&sec3_grid, false, false, 0);
+        sec3_card.pack_start(&sec3_grid, false, false, 2);
+        settings_body.pack_start(&sec3_card, false, false, 0);
 
         // -------------------------------------------------------------------------
         // SECTION 4: STORAGE & SHORTCUTS
         // -------------------------------------------------------------------------
-        let sec4_lbl = Label::new(Some("STORAGE & SHORTCUTS"));
-        sec4_lbl.style_context().add_class("section-header");
-        sec4_lbl.set_halign(gtk::Align::Start);
-        settings_body.pack_start(&sec4_lbl, false, false, 4);
+        let sec4_card = Box::new(Orientation::Vertical, 8);
+        sec4_card.style_context().add_class("settings-section-card");
+
+        let sec4_hdr = Label::new(Some("STORAGE & SHORTCUTS"));
+        sec4_hdr.style_context().add_class("section-header");
+        sec4_hdr.set_halign(gtk::Align::Start);
+        sec4_card.pack_start(&sec4_hdr, false, false, 0);
 
         let sec4_grid = gtk::Grid::new();
         sec4_grid.set_column_spacing(18);
@@ -769,14 +816,15 @@ pub fn show_menu_overlay() {
         sec4_grid.attach(&cur_hk_entry, 1, 4, 1, 1);
         sec4_grid.attach(&auto_lbl, 0, 5, 1, 1);
         sec4_grid.attach(&auto_switch, 1, 5, 1, 1);
-        settings_body.pack_start(&sec4_grid, false, false, 0);
+        sec4_card.pack_start(&sec4_grid, false, false, 2);
+        settings_body.pack_start(&sec4_card, false, false, 0);
 
         scroll.add(&settings_body);
 
         // Apply & Save Settings Button
         let apply_btn = Button::with_label("Apply & Save Settings");
         apply_btn.style_context().add_class("apply-save-btn");
-        apply_btn.set_size_request(-1, 42);
+        apply_btn.set_size_request(-1, 44);
 
         settings_page.pack_start(&settings_header, false, false, 0);
         settings_page.pack_start(&scroll, true, true, 4);
@@ -788,7 +836,7 @@ pub fn show_menu_overlay() {
         window.add(&stack);
 
         // =========================================================================
-        // CSS STYLING (Translucent NVIDIA Frosted Glass Theme)
+        // CSS STYLING (Translucent Frosted Glass Theme)
         // =========================================================================
         let css_provider = CssProvider::new();
         let css = r#"
@@ -800,12 +848,13 @@ pub fn show_menu_overlay() {
                 background-color: transparent;
                 padding: 0px;
             }
+            /* Floating Frosted Glass Top Bar */
             .header-bar {
-                background-color: rgba(10, 14, 20, 0.88);
-                border: 1px solid rgba(255, 255, 255, 0.12);
-                border-radius: 10px;
-                padding: 6px 14px;
-                box-shadow: 0px 8px 24px rgba(0, 0, 0, 0.6);
+                background-color: rgba(18, 26, 38, 0.72);
+                border: 1px solid rgba(255, 255, 255, 0.15);
+                border-radius: 12px;
+                padding: 8px 18px;
+                box-shadow: 0px 12px 32px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.16);
             }
             .vrec-badge {
                 background-color: #76b900;
@@ -818,45 +867,43 @@ pub fn show_menu_overlay() {
             }
             .overlay-title {
                 color: #f1f5f9;
-                font-size: 12px;
+                font-size: 12.5px;
                 font-weight: 800;
-                letter-spacing: 1px;
+                letter-spacing: 1.2px;
             }
             .status-banner {
                 color: #76b900;
                 font-size: 11.5px;
                 font-weight: 700;
             }
-            .close-btn {
-                background-color: transparent;
+            .esc-pill {
+                background-color: rgba(255, 255, 255, 0.08);
+                border: 1px solid rgba(255, 255, 255, 0.14);
                 color: #94a3b8;
-                border: none;
-                font-size: 14px;
+                font-size: 10.5px;
                 font-weight: 700;
-                padding: 2px 8px;
+                border-radius: 6px;
+                padding: 3px 8px;
             }
-            .close-btn:hover {
-                color: #ef4444;
-            }
-            /* Square Action Cards */
+            /* Frosted Glass Action Cards */
             .card-btn {
-                background-color: rgba(14, 18, 26, 0.85);
-                border: 1px solid rgba(255, 255, 255, 0.12);
-                border-radius: 14px;
-                padding: 14px;
-                box-shadow: 0px 12px 36px rgba(0, 0, 0, 0.7);
+                background-color: rgba(20, 28, 42, 0.68);
+                border: 1px solid rgba(255, 255, 255, 0.15);
+                border-radius: 16px;
+                padding: 18px;
+                box-shadow: 0px 16px 40px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.18);
             }
             .card-btn:hover {
-                background-color: rgba(10, 14, 20, 0.98);
+                background-color: rgba(26, 38, 56, 0.82);
                 border-color: #76b900;
-                box-shadow: 0 0 16px rgba(118, 185, 0, 0.4);
+                box-shadow: 0 20px 48px rgba(0, 0, 0, 0.65), 0 0 20px rgba(118, 185, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.25);
             }
             .card-btn-active {
-                background-color: rgba(10, 14, 20, 0.98);
+                background-color: rgba(26, 38, 56, 0.90);
                 border-color: #76b900;
                 border-bottom-left-radius: 0px;
                 border-bottom-right-radius: 0px;
-                box-shadow: 0 0 16px rgba(118, 185, 0, 0.4);
+                box-shadow: 0 0 20px rgba(118, 185, 0, 0.35);
             }
             .card-title {
                 color: #ffffff;
@@ -866,7 +913,7 @@ pub fn show_menu_overlay() {
             }
             .card-status {
                 color: #94a3b8;
-                font-size: 11px;
+                font-size: 11.5px;
                 font-weight: 700;
             }
             .status-green {
@@ -877,57 +924,69 @@ pub fn show_menu_overlay() {
             }
             .card-sub {
                 color: #64748b;
-                font-size: 10px;
+                font-size: 10.5px;
                 font-weight: 500;
             }
-            /* Attached Dropdown Menus */
+            /* Attached Frosted Dropdown Menus */
             .dropdown-menu {
-                background-color: rgba(10, 14, 20, 0.98);
-                border: 1px solid rgba(255, 255, 255, 0.14);
+                background-color: rgba(16, 22, 34, 0.88);
+                border: 1px solid rgba(255, 255, 255, 0.15);
                 border-top: none;
-                border-bottom-left-radius: 12px;
-                border-bottom-right-radius: 12px;
-                padding: 6px;
-                box-shadow: 0px 16px 36px rgba(0, 0, 0, 0.85);
+                border-bottom-left-radius: 14px;
+                border-bottom-right-radius: 14px;
+                padding: 8px;
+                box-shadow: 0px 20px 48px rgba(0, 0, 0, 0.75);
             }
             .dropdown-item {
                 background-color: transparent;
                 color: #e2e8f0;
-                font-size: 12px;
+                font-size: 12.5px;
                 font-weight: 700;
-                border-radius: 6px;
+                border-radius: 8px;
                 border: 1px solid transparent;
-                padding: 8px 12px;
+                padding: 9px 14px;
             }
             .dropdown-item:hover {
-                background-color: rgba(255, 255, 255, 0.08);
-                border-color: #76b900;
+                background-color: rgba(118, 185, 0, 0.15);
+                border-color: rgba(118, 185, 0, 0.5);
                 color: #76b900;
             }
+            /* Frosted Settings Panel */
             .settings-panel {
-                background-color: rgba(14, 18, 26, 0.96);
-                border: 1px solid rgba(255, 255, 255, 0.14);
-                border-radius: 14px;
-                padding: 16px 22px;
-                box-shadow: 0px 16px 48px rgba(0, 0, 0, 0.85);
+                background-color: rgba(15, 22, 32, 0.90);
+                border: 1px solid rgba(255, 255, 255, 0.16);
+                border-radius: 18px;
+                padding: 20px 26px;
+                box-shadow: 0px 24px 64px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+            }
+            .settings-section-card {
+                background-color: rgba(24, 32, 46, 0.55);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 12px;
+                padding: 14px 18px;
             }
             .settings-title {
                 color: #ffffff;
-                font-size: 13px;
+                font-size: 13.5px;
                 font-weight: 800;
                 letter-spacing: 1px;
             }
+            .setting-row-title {
+                color: #ffffff;
+                font-size: 13px;
+                font-weight: 700;
+            }
             .back-btn {
-                background-color: transparent;
+                background-color: rgba(118, 185, 0, 0.12);
                 color: #76b900;
                 font-size: 12px;
-                font-weight: 700;
-                border: 1px solid rgba(118, 185, 0, 0.4);
-                border-radius: 6px;
-                padding: 4px 10px;
+                font-weight: 800;
+                border: 1px solid rgba(118, 185, 0, 0.45);
+                border-radius: 8px;
+                padding: 6px 14px;
             }
             .back-btn:hover {
-                background-color: rgba(118, 185, 0, 0.15);
+                background-color: rgba(118, 185, 0, 0.22);
                 color: #8ce000;
             }
             .section-header {
@@ -938,15 +997,15 @@ pub fn show_menu_overlay() {
             }
             .preset-btn {
                 background-color: rgba(255, 255, 255, 0.06);
-                border: 1px solid rgba(255, 255, 255, 0.1);
+                border: 1px solid rgba(255, 255, 255, 0.12);
                 border-radius: 6px;
                 color: #cbd5e1;
                 font-size: 11px;
                 font-weight: 600;
-                padding: 3px 8px;
+                padding: 4px 10px;
             }
             .preset-btn:hover {
-                background-color: rgba(118, 185, 0, 0.2);
+                background-color: rgba(118, 185, 0, 0.22);
                 border-color: #76b900;
                 color: #ffffff;
             }
@@ -957,29 +1016,31 @@ pub fn show_menu_overlay() {
                 font-weight: 800;
                 border-radius: 8px;
                 border: none;
-                padding: 8px 14px;
+                padding: 10px 16px;
+                box-shadow: 0 4px 16px rgba(118, 185, 0, 0.35);
             }
             .apply-save-btn:hover {
                 background-color: #8ce000;
             }
-            checkbutton check {
-                background-color: #1a2230;
+            switch {
+                border-radius: 14px;
+                background-color: #1e2838;
                 border: 1px solid rgba(255, 255, 255, 0.2);
-                border-radius: 4px;
             }
-            checkbutton check:checked {
+            switch:checked {
                 background-color: #76b900;
                 border-color: #8ce000;
             }
-            checkbutton label {
-                color: #ffffff;
-                font-size: 12px;
-                font-weight: 700;
+            switch slider {
+                background-color: #ffffff;
+                border-radius: 50%;
+                min-width: 18px;
+                min-height: 18px;
             }
             entry, spinbutton, combobox button {
-                background-color: #161c28;
+                background-color: rgba(18, 24, 36, 0.7);
                 color: #f1f5f9;
-                border: 1px solid rgba(255, 255, 255, 0.12);
+                border: 1px solid rgba(255, 255, 255, 0.14);
                 border-radius: 6px;
                 padding: 5px 8px;
                 font-size: 12px;
@@ -1003,7 +1064,7 @@ pub fn show_menu_overlay() {
                 min-height: 14px;
             }
             .sub-info-label {
-                color: #64748b;
+                color: #94a3b8;
                 font-size: 10.5px;
                 font-weight: 500;
             }
@@ -1018,13 +1079,8 @@ pub fn show_menu_overlay() {
         }
 
         // =========================================================================
-        // EVENT HANDLERS & NAVIGATION
+        // EVENT HANDLERS & NAVIGATION (Esc key closes cleanly)
         // =========================================================================
-        let w_close1 = window.clone();
-        close_btn.connect_clicked(move |_| w_close1.close());
-        let w_close2 = window.clone();
-        settings_close_btn.connect_clicked(move |_| w_close2.close());
-
         let w_esc = window.clone();
         window.connect_key_press_event(move |_, key| {
             if key.keyval() == gdk::keys::constants::Escape {
@@ -1038,7 +1094,6 @@ pub fn show_menu_overlay() {
         // -------------------------------------------------------------------------
         // CARD INTERACTION: TOGGLE ATTACHED DROPDOWNS
         // -------------------------------------------------------------------------
-        // 1. Replay Card Click -> Toggle Replay Dropdown
         let rev_r_click = replay_revealer.clone();
         let rev_rec_close = record_revealer.clone();
         let card_r_btn = replay_card_btn.clone();
@@ -1055,7 +1110,6 @@ pub fn show_menu_overlay() {
             }
         });
 
-        // 2. Record Card Click -> Toggle Record Dropdown
         let rev_rec_click = record_revealer.clone();
         let rev_r_close = replay_revealer.clone();
         let card_rec_btn2 = record_card_btn.clone();
@@ -1072,12 +1126,11 @@ pub fn show_menu_overlay() {
             }
         });
 
-        // 3. Settings Card Click -> Navigate directly to Settings Page
         let stack_to_settings = stack.clone();
         let w_to_settings = window.clone();
         settings_card_btn.connect_clicked(move |_| {
             stack_to_settings.set_visible_child_name("settings");
-            w_to_settings.resize(740, 560);
+            w_to_settings.resize(760, 560);
         });
 
         // Back to HUD from Settings
@@ -1088,8 +1141,7 @@ pub fn show_menu_overlay() {
             w_to_hud.resize(740, 280);
         });
 
-        // Replay Menu Items:
-        // Item 1: Turn on / Turn off Replay
+        // Replay Menu Items
         let r_toggle_lbl = replay_toggle_item.clone();
         let r_status_lbl_sync = replay_status_lbl.clone();
         let r_state_sync = Arc::clone(&replay_active_state);
@@ -1118,7 +1170,6 @@ pub fn show_menu_overlay() {
             card_r_deactivate.style_context().remove_class("card-btn-active");
         });
 
-        // Item 2: Save Replay
         let banner_save = status_banner.clone();
         let rev_r_hide2 = replay_revealer.clone();
         let card_r_deactivate2 = replay_card_btn.clone();
@@ -1134,7 +1185,6 @@ pub fn show_menu_overlay() {
             card_r_deactivate2.style_context().remove_class("card-btn-active");
         });
 
-        // Item 3: Replay Settings
         let stack_r_settings = stack.clone();
         let w_r_settings = window.clone();
         let rev_r_hide3 = replay_revealer.clone();
@@ -1143,11 +1193,10 @@ pub fn show_menu_overlay() {
             rev_r_hide3.set_reveal_child(false);
             card_r_deactivate3.style_context().remove_class("card-btn-active");
             stack_r_settings.set_visible_child_name("settings");
-            w_r_settings.resize(740, 560);
+            w_r_settings.resize(760, 560);
         });
 
-        // Record Menu Items:
-        // Item 1: Start / Stop Record
+        // Record Menu Items
         let rev_rec_hide = record_revealer.clone();
         let card_rec_deactivate = record_card_btn.clone();
         record_toggle_item.connect_clicked(move |_| {
@@ -1156,7 +1205,6 @@ pub fn show_menu_overlay() {
             card_rec_deactivate.style_context().remove_class("card-btn-active");
         });
 
-        // Item 2: Record Settings
         let stack_rec_settings = stack.clone();
         let w_rec_settings = window.clone();
         let rev_rec_hide2 = record_revealer.clone();
@@ -1165,14 +1213,12 @@ pub fn show_menu_overlay() {
             rev_rec_hide2.set_reveal_child(false);
             card_rec_deactivate2.style_context().remove_class("card-btn-active");
             stack_rec_settings.set_visible_child_name("settings");
-            w_rec_settings.resize(740, 560);
+            w_rec_settings.resize(760, 560);
         });
 
-        // Direct Mouse Cursor Checkbox Toggle
-        let cursor_check_sync = cursor_check.clone();
+        // Direct Mouse Cursor Switch Toggle
         let banner_cur = status_banner.clone();
-        cursor_check.connect_toggled(move |c| {
-            let active = c.is_active();
+        cursor_switch.connect_state_set(move |_, active| {
             let mut cfg = VrecConfig::load();
             if cfg.show_cursor != active {
                 cfg.show_cursor = active;
@@ -1185,6 +1231,7 @@ pub fn show_menu_overlay() {
                     gtk::glib::ControlFlow::Break
                 });
             }
+            gtk::glib::Propagation::Proceed
         });
 
         // Apply & Save Settings
@@ -1193,10 +1240,11 @@ pub fn show_menu_overlay() {
         let banner_after_save = status_banner.clone();
         let r_sub_lbl_sync = replay_sub_lbl.clone();
         let rec_sub_lbl_sync = record_sub_lbl.clone();
+        let cur_sw_sync = cursor_switch.clone();
 
         apply_btn.connect_clicked(move |_| {
             let mut cfg = VrecConfig::load();
-            cfg.show_cursor = cursor_check_sync.is_active();
+            cfg.show_cursor = cur_sw_sync.is_active();
             cfg.fps = fps_spin.value() as u32;
             let bit_mbps = bit_spin.value() as u32;
             cfg.record_bitrate_kbps = bit_mbps * 1000;

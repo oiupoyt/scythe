@@ -62,6 +62,41 @@ pub fn hotkey_to_hyprland(hotkey: &str) -> Option<(String, String)> {
     Some((mod_str, key.to_string()))
 }
 
+pub fn hotkey_to_hyprland_lua(hotkey: &str) -> Option<String> {
+    let parts: Vec<&str> = hotkey.split('+').map(|s| s.trim()).collect();
+    if parts.is_empty() {
+        return None;
+    }
+
+    let mut mods = Vec::new();
+    let mut key = "";
+
+    for (i, &part) in parts.iter().enumerate() {
+        if i == parts.len() - 1 {
+            key = part;
+        } else {
+            let m = match part.to_lowercase().as_str() {
+                "ctrl" | "control" => "CONTROL",
+                "shift" => "SHIFT",
+                "alt" => "ALT",
+                "super" | "win" | "meta" => "SUPER",
+                _ => continue,
+            };
+            mods.push(m);
+        }
+    }
+
+    if key.is_empty() {
+        return None;
+    }
+
+    if mods.is_empty() {
+        Some(key.to_string())
+    } else {
+        Some(format!("{} + {}", mods.join(" + "), key))
+    }
+}
+
 #[cfg(unix)]
 /// Dynamically inject binds and window rules into running Hyprland without touching hyprland.conf
 pub fn register_hyprland_binds(config: &VrecConfig) {
@@ -69,8 +104,19 @@ pub fn register_hyprland_binds(config: &VrecConfig) {
         return;
     }
 
-    // Register overlay window rules so the UI floats at the top cleanly
-    let rules = [
+    // Register modern Hyprland (0.55+) layer rules for genuine frosted glass blur & floating window rules
+    let _ = Command::new("hyprctl")
+        .args(["eval", r#"hl.layer_rule({ match = { namespace = "vrec-overlay" }, blur = true, ignore_alpha = 0.1 })"#])
+        .output();
+    let _ = Command::new("hyprctl")
+        .args(["eval", r#"hl.layer_rule({ match = { namespace = "vrec-notification" }, blur = true, ignore_alpha = 0.1 })"#])
+        .output();
+    let _ = Command::new("hyprctl")
+        .args(["eval", r#"hl.window_rule({ match = { class = "vrec-overlay" }, float = true, pin = true, stay_focused = true })"#])
+        .output();
+
+    // Also register legacy window rules for backward compatibility with older Hyprland versions
+    let legacy_rules = [
         "float, class:^(vrec-overlay)$",
         "move 50% 45, class:^(vrec-overlay)$",
         "pin, class:^(vrec-overlay)$",
@@ -82,35 +128,42 @@ pub fn register_hyprland_binds(config: &VrecConfig) {
         "stayfocused, class:^(vrec-hud)$",
         "noborder, class:^(vrec-hud)$",
     ];
-    for rule in rules {
+    for rule in legacy_rules {
         let _ = Command::new("hyprctl")
             .args(["keyword", "windowrulev2", rule])
             .output();
     }
 
     let binds = [
-        (&config.menu_hotkey, "exec, vrec-ui --menu"),
-        (&config.save_hotkey, "exec, vrec-ui --save"),
-        (&config.record_hotkey, "exec, vrec-ui --record"),
-        (&config.cursor_hotkey, "exec, vrec-ui --cursor"),
+        (&config.menu_hotkey, "vrec-ui --menu"),
+        (&config.save_hotkey, "vrec-ui --save"),
+        (&config.record_hotkey, "vrec-ui --record"),
+        (&config.cursor_hotkey, "vrec-ui --cursor"),
     ];
 
-    for (hotkey, action) in binds {
+    for (hotkey, cmd) in binds {
+        // Try modern Hyprland Lua eval first
+        if let Some(lua_combo) = hotkey_to_hyprland_lua(hotkey) {
+            let lua_script = format!(r#"hl.bind("{}", hl.dsp.exec_cmd("{}"))"#, lua_combo, cmd);
+            if let Ok(out) = Command::new("hyprctl").args(["eval", &lua_script]).output()
+                && out.status.success() && String::from_utf8_lossy(&out.stdout).contains("ok") {
+                    println!("Hyprland dynamic bind active (Lua): {}", lua_combo);
+                    continue;
+            }
+        }
+
+        // Fallback to legacy keyword bind
         if let Some((mods, key)) = hotkey_to_hyprland(hotkey) {
             let bind_arg = if mods.is_empty() {
-                format!("{}, {}", key, action)
+                format!("{}, exec, {}", key, cmd)
             } else {
-                format!("{}, {}, {}", mods, key, action)
+                format!("{}, {}, exec, {}", mods, key, cmd)
             };
             let res = Command::new("hyprctl")
                 .args(["keyword", "bind", &bind_arg])
                 .output();
-            if let Ok(out) = res {
-                if !out.status.success() {
-                    eprintln!("hyprctl keyword bind note: {:?}", String::from_utf8_lossy(&out.stderr));
-                } else {
-                    println!("Hyprland dynamic bind active: {}", bind_arg);
-                }
+            if let Ok(out) = res && out.status.success() {
+                println!("Hyprland dynamic bind active (legacy): {}", bind_arg);
             }
         }
     }
@@ -134,6 +187,12 @@ pub fn unregister_hyprland_binds(config: &VrecConfig) {
     ];
 
     for hotkey in hotkeys {
+        if let Some(lua_combo) = hotkey_to_hyprland_lua(hotkey) {
+            let lua_script = format!(r#"hl.unbind("{}")"#, lua_combo);
+            let _ = Command::new("hyprctl")
+                .args(["eval", &lua_script])
+                .output();
+        }
         if let Some((mods, key)) = hotkey_to_hyprland(hotkey) {
             let unbind_arg = if mods.is_empty() {
                 key
@@ -220,6 +279,26 @@ mod tests {
         assert_eq!(
             hotkey_to_hyprland("Super+Alt+S"),
             Some(("SUPER_ALT".to_string(), "S".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_hotkey_to_hyprland_lua_conversion() {
+        assert_eq!(
+            hotkey_to_hyprland_lua("Ctrl+Shift+R"),
+            Some("CONTROL + SHIFT + R".to_string())
+        );
+        assert_eq!(
+            hotkey_to_hyprland_lua("Alt+Z"),
+            Some("ALT + Z".to_string())
+        );
+        assert_eq!(
+            hotkey_to_hyprland_lua("F12"),
+            Some("F12".to_string())
+        );
+        assert_eq!(
+            hotkey_to_hyprland_lua("Super+Alt+S"),
+            Some("SUPER + ALT + S".to_string())
         );
     }
 }
