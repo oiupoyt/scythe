@@ -35,16 +35,21 @@ jobs:
 
       - name: Package Linux Tarball (Generic Binaries)
         run: |
-          mkdir -p dist/vrec-linux-x86_64
-          cp target/release/vrec-daemon target/release/vrec-ui dist/vrec-linux-x86_64/
-          cp packaging/vrec.desktop dist/vrec-linux-x86_64/
-          tar -czvf dist/vrec-linux-x86_64.tar.gz -C dist vrec-linux-x86_64
+          mkdir -p dist/scythe-linux-x86_64
+          cp target/release/scythe-daemon target/release/scythe-ui dist/scythe-linux-x86_64/
+          ln -sf scythe-daemon dist/scythe-linux-x86_64/vrec-daemon
+          ln -sf scythe-ui dist/scythe-linux-x86_64/vrec-ui
+          ln -sf scythe-ui dist/scythe-linux-x86_64/scythe
+          ln -sf scythe-ui dist/scythe-linux-x86_64/vrec
+          cp packaging/scythe.desktop dist/scythe-linux-x86_64/
+          tar -czvf dist/scythe-linux-x86_64.tar.gz -C dist scythe-linux-x86_64
 
       - name: Build Debian Package (.deb)
         run: |
-          mkdir -p deb/vrec_0.1.0/DEBIAN deb/vrec_0.1.0/usr/bin deb/vrec_0.1.0/usr/share/applications
-          cat > deb/vrec_0.1.0/DEBIAN/control << 'EOF'
-          Package: vrec
+          mkdir -p deb/scythe_0.1.0/DEBIAN deb/scythe_0.1.0/usr/bin deb/scythe_0.1.0/usr/share/applications
+          cat > deb/scythe_0.1.0/DEBIAN/control << 'EOF'
+          Package: scythe
+          Provides: vrec
           Version: 0.1.0
           Section: video
           Priority: optional
@@ -53,37 +58,44 @@ jobs:
           Description: High-performance GPU hardware screen recorder and instant replay overlay
           Depends: libgtk-3-0, libgtk-layer-shell0, libpipewire-0.3-0, libva2, libasound2
           EOF
-          cp target/release/vrec-daemon deb/vrec_0.1.0/usr/bin/
-          cp target/release/vrec-ui deb/vrec_0.1.0/usr/bin/
-          cp packaging/vrec.desktop deb/vrec_0.1.0/usr/share/applications/
-          dpkg-deb --build deb/vrec_0.1.0 dist/vrec_0.1.0_amd64.deb
+          cp target/release/scythe-daemon deb/scythe_0.1.0/usr/bin/
+          cp target/release/scythe-ui deb/scythe_0.1.0/usr/bin/
+          ln -sf scythe-daemon deb/scythe_0.1.0/usr/bin/vrec-daemon
+          ln -sf scythe-ui deb/scythe_0.1.0/usr/bin/vrec-ui
+          ln -sf scythe-ui deb/scythe_0.1.0/usr/bin/scythe
+          ln -sf scythe-ui deb/scythe_0.1.0/usr/bin/vrec
+          cp packaging/scythe.desktop deb/scythe_0.1.0/usr/share/applications/
+          dpkg-deb --build deb/scythe_0.1.0 dist/scythe_0.1.0_amd64.deb
 
       - name: Build RPM Package (.rpm)
         run: |
-          alien --to-rpm --scripts dist/vrec_0.1.0_amd64.deb
+          alien --to-rpm --scripts dist/scythe_0.1.0_amd64.deb
           mv *.rpm dist/
 
       - name: Package Standalone AppImage
         run: |
           mkdir -p AppDir/usr/bin AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/scalable/apps
-          cp target/release/vrec-ui AppDir/usr/bin/
-          cp target/release/vrec-daemon AppDir/usr/bin/
-          cp packaging/vrec.desktop AppDir/usr/share/applications/
+          cp target/release/scythe-ui AppDir/usr/bin/
+          cp target/release/scythe-daemon AppDir/usr/bin/
+          ln -sf scythe-ui AppDir/usr/bin/scythe
+          ln -sf scythe-ui AppDir/usr/bin/vrec-ui
+          ln -sf scythe-daemon AppDir/usr/bin/vrec-daemon
+          cp packaging/scythe.desktop AppDir/usr/share/applications/
           
           cat > AppDir/AppRun << 'EOF'
           #!/bin/sh
           HERE="$(dirname "$(readlink -f "${0}")")"
-          exec "${HERE}/usr/bin/vrec-ui" "$@"
+          exec "${HERE}/usr/bin/scythe-ui" "$@"
           EOF
           chmod +x AppDir/AppRun
 
           touch AppDir/usr/share/icons/hicolor/scalable/apps/media-record.svg
           touch AppDir/media-record.svg
-          ln -s usr/share/applications/vrec.desktop AppDir/vrec.desktop
+          ln -s usr/share/applications/scythe.desktop AppDir/scythe.desktop
 
           wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage -O appimagetool
           chmod +x appimagetool
-          ./appimagetool --appimage-extract-and-run AppDir dist/vrec-x86_64.AppImage || true
+          ./appimagetool --appimage-extract-and-run AppDir dist/scythe-x86_64.AppImage || true
 
       - name: Upload Linux Artifacts
         uses: actions/upload-artifact@v4
@@ -122,8 +134,8 @@ jobs:
         run: |
           cargo build --release
           mkdir -p dist/bundle
-          cp target/release/vrec-daemon.exe dist/bundle/
-          cp target/release/vrec-ui.exe dist/bundle/
+          cp target/release/scythe-daemon.exe dist/bundle/
+          cp target/release/scythe-ui.exe dist/bundle/
           python3 packaging/windows/bundle_deps.py dist/bundle
 
       - name: Package Windows Standalone (.exe), Installer, and Zip
@@ -137,13 +149,13 @@ jobs:
                   $env:Path += ";C:\Program Files (x86)\NSIS"
               }
           }
-          makensis packaging/windows/vrec-installer.nsi
+          makensis packaging/windows/scythe-installer.nsi
 
       - name: Upload Windows Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: windows-packages
-          path: dist/vrec-setup.exe
+          path: dist/scythe-setup.exe
 
   publish-release:
     name: Publish GitHub Release
@@ -164,7 +176,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name != 'main' && github.ref_name || 'v0.1.0' }}
-          name: "vrec ${{ github.ref_name != 'main' && github.ref_name || 'v0.1.0' }}"
+          name: "Scythe ${{ github.ref_name != 'main' && github.ref_name || 'v0.1.0' }}"
           body: |
             High-performance GPU hardware screen recorder and instant replay overlay for Linux and Windows.
 
@@ -177,11 +189,11 @@ jobs:
             - Multi-channel audio routing (System audio, Microphone, Combined, and Mute)
 
             ### Packages
-            - Windows: `vrec-setup.exe` (Official installer with Start Menu & Desktop shortcuts)
-            - Universal Linux: `vrec-x86_64.AppImage`
-            - Debian / Ubuntu / Mint: `vrec_0.1.0_amd64.deb`
-            - Fedora / RHEL / openSUSE: `vrec-0.1.0-2.x86_64.rpm`
-            - Generic Linux: `vrec-linux-x86_64.tar.gz`
+            - Windows: `scythe-setup.exe` (Official installer with Start Menu & Desktop shortcuts)
+            - Universal Linux: `scythe-x86_64.AppImage`
+            - Debian / Ubuntu / Mint: `scythe_0.1.0_amd64.deb`
+            - Fedora / RHEL / openSUSE: `scythe-0.1.0-2.x86_64.rpm`
+            - Generic Linux: `scythe-linux-x86_64.tar.gz`
           files: |
             artifacts/linux-packages/*
             artifacts/windows-packages/*
