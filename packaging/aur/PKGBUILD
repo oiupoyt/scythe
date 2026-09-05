@@ -1,31 +1,36 @@
 # Maintainer: oiupoyt
-pkgname=vrec-git
+pkgname=scythe-git
 pkgver=0.1.0
 pkgrel=1
 pkgdesc="High-performance GPU hardware screen recorder and instant replay overlay for Wayland and X11"
 arch=('x86_64')
-url="https://github.com/oiupoyt/vrec"
+url="https://github.com/oiupoyt/scythe"
 license=('MIT' 'Apache-2.0')
 depends=('ffmpeg' 'pipewire' 'gtk3' 'gtk-layer-shell' 'libpulse' 'libva' 'libxcb')
 makedepends=('cargo' 'git' 'pkgconf' 'clang')
-provides=('vrec')
-conflicts=('vrec')
-source=("git+https://github.com/oiupoyt/vrec.git")
+provides=('scythe' 'vrec' 'vrec-git')
+conflicts=('scythe' 'vrec')
+source=("git+https://github.com/oiupoyt/scythe.git")
 sha256sums=('SKIP')
 
 pkgver() {
-    cd "$srcdir/vrec"
+    cd "$srcdir/scythe"
     git describe --long --tags 2>/dev/null | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g' || echo "0.1.0"
 }
 
 build() {
-    cd "$srcdir/vrec"
+    cd "$srcdir/scythe"
     cargo build --release --locked
 }
 
 package() {
-    cd "$srcdir/vrec"
-    install -Dm755 target/release/vrec-daemon "$pkgdir/usr/bin/vrec-daemon"
-    install -Dm755 target/release/vrec-ui "$pkgdir/usr/bin/vrec-ui"
-    install -Dm644 packaging/vrec.desktop "$pkgdir/usr/share/applications/vrec.desktop"
+    cd "$srcdir/scythe"
+    install -Dm755 target/release/scythe-daemon "$pkgdir/usr/bin/scythe-daemon"
+    install -Dm755 target/release/scythe-ui "$pkgdir/usr/bin/scythe-ui"
+    install -Dm755 target/release/scythe "$pkgdir/usr/bin/scythe"
+    ln -sf "/usr/bin/scythe-daemon" "$pkgdir/usr/bin/vrec-daemon"
+    ln -sf "/usr/bin/scythe-ui" "$pkgdir/usr/bin/vrec-ui"
+    ln -sf "/usr/bin/scythe" "$pkgdir/usr/bin/vrec"
+    install -Dm644 packaging/scythe.desktop "$pkgdir/usr/share/applications/scythe.desktop"
+    ln -sf "/usr/share/applications/scythe.desktop" "$pkgdir/usr/share/applications/vrec.desktop"
 }

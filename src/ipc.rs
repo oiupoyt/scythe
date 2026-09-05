@@ -51,6 +51,13 @@ fn default_audio_mode_str() -> String {
 pub fn get_socket_path() -> String {
     let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
         .unwrap_or_else(|_| format!("/run/user/{}", unsafe { libc::getuid() }));
+    format!("{}/scythe.sock", runtime_dir)
+}
+
+#[cfg(unix)]
+pub fn get_legacy_socket_path() -> String {
+    let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+        .unwrap_or_else(|_| format!("/run/user/{}", unsafe { libc::getuid() }));
     format!("{}/vrec.sock", runtime_dir)
 }
 
@@ -71,7 +78,9 @@ pub fn send_command(cmd: Command) -> Result<(), Box<dyn std::error::Error + Send
         {
             use std::os::unix::net::UnixStream;
             let socket_path = get_socket_path();
-            match UnixStream::connect(&socket_path) {
+            let connect_res = UnixStream::connect(&socket_path)
+                .or_else(|_| UnixStream::connect(get_legacy_socket_path()));
+            match connect_res {
                 Ok(mut stream) => {
                     let _ = stream.set_write_timeout(Some(Duration::from_millis(1000)));
                     let _ = stream.set_read_timeout(Some(Duration::from_millis(1000)));
@@ -104,7 +113,7 @@ pub fn send_command(cmd: Command) -> Result<(), Box<dyn std::error::Error + Send
         }
     }
 
-    Err(last_err.unwrap_or_else(|| "Failed to communicate with vrec-daemon".into()))
+    Err(last_err.unwrap_or_else(|| "Failed to communicate with scythe-daemon".into()))
 }
 
 pub fn query_status() -> Result<DaemonStatus, Box<dyn std::error::Error + Send + Sync>> {
@@ -125,6 +134,7 @@ pub fn query_status() -> Result<DaemonStatus, Box<dyn std::error::Error + Send +
             use std::os::unix::net::UnixStream;
             let socket_path = get_socket_path();
             UnixStream::connect(&socket_path)
+                .or_else(|_| UnixStream::connect(get_legacy_socket_path()))
         };
 
         #[cfg(windows)]
@@ -162,5 +172,5 @@ pub fn query_status() -> Result<DaemonStatus, Box<dyn std::error::Error + Send +
         }
     }
 
-    Err(last_err.unwrap_or_else(|| "Failed to query status from vrec-daemon".into()))
+    Err(last_err.unwrap_or_else(|| "Failed to query status from scythe-daemon".into()))
 }

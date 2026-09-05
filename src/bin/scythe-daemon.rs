@@ -1,10 +1,10 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
-use vrec::capture::{Frame, FrameSource};
-use vrec::encoder::VideoEncoder;
-use vrec::ring::Packet;
-use vrec::muxer::Muxer;
-use vrec::ipc::{Command, DaemonStatus};
+use scythe::capture::{Frame, FrameSource};
+use scythe::encoder::VideoEncoder;
+use scythe::ring::Packet;
+use scythe::muxer::Muxer;
+use scythe::ipc::{Command, DaemonStatus};
 use ringbuf::HeapRb;
 use ringbuf::traits::{RingBuffer, Consumer, Observer};
 use crossbeam_channel::bounded;
@@ -54,7 +54,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     #[cfg(unix)]
     let _lock_file = {
         let runtime_dir = env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| format!("/run/user/{}", unsafe { libc::getuid() }));
-        let lock_path = format!("{}/vrec.lock", runtime_dir);
+        let lock_path = format!("{}/scythe.lock", runtime_dir);
         match std::fs::OpenOptions::new()
             .create(true)
             .read(true)
@@ -66,7 +66,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 use std::os::unix::io::AsRawFd;
                 let res = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
                 if res != 0 {
-                    eprintln!("Another instance of vrec-daemon is already running. Exiting.");
+                    eprintln!("Another instance of scythe-daemon is already running. Exiting.");
                     return Ok(());
                 }
                 Some(file)
@@ -74,11 +74,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             Err(_) => None,
         }
     };
-    let initial_config = vrec::config::VrecConfig::load();
+    let initial_config = scythe::config::ScytheConfig::load();
 
     // Automatically register dynamic keybindings on Hyprland if active (no config edits needed)
-    vrec::hyprland_binds::register_hyprland_binds(&initial_config);
-    vrec::hyprland_binds::spawn_hyprland_reload_watcher();
+    scythe::hyprland_binds::register_hyprland_binds(&initial_config);
+    scythe::hyprland_binds::spawn_hyprland_reload_watcher();
 
     let (frame_tx, frame_rx) = bounded::<Frame>(5);
     let (cmd_tx, cmd_rx) = bounded::<Command>(32);
@@ -92,7 +92,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     #[cfg(unix)]
     let listener = {
-        let socket_path = vrec::ipc::get_socket_path();
+        let socket_path = scythe::ipc::get_socket_path();
         let _ = std::fs::remove_file(&socket_path); 
         let l = std::os::unix::net::UnixListener::bind(&socket_path)?;
         println!("Daemon listening on IPC socket: {}", socket_path);
@@ -107,8 +107,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 l
             }
             Err(e) => {
-                if vrec::ipc::query_status().is_ok() {
-                    println!("Another instance of vrec-daemon is already running. Exiting cleanly.");
+                if scythe::ipc::query_status().is_ok() {
+                    println!("Another instance of scythe-daemon is already running. Exiting cleanly.");
                     return Ok(());
                 }
                 std::thread::sleep(std::time::Duration::from_millis(500));
@@ -152,7 +152,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                             } else {
                                                 0
                                             };
-                                            let cfg = vrec::config::VrecConfig::load();
+                                            let cfg = scythe::config::ScytheConfig::load();
                                             let status = DaemonStatus {
                                                 is_recording: rec,
                                                 recording_duration_sec: duration,
@@ -170,7 +170,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                             }
                                         },
                                         Command::ToggleCursor => {
-                                            let mut cfg = vrec::config::VrecConfig::load();
+                                            let mut cfg = scythe::config::ScytheConfig::load();
                                             cfg.show_cursor = !cfg.show_cursor;
                                             let _ = cfg.save();
                                             #[cfg(target_os = "linux")]
@@ -186,7 +186,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                             println!("Cursor display toggled to: {}", cfg.show_cursor);
                                         },
                                         Command::CycleAudioMode => {
-                                            let mut cfg = vrec::config::VrecConfig::load();
+                                            let mut cfg = scythe::config::ScytheConfig::load();
                                             cfg.audio_mode = match cfg.audio_mode.as_str() {
                                                 "system" => "mic",
                                                 "mic" => "both",
@@ -199,7 +199,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                         },
                                         Command::StopDaemon => {
                                             println!("StopDaemon requested: Finalizing active recordings...");
-                                            vrec::hyprland_binds::unregister_hyprland_binds(&vrec::config::VrecConfig::load());
+                                            scythe::hyprland_binds::unregister_hyprland_binds(&scythe::config::ScytheConfig::load());
                                             let _ = cmd_tx_ipc.send(Command::StopRecording);
                                             std::thread::sleep(std::time::Duration::from_millis(350));
                                             std::process::exit(0);
@@ -225,7 +225,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             println!("\nReceived shutdown signal. Finalizing recordings...");
             let _ = cmd_tx_sig.send(Command::StopRecording);
             tokio::time::sleep(std::time::Duration::from_millis(350)).await;
-            vrec::hyprland_binds::unregister_hyprland_binds(&vrec::config::VrecConfig::load());
+            scythe::hyprland_binds::unregister_hyprland_binds(&scythe::config::ScytheConfig::load());
             std::process::exit(0);
         }
     });
@@ -233,7 +233,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let session_type = env::var("XDG_SESSION_TYPE").unwrap_or_else(|_| "x11".to_string());
     println!("Detected session type: {}", session_type);
 
-    let audio_capture_initial = vrec::capture::audio::AudioCapture::new_with_device_mode_and_volumes(
+    let audio_capture_initial = scythe::capture::audio::AudioCapture::new_with_device_mode_and_volumes(
         audio_tx.clone(),
         Some(&initial_config.audio_device),
         &initial_config.audio_mode,
@@ -243,12 +243,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let mut source: Box<dyn FrameSource> = if std::env::args().any(|a| a == "--mock") {
         println!("Initializing MOCK capture...");
-        Box::new(vrec::capture::mock::MockCapture::new())
+        Box::new(scythe::capture::mock::MockCapture::new())
     } else if cfg!(target_os = "windows") {
         #[cfg(target_os = "windows")]
         {
             println!("Initializing Windows DXGI capture...");
-            Box::new(vrec::capture::windows::WindowsCapture::new()?)
+            Box::new(scythe::capture::windows::WindowsCapture::new()?)
         }
         #[cfg(not(target_os = "windows"))]
         {
@@ -258,7 +258,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         #[cfg(target_os = "linux")]
         {
             println!("Initializing Wayland capture (cursor: {})...", initial_config.show_cursor);
-            Box::new(vrec::capture::wayland::WaylandCapture::new_with_cursor(initial_config.show_cursor).await?)
+            Box::new(scythe::capture::wayland::WaylandCapture::new_with_cursor(initial_config.show_cursor).await?)
         }
         #[cfg(not(target_os = "linux"))]
         {
@@ -268,7 +268,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         #[cfg(target_os = "linux")]
         {
             println!("Initializing X11 capture...");
-            Box::new(vrec::capture::x11::X11Capture::new()?)
+            Box::new(scythe::capture::x11::X11Capture::new()?)
         }
         #[cfg(not(target_os = "linux"))]
         {
@@ -311,7 +311,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut audio_capture = audio_capture_initial.map(|(c, _, _)| c);
 
     let recorder_handle = thread::spawn(move || {
-        let mut config = vrec::config::VrecConfig::load();
+        let mut config = scythe::config::ScytheConfig::load();
         replay_state_clone.store(config.replay_enabled, Ordering::SeqCst);
 
         let mut encoder = VideoEncoder::new_with_params(width, height, config.record_bitrate_kbps, config.fps, &config.video_codec)
@@ -319,9 +319,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let codec_ctx_ptr = encoder.codec_ctx() as usize;
         
         let mut audio_encoder = if let Some((sr, ch)) = audio_info {
-            vrec::encoder::AudioEncoder::new(sr as i32, ch as i32).ok()
+            scythe::encoder::AudioEncoder::new(sr as i32, ch as i32).ok()
         } else {
-            vrec::encoder::AudioEncoder::new(48000, 2).ok()
+            scythe::encoder::AudioEncoder::new(48000, 2).ok()
         };
         let audio_codec_ctx_ptr = audio_encoder.as_ref().map(|e| e.codec_ctx() as usize); 
         
@@ -339,7 +339,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             while let Ok(drain) = mux_rx.recv() {
                 let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
                 let filename = format!("replay_{}.mp4", ts);
-                let full_path = vrec::config::VrecConfig::load().resolve_save_path(&filename);
+                let full_path = scythe::config::ScytheConfig::load().resolve_save_path(&filename);
                 println!("Saving replay to {}...", full_path);
 
                 // Find the first video IDR keyframe (ignore audio packets which always have keyframe flag set)
@@ -425,7 +425,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     if let Ok(cmd) = cmd_res {
                         match cmd {
                             Command::ReloadConfig => {
-                                let new_config = vrec::config::VrecConfig::load();
+                                let new_config = scythe::config::ScytheConfig::load();
                                 if new_config.show_cursor != config.show_cursor {
                                     println!("Cursor display changed ({} -> {}). Restarting daemon for new capture session...", config.show_cursor, new_config.show_cursor);
                                     if let Some(mut m) = normal_muxer.take() {
@@ -443,8 +443,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                     ring = HeapRb::<Packet>::new(new_capacity);
                                     println!("Replay buffer resized to {} packets.", new_capacity);
                                 }
-                                vrec::hyprland_binds::register_hyprland_binds(&config);
-                                audio_capture = match vrec::capture::audio::AudioCapture::new_with_device_mode_and_volumes(
+                                scythe::hyprland_binds::register_hyprland_binds(&config);
+                                audio_capture = match scythe::capture::audio::AudioCapture::new_with_device_mode_and_volumes(
                                     audio_tx_clone.clone(),
                                     Some(&config.audio_device),
                                     &config.audio_mode,

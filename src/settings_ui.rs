@@ -1,8 +1,8 @@
 use gtk::prelude::*;
 use gtk::{Window, WindowType, Box, Orientation, Label, Entry, Button, Switch, ComboBoxText};
-use crate::config::VrecConfig;
+use crate::config::ScytheConfig;
 
-pub fn open_replay_settings(config_in: &VrecConfig) {
+pub fn open_replay_settings(config_in: &ScytheConfig) {
     let window = Window::new(WindowType::Toplevel);
     window.set_title("Replay Settings");
     window.set_default_size(320, 200);
@@ -32,7 +32,7 @@ pub fn open_replay_settings(config_in: &VrecConfig) {
 
     let window_clone = window.clone();
     save_btn.connect_clicked(move |_| {
-        let mut cfg = VrecConfig::load();
+        let mut cfg = ScytheConfig::load();
         if let Ok(val) = duration_entry.text().parse() {
             cfg.replay_duration_sec = val;
         }
@@ -40,7 +40,7 @@ pub fn open_replay_settings(config_in: &VrecConfig) {
             cfg.replay_bitrate_kbps = val;
         }
         let _ = cfg.save();
-        VrecConfig::notify_daemon_reload();
+        ScytheConfig::notify_daemon_reload();
         window_clone.close();
     });
 
@@ -57,7 +57,7 @@ pub fn open_replay_settings(config_in: &VrecConfig) {
     window.show_all();
 }
 
-pub fn open_record_settings(config_in: &VrecConfig) {
+pub fn open_record_settings(config_in: &ScytheConfig) {
     let window = Window::new(WindowType::Toplevel);
     window.set_title("Record Settings");
     window.set_default_size(320, 150);
@@ -80,12 +80,12 @@ pub fn open_record_settings(config_in: &VrecConfig) {
 
     let window_clone = window.clone();
     save_btn.connect_clicked(move |_| {
-        let mut cfg = VrecConfig::load();
+        let mut cfg = ScytheConfig::load();
         if let Ok(val) = bitrate_entry.text().parse() {
             cfg.record_bitrate_kbps = val;
         }
         let _ = cfg.save();
-        VrecConfig::notify_daemon_reload();
+        ScytheConfig::notify_daemon_reload();
         window_clone.close();
     });
 
@@ -102,7 +102,7 @@ pub fn open_record_settings(config_in: &VrecConfig) {
     window.show_all();
 }
 
-pub fn open_general_settings(config_in: &VrecConfig) {
+pub fn open_general_settings(config_in: &ScytheConfig) {
     let window = Window::new(WindowType::Toplevel);
     window.set_title("General Settings");
     window.set_default_size(380, 320);
@@ -160,7 +160,7 @@ pub fn open_general_settings(config_in: &VrecConfig) {
 
     let window_clone = window.clone();
     save_btn.connect_clicked(move |_| {
-        let mut cfg = VrecConfig::load();
+        let mut cfg = ScytheConfig::load();
         cfg.autostart = auto_switch.is_active();
         if let Some(txt) = theme_combo.active_text() {
             cfg.ui_color_theme = txt.to_string();
@@ -169,7 +169,7 @@ pub fn open_general_settings(config_in: &VrecConfig) {
         cfg.menu_hotkey = menu_hk_entry.text().to_string();
         cfg.save_hotkey = save_hk_entry.text().to_string();
         let _ = cfg.save();
-        VrecConfig::notify_daemon_reload();
+        ScytheConfig::notify_daemon_reload();
         window_clone.close();
     });
 

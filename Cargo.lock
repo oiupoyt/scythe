@@ -3699,6 +3699,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "scythe"
+version = "0.1.0"
+dependencies = [
+ "ashpd",
+ "cpal",
+ "crossbeam-channel",
+ "dirs",
+ "eframe",
+ "egui",
+ "ffmpeg-next",
+ "ffmpeg-sys-next",
+ "gdk",
+ "glib 0.22.9",
+ "global-hotkey",
+ "gtk",
+ "gtk-layer-shell",
+ "libc",
+ "memmap2",
+ "mp4",
+ "pipewire",
+ "ringbuf",
+ "rubato",
+ "serde",
+ "serde_json",
+ "tokio",
+ "windows 0.58.0",
+ "xcb",
+]
+
+[[package]]
 name = "semver"
 version = "1.0.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4478,36 +4508,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
-]
-
-[[package]]
-name = "vrec"
-version = "0.1.0"
-dependencies = [
- "ashpd",
- "cpal",
- "crossbeam-channel",
- "dirs",
- "eframe",
- "egui",
- "ffmpeg-next",
- "ffmpeg-sys-next",
- "gdk",
- "glib 0.22.9",
- "global-hotkey",
- "gtk",
- "gtk-layer-shell",
- "libc",
- "memmap2",
- "mp4",
- "pipewire",
- "ringbuf",
- "rubato",
- "serde",
- "serde_json",
- "tokio",
- "windows 0.58.0",
- "xcb",
 ]
 
 [[package]]

@@ -1,7 +1,15 @@
 [package]
-name = "vrec"
+name = "scythe"
 version = "0.1.0"
 edition = "2024"
+
+[[bin]]
+name = "scythe-daemon"
+path = "src/bin/scythe-daemon.rs"
+
+[[bin]]
+name = "scythe-ui"
+path = "src/bin/scythe-ui.rs"
 
 [dependencies]
 crossbeam-channel = "0.5.16"

@@ -1,7 +1,7 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
-use vrec::ipc::{Command, send_command, query_status};
-use vrec::overlay::show_notification;
+use scythe::ipc::{Command, send_command, query_status};
+use scythe::overlay::show_notification;
 use std::env;
 use global_hotkey::{GlobalHotKeyManager, hotkey::{HotKey, Modifiers, Code}, GlobalHotKeyEvent};
 
@@ -48,30 +48,36 @@ fn get_daemon_cmd() -> std::process::Command {
     let mut cmd = if let Ok(mut path) = std::env::current_exe() {
         path.pop();
         #[cfg(target_os = "windows")]
-        let candidate = path.join("vrec-daemon.exe");
+        let primary = path.join("scythe-daemon.exe");
+        #[cfg(target_os = "windows")]
+        let fallback = path.join("vrec-daemon.exe");
         #[cfg(not(target_os = "windows"))]
-        let candidate = path.join("vrec-daemon");
+        let primary = path.join("scythe-daemon");
+        #[cfg(not(target_os = "windows"))]
+        let fallback = path.join("vrec-daemon");
 
-        if candidate.exists() {
-            std::process::Command::new(candidate)
+        if primary.exists() {
+            std::process::Command::new(primary)
+        } else if fallback.exists() {
+            std::process::Command::new(fallback)
         } else {
             #[cfg(target_os = "windows")]
             {
-                std::process::Command::new("vrec-daemon.exe")
+                std::process::Command::new("scythe-daemon.exe")
             }
             #[cfg(not(target_os = "windows"))]
             {
-                std::process::Command::new("vrec-daemon")
+                std::process::Command::new("scythe-daemon")
             }
         }
     } else {
         #[cfg(target_os = "windows")]
         {
-            std::process::Command::new("vrec-daemon.exe")
+            std::process::Command::new("scythe-daemon.exe")
         }
         #[cfg(not(target_os = "windows"))]
         {
-            std::process::Command::new("vrec-daemon")
+            std::process::Command::new("scythe-daemon")
         }
     };
 
@@ -91,11 +97,11 @@ fn get_ui_cmd() -> std::process::Command {
     } else {
         #[cfg(target_os = "windows")]
         {
-            std::process::Command::new("vrec-ui.exe")
+            std::process::Command::new("scythe-ui.exe")
         }
         #[cfg(not(target_os = "windows"))]
         {
-            std::process::Command::new("vrec-ui")
+            std::process::Command::new("scythe-ui")
         }
     };
 
@@ -131,7 +137,7 @@ fn ensure_hotkeys_running() {
             use windows::Win32::Foundation::{CloseHandle, GetLastError, WIN32_ERROR};
             use windows::Win32::System::Threading::CreateMutexW;
 
-            if let Ok(handle) = CreateMutexW(None, false, windows::core::w!("Global\\vrec_hotkeys_single_instance")) {
+            if let Ok(handle) = CreateMutexW(None, false, windows::core::w!("Global\\scythe_hotkeys_single_instance")) {
                 if GetLastError() == WIN32_ERROR(183) { // ERROR_ALREADY_EXISTS
                     let _ = CloseHandle(handle);
                     return;
@@ -157,7 +163,7 @@ fn send_with_notification(cmd: Command, success_msg: &str) -> Result<(), Box<dyn
             Ok(())
         }
         Err(e) => {
-            show_notification("Error: failed to connect to vrec-daemon");
+            show_notification("Error: failed to connect to scythe-daemon");
             Err(e)
         }
     }
@@ -177,7 +183,7 @@ fn handle_toggle_recording() -> Result<(), Box<dyn std::error::Error + Send + Sy
             Ok(())
         }
         Err(e) => {
-            show_notification("Error: failed to connect to vrec-daemon");
+            show_notification("Error: failed to connect to scythe-daemon");
             Err(e)
         }
     }
@@ -197,7 +203,7 @@ fn handle_toggle_cursor() -> Result<(), Box<dyn std::error::Error + Send + Sync>
             Ok(())
         }
         Err(e) => {
-            show_notification("Error: failed to connect to vrec-daemon");
+            show_notification("Error: failed to connect to scythe-daemon");
             Err(e)
         }
     }
@@ -215,16 +221,16 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             "--menu" => {
                 ensure_daemon_running();
                 ensure_hotkeys_running();
-                #[cfg(not(target_os = "windows"))]
-                vrec::overlay::show_menu_overlay();
-                #[cfg(target_os = "windows")]
-                vrec::overlay_egui::run_egui_overlay();
+                #[cfg(not(target_os = "linux"))]
+                scythe::overlay_egui::run_egui_overlay();
+                #[cfg(target_os = "linux")]
+                scythe::overlay::show_menu_overlay();
                 return Ok(());
             }
             "--egui" => {
                 ensure_daemon_running();
                 ensure_hotkeys_running();
-                vrec::overlay_egui::run_egui_overlay();
+                scythe::overlay_egui::run_egui_overlay();
                 return Ok(());
             }
             "--hotkeys" | "--background" => {
@@ -259,7 +265,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         return Ok(());
                     }
                     Err(e) => {
-                        eprintln!("Failed to connect to vrec daemon: {}", e);
+                        eprintln!("Failed to connect to scythe daemon: {}", e);
                         std::process::exit(1);
                     }
                 }
@@ -268,19 +274,19 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 return send_command(Command::StopDaemon);
             }
             "--help" | "-h" => {
-                println!("vrec-ui - UI Overlay and Hotkey listener for vrec");
+                println!("scythe-ui - UI Overlay and Hotkey listener for scythe");
                 println!("Usage:");
-                println!("  vrec-ui                Open the interactive overlay UI menu (default)");
-                println!("  vrec-ui --menu         Open the interactive overlay UI menu");
-                println!("  vrec-ui --hotkeys      Run global hotkey manager in background");
-                println!("  vrec-ui --status       Query current daemon status");
-                println!("  vrec-ui --save         Save instant replay and show notification");
-                println!("  vrec-ui --record       Toggle normal recording on/off (with notification)");
-                println!("  vrec-ui --cursor       Toggle mouse cursor recording on/off (with notification)");
-                println!("  vrec-ui --start        Start normal recording");
-                println!("  vrec-ui --stop         Stop normal recording");
-                println!("  vrec-ui --reload       Reload daemon configuration");
-                println!("  vrec-ui --quit         Stop background daemon");
+                println!("  scythe-ui                Open the interactive overlay UI menu (default)");
+                println!("  scythe-ui --menu         Open the interactive overlay UI menu");
+                println!("  scythe-ui --hotkeys      Run global hotkey manager in background");
+                println!("  scythe-ui --status       Query current daemon status");
+                println!("  scythe-ui --save         Save instant replay and show notification");
+                println!("  scythe-ui --record       Toggle normal recording on/off (with notification)");
+                println!("  scythe-ui --cursor       Toggle mouse cursor recording on/off (with notification)");
+                println!("  scythe-ui --start        Start normal recording");
+                println!("  scythe-ui --stop         Stop normal recording");
+                println!("  scythe-ui --reload       Reload daemon configuration");
+                println!("  scythe-ui --quit         Stop background daemon");
                 return Ok(());
             }
             _ => {}
@@ -288,10 +294,10 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     } else {
         ensure_daemon_running();
         ensure_hotkeys_running();
-        #[cfg(not(target_os = "windows"))]
-        vrec::overlay::show_menu_overlay();
-        #[cfg(target_os = "windows")]
-        vrec::overlay_egui::run_egui_overlay();
+        #[cfg(not(target_os = "linux"))]
+        scythe::overlay_egui::run_egui_overlay();
+        #[cfg(target_os = "linux")]
+        scythe::overlay::show_menu_overlay();
         return Ok(());
     }
 
@@ -300,14 +306,14 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         use windows::Win32::Foundation::{GetLastError, WIN32_ERROR};
         use windows::Win32::System::Threading::CreateMutexW;
 
-        let handle = CreateMutexW(None, true, windows::core::w!("Global\\vrec_hotkeys_single_instance"));
+        let handle = CreateMutexW(None, true, windows::core::w!("Global\\scythe_hotkeys_single_instance"));
         if GetLastError() == WIN32_ERROR(183) {
             return Ok(());
         }
         handle.ok()
     };
 
-    println!("Starting vrec UI/Hotkey process...");
+    println!("Starting scythe UI/Hotkey process...");
     
     let session_type = env::var("XDG_SESSION_TYPE").unwrap_or_else(|_| "x11".to_string());
     let desktop = env::var("XDG_CURRENT_DESKTOP").unwrap_or_else(|_| "".to_string()).to_lowercase();
@@ -319,11 +325,11 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if is_gnome || is_kde {
             println!("Note: Wayland native layer shell used. Ensure your compositor allows it.");
             println!("Tip: Global hotkeys may be restricted by Wayland compositors.");
-            println!("     You can bind `vrec-ui --menu` or `vrec-ui --save` in your system shortcut settings.");
+            println!("     You can bind `scythe-ui --menu` or `scythe-ui --save` in your system shortcut settings.");
         } else {
             println!("wlroots/Hyprland compositor detected.");
-            vrec::hyprland_binds::register_hyprland_binds(&vrec::config::VrecConfig::load());
-            vrec::hyprland_binds::spawn_hyprland_reload_watcher();
+            scythe::hyprland_binds::register_hyprland_binds(&scythe::config::ScytheConfig::load());
+            scythe::hyprland_binds::spawn_hyprland_reload_watcher();
         }
     } else {
         println!("X11 session detected.");

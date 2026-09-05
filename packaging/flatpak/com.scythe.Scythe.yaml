@@ -1,10 +1,10 @@
-app-id: com.vrec.Vrec
+app-id: com.scythe.Scythe
 runtime: org.gnome.Platform
 runtime-version: '46'
 sdk: org.gnome.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
-command: vrec-ui
+command: scythe-ui
 finish-args:
   - --share=ipc
   - --socket=fallback-x11
@@ -19,17 +19,21 @@ finish-args:
 build-options:
   append-path: /usr/lib/sdk/rust-stable/bin
   env:
-    CARGO_HOME: /run/build/vrec/cargo
+    CARGO_HOME: /run/build/scythe/cargo
 
 modules:
-  - name: vrec
+  - name: scythe
     buildsystem: simple
     build-commands:
       - cargo build --release --verbose
-      - install -Dm755 target/release/vrec-daemon /app/bin/vrec-daemon
-      - install -Dm755 target/release/vrec-ui /app/bin/vrec-ui
-      - install -Dm644 packaging/vrec.desktop /app/share/applications/com.vrec.Vrec.desktop
+      - install -Dm755 target/release/scythe-daemon /app/bin/scythe-daemon
+      - install -Dm755 target/release/scythe-ui /app/bin/scythe-ui
+      - install -Dm755 target/release/scythe /app/bin/scythe
+      - ln -sf /app/bin/scythe-daemon /app/bin/vrec-daemon
+      - ln -sf /app/bin/scythe-ui /app/bin/vrec-ui
+      - ln -sf /app/bin/scythe /app/bin/vrec
+      - install -Dm644 packaging/scythe.desktop /app/share/applications/com.scythe.Scythe.desktop
     sources:
       - type: git
-        url: https://github.com/oiupoyt/vrec.git
+        url: https://github.com/oiupoyt/scythe.git
         branch: main

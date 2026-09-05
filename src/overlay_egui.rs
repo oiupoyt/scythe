@@ -3,7 +3,7 @@ use egui::{Color32, CornerRadius, FontId, Margin, Stroke, Vec2};
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::{Duration, Instant, SystemTime};
-use crate::config::VrecConfig;
+use crate::config::ScytheConfig;
 use crate::ipc::{self, Command, DaemonStatus};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,7 +22,7 @@ pub struct VideoClipInfo {
 }
 
 fn scan_recordings(dir_str: &str) -> Vec<VideoClipInfo> {
-    let dir = VrecConfig::expand_tilde(dir_str);
+    let dir = ScytheConfig::expand_tilde(dir_str);
     let mut clips = Vec::new();
     if let Ok(entries) = std::fs::read_dir(&dir) {
         for entry in entries.flatten() {
@@ -424,8 +424,8 @@ fn render_section_card(ui: &mut egui::Ui, header: &str, add_contents: impl FnOnc
         });
 }
 
-pub struct VrecOverlayApp {
-    config: VrecConfig,
+pub struct ScytheOverlayApp {
+    config: ScytheConfig,
     status: DaemonStatus,
     daemon_connected: bool,
     current_view: ShadowPlayView,
@@ -449,15 +449,17 @@ pub struct VrecOverlayApp {
     initial_pos_set: bool,
 }
 
-impl Default for VrecOverlayApp {
+pub type VrecOverlayApp = ScytheOverlayApp;
+
+impl Default for ScytheOverlayApp {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl VrecOverlayApp {
+impl ScytheOverlayApp {
     pub fn new() -> Self {
-        let config = VrecConfig::load();
+        let config = ScytheConfig::load();
         let replay_sec = config.replay_duration_sec;
         let bitrate_mbps = (config.record_bitrate_kbps / 1000).max(1);
         let target_fps = config.fps;
@@ -571,13 +573,13 @@ impl VrecOverlayApp {
                 .show(ui, |ui| {
                     ui.set_width(730.0);
                     ui.horizontal(|ui| {
-                        // VREC Badge
-                        let (badge_rect, _) = ui.allocate_exact_size(Vec2::new(44.0, 20.0), egui::Sense::hover());
+                        // SCYTHE Badge
+                        let (badge_rect, _) = ui.allocate_exact_size(Vec2::new(56.0, 20.0), egui::Sense::hover());
                         ui.painter().rect_filled(badge_rect, CornerRadius::same(4_u8), Color32::from_rgb(118, 185, 0));
                         ui.painter().text(
                             badge_rect.center(),
                             egui::Align2::CENTER_CENTER,
-                            "VREC",
+                            "SCYTHE",
                             FontId::proportional(11.0),
                             Color32::from_rgb(11, 18, 4),
                         );
@@ -674,10 +676,10 @@ impl VrecOverlayApp {
                         render_dropdown_menu(ui, card_w, |ui| {
                             let toggle_text = if is_replay_active { "Turn off" } else { "Turn on" };
                             if render_menu_item(ui, toggle_text) {
-                                let mut cfg = VrecConfig::load();
+                                let mut cfg = ScytheConfig::load();
                                 cfg.replay_enabled = !cfg.replay_enabled;
                                 let _ = cfg.save();
-                                VrecConfig::notify_daemon_reload();
+                                ScytheConfig::notify_daemon_reload();
                                 self.config.replay_enabled = cfg.replay_enabled;
                                 self.status.is_replay_active = cfg.replay_enabled;
                                 self.replay_dropdown_open = false;
@@ -958,7 +960,7 @@ impl VrecOverlayApp {
                                         pick_folder(&self.output_dir, self.folder_tx.clone());
                                     }
                                     if ui.button(egui::RichText::new("Open").size(11.0)).clicked() {
-                                        open_folder(&VrecConfig::expand_tilde(&self.output_dir));
+                                        open_folder(&ScytheConfig::expand_tilde(&self.output_dir));
                                     }
                                 });
                                 ui.label(egui::RichText::new(format!("{} video recordings in destination folder.", self.clips.len())).size(10.5).color(Color32::from_rgb(148, 163, 184)));
@@ -1027,7 +1029,7 @@ impl VrecOverlayApp {
     }
 }
 
-impl eframe::App for VrecOverlayApp {
+impl eframe::App for ScytheOverlayApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll_async_events();
         self.anim_time += 0.033;
@@ -1075,8 +1077,8 @@ impl eframe::App for VrecOverlayApp {
 pub fn run_egui_overlay() {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("vrec ShadowPlay")
-            .with_app_id("vrec-overlay")
+            .with_title("Scythe")
+            .with_app_id("scythe-overlay")
             .with_position([400.0, 50.0])
             .with_inner_size([760.0, 270.0])
             .with_min_inner_size([740.0, 250.0])
@@ -1089,8 +1091,8 @@ pub fn run_egui_overlay() {
     };
 
     let _ = eframe::run_native(
-        "vrec-overlay",
+        "scythe-overlay",
         options,
-        Box::new(|_cc| Ok(Box::new(VrecOverlayApp::new()))),
+        Box::new(|_cc| Ok(Box::new(ScytheOverlayApp::new()))),
     );
 }

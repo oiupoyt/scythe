@@ -2,27 +2,27 @@
 set -e
 
 echo "============================================="
-echo "   vrec Automated End-to-End Test Suite      "
+echo "   Scythe Automated End-to-End Test Suite    "
 echo "============================================="
 
 # Ensure binaries are compiled
 echo "[1/6] Building release binaries..."
 cargo build --release --quiet
 
-SOCKET_PATH="${XDG_RUNTIME_DIR:-/tmp}/vrec.sock"
+SOCKET_PATH="${XDG_RUNTIME_DIR:-/tmp}/scythe.sock"
 rm -f "$SOCKET_PATH"
 rm -f record_*.mp4 replay_*.mp4
 
-SAVE_DIR=$(python3 -c 'import json, os; print(json.load(open(os.path.expanduser("~/.config/vrec/config.json")))["output_directory"])' 2>/dev/null || echo "$HOME/Videos/vrec")
+SAVE_DIR=$(python3 -c 'import json, os; p=os.path.expanduser("~/.config/scythe/config.json"); print(json.load(open(p))["output_directory"]) if os.path.exists(p) else print(os.path.expanduser("~/Videos/Scythe"))' 2>/dev/null || echo "$HOME/Videos/Scythe")
 mkdir -p "$SAVE_DIR"
 
-echo "[2/6] Starting vrec-daemon with mock capture..."
-target/release/vrec-daemon --mock > daemon_test.log 2>&1 &
+echo "[2/6] Starting scythe-daemon with mock capture..."
+target/release/scythe-daemon --mock > daemon_test.log 2>&1 &
 DAEMON_PID=$!
 
 cleanup() {
     if kill -0 $DAEMON_PID 2>/dev/null; then
-        target/release/vrec-ui --quit 2>/dev/null || kill -9 $DAEMON_PID 2>/dev/null || true
+        target/release/scythe-ui --quit 2>/dev/null || kill -9 $DAEMON_PID 2>/dev/null || true
     fi
     rm -f daemon_test.log
 }
@@ -46,23 +46,23 @@ echo "Daemon is live (PID: $DAEMON_PID, Socket: $SOCKET_PATH)"
 
 # Test 1: Start Normal Recording
 echo "[3/6] Testing: Start Normal Recording..."
-target/release/vrec-ui --start
+target/release/scythe-ui --start
 echo "Recording in progress for 3 seconds..."
 sleep 3
 
 # Test 2: Stop Normal Recording
 echo "[4/6] Testing: Stop Normal Recording..."
-target/release/vrec-ui --stop
+target/release/scythe-ui --stop
 sleep 1
 
 # Test 3: Save Instant Replay
 echo "[5/6] Testing: Save Instant Replay buffer..."
-target/release/vrec-ui --save
+target/release/scythe-ui --save
 sleep 2
 
 # Test 4: Quit Daemon
 echo "[6/6] Testing: Clean Daemon Shutdown..."
-target/release/vrec-ui --quit
+target/release/scythe-ui --quit
 wait $DAEMON_PID 2>/dev/null || true
 echo "Daemon shutdown cleanly."
 
@@ -72,7 +72,7 @@ echo "   Verifying Generated Recordings with ffprobe"
 echo "============================================="
 
 FOUND_ANY=0
-for f in $(find "$SAVE_DIR" ./vrec . -maxdepth 2 \( -name "record_*.mp4" -o -name "replay_*.mp4" \) 2>/dev/null); do
+for f in $(find "$SAVE_DIR" "$HOME/Videos/Scythe" "$HOME/Videos/vrec" . -maxdepth 2 \( -name "record_*.mp4" -o -name "replay_*.mp4" \) 2>/dev/null); do
     if [ -f "$f" ]; then
         FOUND_ANY=1
         echo "--> Testing file: $f ($(ls -lh "$f" | awk '{print $5}'))"

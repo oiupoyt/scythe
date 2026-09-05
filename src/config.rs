@@ -20,7 +20,7 @@ fn default_mic_volume() -> f32 { 0.60 }
 fn default_system_volume() -> f32 { 1.00 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct VrecConfig {
+pub struct ScytheConfig {
     #[serde(default = "default_true")]
     pub replay_enabled: bool,
     #[serde(default = "default_replay_duration")]
@@ -36,7 +36,7 @@ pub struct VrecConfig {
     pub fps: u32,
     #[serde(default = "default_video_codec")]
     pub video_codec: String,
-    #[serde(default = "VrecConfig::default_output_directory")]
+    #[serde(default = "ScytheConfig::default_output_directory")]
     pub output_directory: String,
     #[serde(default = "default_true")]
     pub show_cursor: bool,
@@ -65,7 +65,9 @@ pub struct VrecConfig {
     pub cursor_hotkey: String,
 }
 
-impl Default for VrecConfig {
+pub type VrecConfig = ScytheConfig;
+
+impl Default for ScytheConfig {
     fn default() -> Self {
         Self {
             replay_enabled: true,
@@ -94,18 +96,21 @@ impl Default for VrecConfig {
     }
 }
 
-impl VrecConfig {
+impl ScytheConfig {
     pub fn default_output_directory() -> String {
         let mut p = dirs::video_dir().unwrap_or_else(|| PathBuf::from("."));
-        p.push("vrec");
+        p.push("Scythe");
         p.to_string_lossy().to_string()
     }
 
     pub fn config_path() -> PathBuf {
-        let mut path = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
-        path.push("vrec");
-        path.push("config.json");
-        path
+        let base = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
+        base.join("scythe").join("config.json")
+    }
+
+    pub fn legacy_config_path() -> PathBuf {
+        let base = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
+        base.join("vrec").join("config.json")
     }
 
     pub fn expand_tilde(path: &str) -> PathBuf {
@@ -134,6 +139,16 @@ impl VrecConfig {
             && let Ok(cfg) = serde_json::from_str(&content) {
                 return cfg;
         }
+        let legacy = Self::legacy_config_path();
+        if let Ok(content) = fs::read_to_string(&legacy)
+            && let Ok(mut cfg) = serde_json::from_str::<Self>(&content) {
+                // If the legacy config used the old default directory, update it to the new Scythe directory
+                if cfg.output_directory.ends_with("/Videos/vrec") || cfg.output_directory.ends_with("\\Videos\\vrec") {
+                    cfg.output_directory = Self::default_output_directory();
+                }
+                let _ = cfg.save();
+                return cfg;
+        }
         let default_cfg = Self::default();
         let _ = default_cfg.save();
         default_cfg
@@ -145,7 +160,15 @@ impl VrecConfig {
             fs::create_dir_all(parent)?;
         }
         let json = serde_json::to_string_pretty(self)?;
-        fs::write(path, json)?;
+        fs::write(&path, &json)?;
+
+        // Also update legacy config if its directory exists, ensuring backward compatibility
+        let legacy = Self::legacy_config_path();
+        if let Some(parent) = legacy.parent()
+            && parent.exists() {
+                let _ = fs::write(legacy, &json);
+        }
+
         Ok(())
     }
 
@@ -160,7 +183,7 @@ mod tests {
 
     #[test]
     fn test_config_defaults_and_json() {
-        let cfg = VrecConfig::default();
+        let cfg = ScytheConfig::default();
         assert_eq!(cfg.replay_duration_sec, 60);
         assert_eq!(cfg.replay_bitrate_kbps, 18000);
         assert_eq!(cfg.fps, 60);
@@ -168,7 +191,7 @@ mod tests {
         assert_eq!(cfg.audio_mode, "system");
         assert!(cfg.show_cursor);
         let json = serde_json::to_string(&cfg).unwrap();
-        let parsed: VrecConfig = serde_json::from_str(&json).unwrap();
+        let parsed: ScytheConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.replay_duration_sec, 60);
         assert_eq!(parsed.audio_mode, "system");
         assert!(parsed.show_cursor);

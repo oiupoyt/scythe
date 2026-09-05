@@ -2,7 +2,7 @@
 set -e
 
 echo "============================================="
-echo "   Installing vrec Screen Recorder           "
+echo "   Installing Scythe Screen Recorder         "
 echo "============================================="
 
 # Compile release binaries
@@ -16,21 +16,29 @@ mkdir -p "$BIN_DIR"
 mkdir -p "$APP_DIR"
 
 echo "[2/4] Installing binaries to $BIN_DIR..."
-install -m 755 target/release/vrec-daemon "$BIN_DIR/vrec-daemon"
-install -m 755 target/release/vrec-ui "$BIN_DIR/vrec-ui"
+install -m 755 target/release/scythe-daemon "$BIN_DIR/scythe-daemon"
+install -m 755 target/release/scythe-ui "$BIN_DIR/scythe-ui"
+ln -sf "$BIN_DIR/scythe-ui" "$BIN_DIR/scythe"
+
+# Backward-compatible symlinks
+ln -sf "$BIN_DIR/scythe-daemon" "$BIN_DIR/vrec-daemon"
+ln -sf "$BIN_DIR/scythe-ui" "$BIN_DIR/vrec-ui"
+ln -sf "$BIN_DIR/scythe-ui" "$BIN_DIR/vrec"
 
 echo "[3/4] Creating application launcher..."
-cat > "$APP_DIR/vrec.desktop" << EOF
+cat > "$APP_DIR/scythe.desktop" << EOF
 [Desktop Entry]
 Type=Application
-Name=vrec Screen Recorder
+Name=Scythe Screen Recorder
 Comment=Fast GPU Hardware Screen Recorder & Instant Replay
-Exec=vrec-ui --menu
+Exec=scythe-ui --menu
 Icon=media-record
 Terminal=false
 Categories=AudioVideo;Recorder;
-Keywords=screen;recorder;replay;capture;
+Keywords=screen;recorder;replay;capture;scythe;shadowplay;
 EOF
+
+ln -sf "$APP_DIR/scythe.desktop" "$APP_DIR/vrec.desktop"
 
 echo "[4/4] Verifying PATH..."
 if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
@@ -39,15 +47,15 @@ if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
 fi
 
 echo "============================================="
-echo "   vrec successfully installed!              "
+echo "   Scythe successfully installed!            "
 echo "============================================="
 echo "You can now run:"
-echo "  vrec-daemon           # Starts background recording engine"
-echo "  vrec-ui --menu        # Opens the HUD overlay menu"
-echo "  vrec-ui --record      # Toggles normal recording"
-echo "  vrec-ui --save        # Saves instant replay"
+echo "  scythe-daemon         # Starts background recording engine"
+echo "  scythe-ui --menu      # Opens the HUD overlay menu"
+echo "  scythe-ui --record    # Toggles normal recording"
+echo "  scythe-ui --save      # Saves instant replay"
 echo ""
-echo "Tip: You can bind 'vrec-ui --menu' or 'vrec-ui --save' in Hyprland config (hyprland.conf):"
-echo '  bind = ALT, Z, exec, vrec-ui --menu'
-echo '  bind = CONTROL SHIFT, R, exec, vrec-ui --save'
+echo "Tip: You can bind 'scythe-ui --menu' or 'scythe-ui --save' in Hyprland config (hyprland.conf):"
+echo '  bind = ALT, Z, exec, scythe-ui --menu'
+echo '  bind = CONTROL SHIFT, R, exec, scythe-ui --save'
 echo "============================================="

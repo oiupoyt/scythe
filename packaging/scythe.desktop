@@ -1,11 +1,11 @@
 [Desktop Entry]
 Type=Application
-Name=vrec Screen Recorder
+Name=Scythe Screen Recorder
 GenericName=Screen Recorder & Instant Replay
 Comment=High-performance GPU hardware screen recorder and instant replay overlay
-Exec=vrec-ui --menu
+Exec=scythe-ui --menu
 Icon=media-record
 Terminal=false
 Categories=AudioVideo;Recorder;
-Keywords=screen;recorder;replay;capture;game;shadowplay;
+Keywords=screen;recorder;replay;capture;game;shadowplay;scythe;
 StartupNotify=false

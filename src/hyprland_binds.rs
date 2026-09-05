@@ -8,7 +8,8 @@ use std::io::{BufRead, BufReader};
 use std::os::unix::net::UnixStream;
 #[cfg(unix)]
 use std::path::PathBuf;
-use crate::config::VrecConfig;
+use crate::config::ScytheConfig;
+pub type VrecConfig = ScytheConfig;
 
 pub fn is_hyprland() -> bool {
     #[cfg(unix)]
@@ -99,34 +100,42 @@ pub fn hotkey_to_hyprland_lua(hotkey: &str) -> Option<String> {
 
 #[cfg(unix)]
 /// Dynamically inject binds and window rules into running Hyprland without touching hyprland.conf
-pub fn register_hyprland_binds(config: &VrecConfig) {
+pub fn register_hyprland_binds(config: &ScytheConfig) {
     if !is_hyprland() {
         return;
     }
 
     // Register modern Hyprland (0.55+) layer rules for genuine frosted glass blur & floating window rules
     let _ = Command::new("hyprctl")
+        .args(["eval", r#"hl.layer_rule({ match = { namespace = "scythe-overlay" }, blur = true, ignore_alpha = 0.1 })"#])
+        .output();
+    let _ = Command::new("hyprctl")
+        .args(["eval", r#"hl.layer_rule({ match = { namespace = "scythe-notification" }, blur = true, ignore_alpha = 0.1 })"#])
+        .output();
+    let _ = Command::new("hyprctl")
+        .args(["eval", r#"hl.window_rule({ match = { class = "scythe-overlay" }, float = true, pin = true, stay_focused = true })"#])
+        .output();
+    let _ = Command::new("hyprctl")
         .args(["eval", r#"hl.layer_rule({ match = { namespace = "vrec-overlay" }, blur = true, ignore_alpha = 0.1 })"#])
-        .output();
-    let _ = Command::new("hyprctl")
-        .args(["eval", r#"hl.layer_rule({ match = { namespace = "vrec-notification" }, blur = true, ignore_alpha = 0.1 })"#])
-        .output();
-    let _ = Command::new("hyprctl")
-        .args(["eval", r#"hl.window_rule({ match = { class = "vrec-overlay" }, float = true, pin = true, stay_focused = true })"#])
         .output();
 
     // Also register legacy window rules for backward compatibility with older Hyprland versions
     let legacy_rules = [
+        "float, class:^(scythe-overlay)$",
+        "move 50% 45, class:^(scythe-overlay)$",
+        "pin, class:^(scythe-overlay)$",
+        "stayfocused, class:^(scythe-overlay)$",
+        "noborder, class:^(scythe-overlay)$",
+        "float, class:^(scythe-hud)$",
+        "move 50% 45, class:^(scythe-hud)$",
+        "pin, class:^(scythe-hud)$",
+        "stayfocused, class:^(scythe-hud)$",
+        "noborder, class:^(scythe-hud)$",
         "float, class:^(vrec-overlay)$",
         "move 50% 45, class:^(vrec-overlay)$",
         "pin, class:^(vrec-overlay)$",
         "stayfocused, class:^(vrec-overlay)$",
         "noborder, class:^(vrec-overlay)$",
-        "float, class:^(vrec-hud)$",
-        "move 50% 45, class:^(vrec-hud)$",
-        "pin, class:^(vrec-hud)$",
-        "stayfocused, class:^(vrec-hud)$",
-        "noborder, class:^(vrec-hud)$",
     ];
     for rule in legacy_rules {
         let _ = Command::new("hyprctl")
@@ -135,10 +144,10 @@ pub fn register_hyprland_binds(config: &VrecConfig) {
     }
 
     let binds = [
-        (&config.menu_hotkey, "vrec-ui --menu"),
-        (&config.save_hotkey, "vrec-ui --save"),
-        (&config.record_hotkey, "vrec-ui --record"),
-        (&config.cursor_hotkey, "vrec-ui --cursor"),
+        (&config.menu_hotkey, "scythe-ui --menu"),
+        (&config.save_hotkey, "scythe-ui --save"),
+        (&config.record_hotkey, "scythe-ui --record"),
+        (&config.cursor_hotkey, "scythe-ui --cursor"),
     ];
 
     for (hotkey, cmd) in binds {
@@ -170,11 +179,11 @@ pub fn register_hyprland_binds(config: &VrecConfig) {
 }
 
 #[cfg(not(unix))]
-pub fn register_hyprland_binds(_config: &VrecConfig) {}
+pub fn register_hyprland_binds(_config: &ScytheConfig) {}
 
 #[cfg(unix)]
 /// Dynamically remove binds from running Hyprland
-pub fn unregister_hyprland_binds(config: &VrecConfig) {
+pub fn unregister_hyprland_binds(config: &ScytheConfig) {
     if !is_hyprland() {
         return;
     }
@@ -207,7 +216,7 @@ pub fn unregister_hyprland_binds(config: &VrecConfig) {
 }
 
 #[cfg(not(unix))]
-pub fn unregister_hyprland_binds(_config: &VrecConfig) {}
+pub fn unregister_hyprland_binds(_config: &ScytheConfig) {}
 
 #[cfg(unix)]
 /// Find Hyprland socket2 for live event listening
@@ -240,8 +249,8 @@ pub fn spawn_hyprland_reload_watcher() {
                     let reader = BufReader::new(stream);
                     for line in reader.lines().map_while(Result::ok) {
                         if line.starts_with("configreloaded") {
-                            println!("Hyprland config reload detected! Re-registering vrec dynamic binds...");
-                            let config = VrecConfig::load();
+                            println!("Hyprland config reload detected! Re-registering scythe dynamic binds...");
+                            let config = ScytheConfig::load();
                             register_hyprland_binds(&config);
                         }
                     }

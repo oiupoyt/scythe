@@ -10,7 +10,7 @@ use std::f64::consts::PI;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use crate::config::VrecConfig;
+use crate::config::ScytheConfig;
 use crate::ipc::{self, Command};
 
 pub fn show_notification_overlay() {
@@ -28,7 +28,7 @@ pub fn show_notification(message: &str) {
                  $notify = new-object system.windows.forms.notifyicon; \
                  $notify.icon = [System.Drawing.SystemIcons]::Information; \
                  $notify.visible = $true; \
-                 $notify.showballoontip(2000, 'vrec', '{}', [system.windows.forms.tooltipicon]::Info); \
+                 $notify.showballoontip(2000, 'scythe', '{}', [system.windows.forms.tooltipicon]::Info); \
                  Start-Sleep -Seconds 2; \
                  $notify.dispose()",
                 msg.replace('\'', "''")
@@ -51,7 +51,7 @@ pub fn show_notification(message: &str) {
         }
 
         let app = Application::builder()
-            .application_id("com.vrec.notification")
+            .application_id("com.scythe.notification")
             .build();
 
         let msg_text = message.to_string();
@@ -70,7 +70,7 @@ pub fn show_notification(message: &str) {
             if layer_shell_ok {
                 window.init_layer_shell();
                 window.set_layer(Layer::Overlay);
-                window.set_namespace("vrec-notification");
+                window.set_namespace("scythe-notification");
                 window.set_layer_shell_margin(gtk_layer_shell::Edge::Top, 40);
                 window.set_anchor(gtk_layer_shell::Edge::Top, true);
             } else {
@@ -141,7 +141,7 @@ pub fn show_notification(message: &str) {
             hbox.style_context().add_class("notify-box");
             hbox.set_halign(gtk::Align::Center);
 
-            let badge = Label::new(Some("VREC"));
+            let badge = Label::new(Some("SCYTHE"));
             badge.style_context().add_class("notify-badge");
             let label = Label::new(Some(&msg_text));
             label.style_context().add_class("notify-label");
@@ -253,9 +253,16 @@ fn draw_gear_icon(cr: &gtk::cairo::Context, width: f64, height: f64) {
 }
 
 pub fn show_menu_overlay() {
-    #[cfg(unix)]
+    #[cfg(target_os = "windows")]
+    {
+        crate::overlay_egui::run_egui_overlay();
+        return;
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
     if std::env::var("WAYLAND_DISPLAY").is_err() && std::env::var("DISPLAY").is_err() {
-        eprintln!("Note: No display server detected for GTK. Falling back to cross-platform egui overlay...");
+        eprintln!("Warning: No display found for GTK menu overlay. Falling back to cross-platform egui overlay...");
         crate::overlay_egui::run_egui_overlay();
         return;
     }
@@ -266,12 +273,12 @@ pub fn show_menu_overlay() {
     }
 
     let app = Application::builder()
-        .application_id("com.vrec.hud")
+        .application_id("com.scythe.hud")
         .flags(gtk::gio::ApplicationFlags::NON_UNIQUE)
         .build();
 
     app.connect_activate(|app| {
-        let config = VrecConfig::load();
+        let config = ScytheConfig::load();
 
         let window = ApplicationWindow::builder()
             .application(app)
@@ -287,7 +294,7 @@ pub fn show_menu_overlay() {
         if layer_shell_ok {
             window.init_layer_shell();
             window.set_layer(Layer::Overlay);
-            window.set_namespace("vrec-overlay");
+            window.set_namespace("scythe-overlay");
             window.set_keyboard_interactivity(true);
             // Shifted higher towards the top (50px margin) per user feedback
             window.set_layer_shell_margin(gtk_layer_shell::Edge::Top, 50);
@@ -335,8 +342,8 @@ pub fn show_menu_overlay() {
         let header_box = Box::new(Orientation::Horizontal, 10);
         header_box.style_context().add_class("header-bar");
 
-        let brand_badge = Label::new(Some("VREC"));
-        brand_badge.style_context().add_class("vrec-badge");
+        let brand_badge = Label::new(Some("SCYTHE"));
+        brand_badge.style_context().add_class("scythe-badge");
 
         let title_label = Label::new(Some("SHADOWPLAY OVERLAY"));
         title_label.style_context().add_class("overlay-title");
@@ -887,6 +894,7 @@ pub fn show_menu_overlay() {
                 padding: 8px 18px;
                 box-shadow: 0px 12px 32px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.16);
             }
+            .scythe-badge,
             .vrec-badge {
                 background-color: #76b900;
                 color: #0b1204;
@@ -1181,10 +1189,10 @@ pub fn show_menu_overlay() {
         let rev_r_hide = replay_revealer.clone();
         let card_r_deactivate = replay_card_btn.clone();
         replay_toggle_item.connect_clicked(move |_| {
-            let mut cfg = VrecConfig::load();
+            let mut cfg = ScytheConfig::load();
             cfg.replay_enabled = !cfg.replay_enabled;
             let _ = cfg.save();
-            VrecConfig::notify_daemon_reload();
+            ScytheConfig::notify_daemon_reload();
 
             r_state_sync.store(cfg.replay_enabled, Ordering::Relaxed);
             r_icon_sync.queue_draw();
@@ -1251,7 +1259,7 @@ pub fn show_menu_overlay() {
         // Direct Mouse Cursor Switch Toggle
         let banner_cur = status_banner.clone();
         cursor_switch.connect_state_set(move |_, active| {
-            let mut cfg = VrecConfig::load();
+            let mut cfg = ScytheConfig::load();
             if cfg.show_cursor != active {
                 cfg.show_cursor = active;
                 let _ = cfg.save();
@@ -1275,7 +1283,7 @@ pub fn show_menu_overlay() {
         let cur_sw_sync = cursor_switch.clone();
 
         apply_btn.connect_clicked(move |_| {
-            let mut cfg = VrecConfig::load();
+            let mut cfg = ScytheConfig::load();
             cfg.show_cursor = cur_sw_sync.is_active();
             cfg.fps = fps_spin.value() as u32;
             let bit_mbps = bit_spin.value() as u32;
@@ -1305,7 +1313,7 @@ pub fn show_menu_overlay() {
             cfg.autostart = auto_switch.is_active();
 
             let _ = cfg.save();
-            VrecConfig::notify_daemon_reload();
+            ScytheConfig::notify_daemon_reload();
 
             r_sub_lbl_sync.set_text(&format!("{}s Buffer", cfg.replay_duration_sec));
             rec_sub_lbl_sync.set_text(&format!("{} FPS • {} Mbps", cfg.fps, cfg.record_bitrate_kbps / 1000));
@@ -1386,4 +1394,5 @@ pub fn show_menu_overlay() {
     });
 
     app.run_with_args(&[] as &[&str]);
+    }
 }
