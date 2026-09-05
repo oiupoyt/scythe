@@ -102,9 +102,13 @@ impl Default for ScytheConfig {
 
 impl ScytheConfig {
     pub fn default_output_directory() -> String {
-        let mut p = dirs::video_dir().unwrap_or_else(|| PathBuf::from("."));
-        p.push("Scythe");
-        p.to_string_lossy().to_string()
+        if let Some(video) = dirs::video_dir() {
+            return video.to_string_lossy().to_string();
+        }
+        if let Some(home) = dirs::home_dir() {
+            return home.join("Videos").to_string_lossy().to_string();
+        }
+        "~/Videos".to_string()
     }
 
     pub fn config_path() -> PathBuf {

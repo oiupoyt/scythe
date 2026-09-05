@@ -424,144 +424,145 @@ fn draw_replay_icon(painter: &egui::Painter, center: egui::Pos2, radius: f32, is
         Color32::from_rgb(148, 163, 184)
     };
 
-    // 1. Clean smooth circular sweep arc (280 degrees)
-    let start_angle = 0.25 * PI;
-    let end_angle = 1.80 * PI;
+    // 1. Sleek circular track arc curving counter-clockwise (rewind)
+    let arc_radius = radius * 0.95;
+    let start_angle = -PI * 0.70; // top-left
+    let end_angle = PI * 0.90;   // bottom-left
     let steps = 36;
     let mut points = Vec::with_capacity(steps + 1);
     for i in 0..=steps {
         let t = i as f32 / steps as f32;
         let angle = start_angle + t * (end_angle - start_angle);
-        points.push(center + Vec2::new(angle.cos() * radius, angle.sin() * radius));
+        points.push(center + Vec2::new(angle.cos() * arc_radius, angle.sin() * arc_radius));
     }
     let stroke = Stroke::new(2.2_f32, color);
     for w in points.windows(2) {
         painter.line_segment([w[0], w[1]], stroke);
     }
 
-    // 2. Crisp sharp arrow head at start of arc
+    // 2. Crisp sharp arrow head at start of arc pointing counter-clockwise
     let tip = points[0];
     let tangent = Vec2::new(-start_angle.sin(), start_angle.cos()).normalized();
     let normal = Vec2::new(start_angle.cos(), start_angle.sin()).normalized();
-    let p_back_1 = tip - tangent * 7.5 + normal * 4.5;
-    let p_back_2 = tip - tangent * 7.5 - normal * 4.5;
+    let p_back_1 = tip - tangent * 7.0 + normal * 4.5;
+    let p_back_2 = tip - tangent * 7.0 - normal * 4.5;
     painter.add(egui::Shape::convex_polygon(
         vec![tip, p_back_1, p_back_2],
         color,
         Stroke::NONE,
     ));
 
-    // 3. Crisp centered rewind glyph (minimal triangle)
-    let glyph_w = radius * 0.40;
-    let glyph_h = radius * 0.35;
-    let p_tip = center - Vec2::new(glyph_w * 0.5, 0.0);
-    let p_top = center + Vec2::new(glyph_w * 0.5, -glyph_h);
-    let p_bot = center + Vec2::new(glyph_w * 0.5, glyph_h);
+    // 3. Central dual rewind chevrons <<
+    let chev_h = radius * 0.38;
+    let chev_w = radius * 0.26;
+    // Left chevron
+    let c1_tip = center + Vec2::new(-chev_w * 1.1, 0.0);
+    let c1_top = center + Vec2::new(-chev_w * 0.05, -chev_h);
+    let c1_bot = center + Vec2::new(-chev_w * 0.05, chev_h);
     painter.add(egui::Shape::convex_polygon(
-        vec![p_tip, p_top, p_bot],
+        vec![c1_tip, c1_top, c1_bot],
+        color,
+        Stroke::NONE,
+    ));
+    // Right chevron
+    let c2_tip = center + Vec2::new(chev_w * 0.15, 0.0);
+    let c2_top = center + Vec2::new(chev_w * 1.20, -chev_h);
+    let c2_bot = center + Vec2::new(chev_w * 1.20, chev_h);
+    painter.add(egui::Shape::convex_polygon(
+        vec![c2_tip, c2_top, c2_bot],
         color,
         Stroke::NONE,
     ));
 }
 
 fn draw_record_icon(painter: &egui::Painter, center: egui::Pos2, radius: f32, is_recording: bool, anim_time: f32) {
+    let half = radius * 0.88;
+    let arm = radius * 0.36;
+
     if is_recording {
         let pulse = (anim_time * 5.0).sin() * 0.5 + 0.5;
         let red_bright = Color32::from_rgb(239, 68, 68);
-        let red_glow = Color32::from_rgba_unmultiplied(239, 68, 68, (35.0 + pulse * 45.0) as u8);
+        let red_glow = Color32::from_rgba_unmultiplied(239, 68, 68, (35.0 + pulse * 50.0) as u8);
 
-        // Soft minimal pulsing glow
-        let glow_size = (radius + pulse * 2.5) * 2.0;
+        // Soft pulsing ambient halo around viewfinder
         painter.rect_filled(
-            egui::Rect::from_center_size(center, Vec2::splat(glow_size)),
+            egui::Rect::from_center_size(center, Vec2::splat(half * 2.2 + pulse * 4.0)),
             CornerRadius::ZERO,
             red_glow,
         );
 
-        // Clean outer frame
-        let outer_size = radius * 1.8;
-        painter.rect_stroke(
-            egui::Rect::from_center_size(center, Vec2::splat(outer_size)),
-            CornerRadius::ZERO,
-            Stroke::new(2.0_f32, red_bright),
-            egui::StrokeKind::Inside,
-        );
+        // Viewfinder corner brackets (Red)
+        let stroke = Stroke::new(2.2_f32, red_bright);
+        // Top-left
+        painter.line_segment([center + Vec2::new(-half + arm, -half), center + Vec2::new(-half, -half)], stroke);
+        painter.line_segment([center + Vec2::new(-half, -half), center + Vec2::new(-half, -half + arm)], stroke);
+        // Top-right
+        painter.line_segment([center + Vec2::new(half - arm, -half), center + Vec2::new(half, -half)], stroke);
+        painter.line_segment([center + Vec2::new(half, -half), center + Vec2::new(half, -half + arm)], stroke);
+        // Bottom-left
+        painter.line_segment([center + Vec2::new(-half + arm, half), center + Vec2::new(-half, half)], stroke);
+        painter.line_segment([center + Vec2::new(-half, half), center + Vec2::new(-half, half - arm)], stroke);
+        // Bottom-right
+        painter.line_segment([center + Vec2::new(half - arm, half), center + Vec2::new(half, half)], stroke);
+        painter.line_segment([center + Vec2::new(half, half), center + Vec2::new(half, half - arm)], stroke);
 
-        // Center recording core
-        let core_size = radius * 0.75 + pulse * 2.0;
-        painter.rect_filled(
-            egui::Rect::from_center_size(center, Vec2::splat(core_size)),
-            CornerRadius::ZERO,
-            red_bright,
-        );
+        // Center recording core (pulsing)
+        let core_r = radius * 0.40 + pulse * 1.5;
+        painter.circle_filled(center, core_r, red_bright);
     } else {
         let frame_color = Color32::from_rgb(148, 163, 184);
         let core_color = Color32::from_rgb(203, 213, 225);
 
-        // Clean outer frame
-        let outer_size = radius * 1.8;
-        painter.rect_stroke(
-            egui::Rect::from_center_size(center, Vec2::splat(outer_size)),
-            CornerRadius::ZERO,
-            Stroke::new(1.8_f32, frame_color),
-            egui::StrokeKind::Inside,
-        );
+        // Viewfinder corner brackets (Slate)
+        let stroke = Stroke::new(2.0_f32, frame_color);
+        // Top-left
+        painter.line_segment([center + Vec2::new(-half + arm, -half), center + Vec2::new(-half, -half)], stroke);
+        painter.line_segment([center + Vec2::new(-half, -half), center + Vec2::new(-half, -half + arm)], stroke);
+        // Top-right
+        painter.line_segment([center + Vec2::new(half - arm, -half), center + Vec2::new(half, -half)], stroke);
+        painter.line_segment([center + Vec2::new(half, -half), center + Vec2::new(half, -half + arm)], stroke);
+        // Bottom-left
+        painter.line_segment([center + Vec2::new(-half + arm, half), center + Vec2::new(-half, half)], stroke);
+        painter.line_segment([center + Vec2::new(-half, half), center + Vec2::new(-half, half - arm)], stroke);
+        // Bottom-right
+        painter.line_segment([center + Vec2::new(half - arm, half), center + Vec2::new(half, half)], stroke);
+        painter.line_segment([center + Vec2::new(half, half), center + Vec2::new(half, half - arm)], stroke);
 
-        // Clean center core dot
-        let core_size = radius * 0.65;
-        painter.rect_filled(
-            egui::Rect::from_center_size(center, Vec2::splat(core_size)),
-            CornerRadius::ZERO,
-            core_color,
-        );
+        // Center standby dot
+        painter.circle_filled(center, radius * 0.35, core_color);
     }
 }
 
-fn draw_gear_icon(painter: &egui::Painter, center: egui::Pos2, radius: f32, color: Color32) {
-    use std::f32::consts::PI;
-    let stroke = Stroke::new(2.0_f32, color);
+fn draw_settings_icon(painter: &egui::Painter, center: egui::Pos2, radius: f32, color: Color32) {
+    let track_h = radius * 1.05;
+    let track_spacing = radius * 0.48;
+    let track_stroke = Stroke::new(1.8_f32, Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 140));
 
-    // Clean outer ring
-    let steps = 32;
-    let outer_r = radius * 0.85;
-    let mut ring_pts = Vec::with_capacity(steps + 1);
-    for i in 0..=steps {
-        let t = i as f32 / steps as f32;
-        let a = t * 2.0 * PI;
-        ring_pts.push(center + Vec2::new(a.cos() * outer_r, a.sin() * outer_r));
-    }
-    for w in ring_pts.windows(2) {
-        painter.line_segment([w[0], w[1]], stroke);
+    // 3 vertical tracks
+    let xs = [-track_spacing, 0.0, track_spacing];
+    for &x_off in &xs {
+        let x = center.x + x_off;
+        painter.line_segment(
+            [egui::pos2(x, center.y - track_h), egui::pos2(x, center.y + track_h)],
+            track_stroke,
+        );
     }
 
-    // 6 clean minimal teeth
-    let tooth_r = radius * 1.15;
-    let tooth_w = radius * 0.32;
-    for i in 0..6 {
-        let a = (i as f32) * (2.0 * PI / 6.0);
-        let normal = Vec2::new(a.cos(), a.sin());
-        let tangent = Vec2::new(-a.sin(), a.cos());
-        let p1 = center + normal * outer_r - tangent * (tooth_w * 0.5);
-        let p2 = center + normal * outer_r + tangent * (tooth_w * 0.5);
-        let p3 = center + normal * tooth_r + tangent * (tooth_w * 0.5);
-        let p4 = center + normal * tooth_r - tangent * (tooth_w * 0.5);
-        painter.add(egui::Shape::convex_polygon(
-            vec![p1, p2, p3, p4],
-            color,
-            Stroke::NONE,
-        ));
-    }
+    // 3 slider knobs positioned at different heights for dynamic equalizer / settings look
+    let knob_w = radius * 0.42;
+    let knob_h = radius * 0.22;
+    let knob_offsets = [
+        (-track_spacing, -track_h * 0.35),
+        (0.0, track_h * 0.40),
+        (track_spacing, -track_h * 0.10),
+    ];
 
-    // Center circular bore hole
-    let inner_r = radius * 0.38;
-    let mut inner_pts = Vec::with_capacity(steps + 1);
-    for i in 0..=steps {
-        let t = i as f32 / steps as f32;
-        let a = t * 2.0 * PI;
-        inner_pts.push(center + Vec2::new(a.cos() * inner_r, a.sin() * inner_r));
-    }
-    for w in inner_pts.windows(2) {
-        painter.line_segment([w[0], w[1]], stroke);
+    for (x_off, y_off) in knob_offsets {
+        let knob_rect = egui::Rect::from_center_size(
+            center + Vec2::new(x_off, y_off),
+            Vec2::new(knob_w, knob_h),
+        );
+        painter.rect_filled(knob_rect, CornerRadius::ZERO, color);
     }
 }
 
@@ -641,7 +642,7 @@ fn render_action_card(
     response.clicked()
 }
 
-// Attached Squared Dropdown Menu Container (Pixel-perfect width matching card)
+// Attached Squared Dropdown Menu Container (Pixel-perfect width and flush full-bleed items)
 fn render_dropdown_menu(
     ui: &mut egui::Ui,
     card_width: f32,
@@ -649,51 +650,54 @@ fn render_dropdown_menu(
     add_contents: impl FnOnce(&mut egui::Ui),
 ) {
     ui.add_space(4.0);
-    let pad = 4_i8;
     egui::Frame::NONE
         .fill(Color32::from_rgba_unmultiplied(12, 16, 24, 252))
         .stroke(Stroke::new(1.0_f32, accent))
         .corner_radius(CornerRadius::ZERO)
-        .inner_margin(Margin::same(pad))
+        .inner_margin(Margin::ZERO)
         .show(ui, |ui| {
-            let inner_w = card_width - (pad as f32 * 2.0);
-            ui.set_min_width(inner_w);
-            ui.set_max_width(inner_w);
+            ui.spacing_mut().item_spacing = Vec2::ZERO;
+            ui.set_min_width(card_width);
+            ui.set_max_width(card_width);
             add_contents(ui);
         });
 }
 
-// Sleek Squared Dropdown Action Menu Item
-fn render_menu_item(ui: &mut egui::Ui, label: &str, accent: Color32) -> bool {
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 32.0), egui::Sense::click());
+// Sleek Squared Dropdown Action Menu Item (Completely fills container, zero bottom dead space)
+fn render_menu_item(ui: &mut egui::Ui, label: &str, accent: Color32, is_last: bool) -> bool {
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 35.0), egui::Sense::click());
     let hovered = response.hovered();
 
     let bg = if hovered {
-        Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 40)
+        Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 45)
     } else {
-        Color32::from_rgba_unmultiplied(255, 255, 255, 8)
+        Color32::TRANSPARENT
     };
-    let border = if hovered {
-        Stroke::new(1.0_f32, accent)
-    } else {
-        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 14))
-    };
+
+    ui.painter().rect_filled(rect, CornerRadius::ZERO, bg);
+
+    // Clean 1px divider between items (not drawn on last item so it stays flush)
+    if !is_last {
+        ui.painter().line_segment(
+            [egui::pos2(rect.left(), rect.bottom()), egui::pos2(rect.right(), rect.bottom())],
+            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 18)),
+        );
+    }
+
     let text_color = if hovered {
         accent
     } else {
         Color32::from_rgb(226, 232, 240)
     };
 
-    ui.painter().rect(rect, CornerRadius::ZERO, bg, border, egui::StrokeKind::Inside);
     ui.painter().text(
         rect.center(),
         egui::Align2::CENTER_CENTER,
         label,
-        FontId::proportional(11.5),
+        FontId::proportional(12.0),
         text_color,
     );
 
-    ui.add_space(3.0);
     response.clicked()
 }
 
@@ -966,7 +970,7 @@ impl ScytheOverlayApp {
                         if self.replay_dropdown_open {
                             render_dropdown_menu(ui, card_w, accent, |ui| {
                                 let toggle_text = if is_replay_active { "Turn off" } else { "Turn on" };
-                                if render_menu_item(ui, toggle_text, accent) {
+                                if render_menu_item(ui, toggle_text, accent, false) {
                                     let mut cfg = ScytheConfig::load();
                                     cfg.replay_enabled = !cfg.replay_enabled;
                                     let _ = cfg.save();
@@ -975,7 +979,7 @@ impl ScytheOverlayApp {
                                     self.status.is_replay_active = cfg.replay_enabled;
                                     self.replay_dropdown_open = false;
                                 }
-                                if render_menu_item(ui, "Save Replay", accent) {
+                                if render_menu_item(ui, "Save Replay", accent, true) {
                                     let _ = ipc::send_command(Command::SaveReplay);
                                     self.status_msg = Some(("Replay Saved!".to_string(), Instant::now()));
                                     self.replay_dropdown_open = false;
@@ -1023,7 +1027,7 @@ impl ScytheOverlayApp {
                         if self.record_dropdown_open {
                             render_dropdown_menu(ui, card_w, accent, |ui| {
                                 let rec_toggle_text = if is_recording { "Stop Recording" } else { "Start Recording" };
-                                if render_menu_item(ui, rec_toggle_text, accent) {
+                                if render_menu_item(ui, rec_toggle_text, accent, true) {
                                     let _ = ipc::send_command(Command::ToggleRecording);
                                     self.record_dropdown_open = false;
                                 }
@@ -1046,7 +1050,7 @@ impl ScytheOverlayApp {
                             false,
                             false,
                             |painter, center| {
-                                draw_gear_icon(painter, center, 24.0, Color32::from_rgb(148, 163, 184));
+                                draw_settings_icon(painter, center, 24.0, Color32::from_rgb(148, 163, 184));
                             },
                             "Hardware & Tuning",
                             Color32::from_rgb(148, 163, 184),
@@ -1379,11 +1383,6 @@ impl ScytheOverlayApp {
                                         open_folder(&ScytheConfig::expand_tilde(&self.output_dir));
                                     }
                                 });
-
-                                ui.add_space(8.0);
-                                if squared_button(ui, &format!("OPEN RECORDINGS GALLERY & TRIMMER ({})", self.clips.len()), false, accent) {
-                                    self.switch_view(ShadowPlayView::Gallery, ctx);
-                                }
                             });
 
                             ui.add_space(10.0);
@@ -1791,24 +1790,29 @@ impl eframe::App for ScytheOverlayApp {
                 if combo == "CANCEL" {
                     self.listening_keybind = None;
                 } else {
-                    let action_name = match action {
+                    let (action_name, old_key) = match action {
                         KeybindAction::Menu => {
+                            let old = self.config.menu_hotkey.clone();
                             self.config.menu_hotkey = combo.clone();
-                            "Menu Overlay"
+                            ("Menu Overlay", old)
                         }
                         KeybindAction::SaveReplay => {
+                            let old = self.config.save_hotkey.clone();
                             self.config.save_hotkey = combo.clone();
-                            "Instant Replay"
+                            ("Instant Replay", old)
                         }
                         KeybindAction::ToggleRecord => {
+                            let old = self.config.record_hotkey.clone();
                             self.config.record_hotkey = combo.clone();
-                            "Record Toggle"
+                            ("Record Toggle", old)
                         }
                         KeybindAction::ToggleCursor => {
+                            let old = self.config.cursor_hotkey.clone();
                             self.config.cursor_hotkey = combo.clone();
-                            "Cursor Toggle"
+                            ("Cursor Toggle", old)
                         }
                     };
+                    crate::hyprland_binds::unbind_hotkey(&old_key);
                     let _ = self.config.save();
                     crate::hyprland_binds::register_hyprland_binds(&self.config);
                     crate::config::ScytheConfig::notify_daemon_reload();

@@ -10,7 +10,6 @@ pub struct VaapiEncoder {
     sws_ctx: *mut SwsContext,
     staged_nv12: *mut AVFrame,
     hw_frame: *mut AVFrame,
-    next_pts: i64,
     has_frame: bool,
     #[cfg(unix)]
     dma_mmap_cache: HashMap<i32, (*mut libc::c_void, usize)>,
@@ -147,7 +146,6 @@ impl VaapiEncoder {
                 sws_ctx,
                 staged_nv12,
                 hw_frame,
-                next_pts: 0,
                 has_frame: false,
                 #[cfg(unix)]
                 dma_mmap_cache: HashMap::new(),
@@ -155,7 +153,7 @@ impl VaapiEncoder {
         }
     }
 
-    unsafe fn send_staged_frame(&mut self, packets: &mut Vec<crate::ring::Packet>) -> Result<(), String> {
+    unsafe fn send_staged_frame(&mut self, packets: &mut Vec<crate::ring::Packet>, pts: i64) -> Result<(), String> {
         unsafe {
             av_frame_unref(self.hw_frame);
             let ret = av_hwframe_get_buffer(self.hw_frames_ctx, self.hw_frame, 0);
@@ -169,8 +167,7 @@ impl VaapiEncoder {
                 return Err("Failed to transfer staged nv12 data to hw frame".into());
             }
 
-            (*self.hw_frame).pts = self.next_pts;
-            self.next_pts += 1;
+            (*self.hw_frame).pts = pts;
 
             if avcodec_send_frame(self.codec_ctx, self.hw_frame) >= 0 {
                 let mut pkt = av_packet_alloc();
@@ -190,7 +187,7 @@ impl VaapiEncoder {
         self.codec_ctx
     }
 
-    pub fn encode_frame(&mut self, frame: &Frame) -> Result<Vec<crate::ring::Packet>, String> {
+    pub fn encode_frame(&mut self, frame: &Frame, pts: i64) -> Result<Vec<crate::ring::Packet>, String> {
         let mut packets = Vec::new();
         unsafe {
             match frame {
@@ -207,7 +204,7 @@ impl VaapiEncoder {
                         (*self.staged_nv12).linesize.as_ptr(),
                     );
                     self.has_frame = true;
-                    self.send_staged_frame(&mut packets)?;
+                    self.send_staged_frame(&mut packets, pts)?;
                 }
                 Frame::DmaBuf { width: dma_width, height: dma_height, format, modifier, fd, stride, offset } => {
                     let mmap_size = (*stride as usize) * (*dma_height as usize);
@@ -252,8 +249,7 @@ impl VaapiEncoder {
                         (*direct_hw).hw_frames_ctx = av_buffer_ref(self.hw_frames_ctx);
 
                         if av_hwframe_map(direct_hw, drm_frame, 0) >= 0 {
-                            (*direct_hw).pts = self.next_pts;
-                            self.next_pts += 1;
+                            (*direct_hw).pts = pts;
 
                             if avcodec_send_frame(self.codec_ctx, direct_hw) >= 0 {
                                 let mut pkt = av_packet_alloc();
@@ -311,7 +307,7 @@ impl VaapiEncoder {
                                     (*self.staged_nv12).linesize.as_ptr(),
                                 );
                                 self.has_frame = true;
-                                self.send_staged_frame(&mut packets)?;
+                                self.send_staged_frame(&mut packets, pts)?;
                             }
                         }
                     }
@@ -325,13 +321,13 @@ impl VaapiEncoder {
         Ok(packets)
     }
 
-    pub fn encode_cached_frame(&mut self) -> Result<Vec<crate::ring::Packet>, String> {
+    pub fn encode_cached_frame(&mut self, pts: i64) -> Result<Vec<crate::ring::Packet>, String> {
         let mut packets = Vec::new();
         if !self.has_frame {
             return Ok(packets);
         }
         unsafe {
-            self.send_staged_frame(&mut packets)?;
+            self.send_staged_frame(&mut packets, pts)?;
         }
         Ok(packets)
     }
@@ -374,7 +370,6 @@ impl Drop for VaapiEncoder {
 pub struct WindowsHwEncoder {
     codec_ctx: *mut AVCodecContext,
     encoder_name: String,
-    next_pts: i64,
     sws_ctx: *mut SwsContext,
     sw_frame: *mut AVFrame,
 }
@@ -499,7 +494,6 @@ impl WindowsHwEncoder {
             Ok(Self {
                 codec_ctx,
                 encoder_name: selected_desc,
-                next_pts: 0,
                 sws_ctx,
                 sw_frame,
             })
@@ -510,7 +504,7 @@ impl WindowsHwEncoder {
         self.codec_ctx
     }
 
-    pub fn encode_frame(&mut self, frame: &Frame) -> Result<Vec<crate::ring::Packet>, String> {
+    pub fn encode_frame(&mut self, frame: &Frame, pts: i64) -> Result<Vec<crate::ring::Packet>, String> {
         let mut packets = Vec::new();
         unsafe {
             match frame {
@@ -528,8 +522,7 @@ impl WindowsHwEncoder {
                         (*self.sw_frame).linesize.as_mut_ptr(),
                     );
 
-                    (*self.sw_frame).pts = self.next_pts;
-                    self.next_pts += 1;
+                    (*self.sw_frame).pts = pts;
 
                     if avcodec_send_frame(self.codec_ctx, self.sw_frame) >= 0 {
                         let mut pkt = av_packet_alloc();
@@ -544,8 +537,7 @@ impl WindowsHwEncoder {
                 #[cfg(target_os = "windows")]
                 Frame::D3D11Texture { handle: _ } => {
                     // Zero-copy D3D11 frame submission
-                    (*self.sw_frame).pts = self.next_pts;
-                    self.next_pts += 1;
+                    (*self.sw_frame).pts = pts;
 
                     if avcodec_send_frame(self.codec_ctx, self.sw_frame) >= 0 {
                         let mut pkt = av_packet_alloc();
@@ -564,14 +556,13 @@ impl WindowsHwEncoder {
     }
 
     #[cfg(target_os = "windows")]
-    pub fn encode_cached_frame(&mut self) -> Result<Vec<crate::ring::Packet>, String> {
+    pub fn encode_cached_frame(&mut self, pts: i64) -> Result<Vec<crate::ring::Packet>, String> {
         let mut packets = Vec::new();
         unsafe {
             if self.sw_frame.is_null() {
                 return Ok(packets);
             }
-            (*self.sw_frame).pts = self.next_pts;
-            self.next_pts += 1;
+            (*self.sw_frame).pts = pts;
 
             if avcodec_send_frame(self.codec_ctx, self.sw_frame) >= 0 {
                 let mut pkt = av_packet_alloc();
@@ -824,7 +815,7 @@ mod tests {
                 stride: 1280 * 4,
                 data: vec![0u8; 1280 * 720 * 4],
             };
-            let pkts = enc.encode_frame(&blank_frame).expect("Encode frame");
+            let pkts = enc.encode_frame(&blank_frame, 0).expect("Encode frame");
             println!("Encoded {} packets from first frame", pkts.len());
             unsafe {
                 println!("VAAPI extradata_size after encode: {}", (*enc.codec_ctx).extradata_size);

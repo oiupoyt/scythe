@@ -408,14 +408,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 };
 
                 let first_video_pts = drain[first_v_idx].pts();
+                let first_video_time_us = unsafe {
+                    ffmpeg_next::ffi::av_rescale_q(
+                        first_video_pts,
+                        video_time_base,
+                        ffmpeg_next::ffi::AVRational { num: 1, den: 1_000_000 },
+                    )
+                };
 
-                // Find the audio packet in the ring buffer closest in arrival to the first video keyframe
+                // Find the audio packet in the ring buffer closest in real time to the first video keyframe
                 let first_audio_pts = drain
                     .iter()
-                    .enumerate()
-                    .filter(|(_, p)| p.stream_index() == 1)
-                    .min_by_key(|(i, _)| i.abs_diff(first_v_idx))
-                    .map(|(_, p)| p.pts())
+                    .filter(|p| p.stream_index() == 1)
+                    .min_by_key(|p| {
+                        let a_time_us = if let Some(a_tb) = audio_time_base {
+                            unsafe {
+                                ffmpeg_next::ffi::av_rescale_q(
+                                    p.pts(),
+                                    a_tb,
+                                    ffmpeg_next::ffi::AVRational { num: 1, den: 1_000_000 },
+                                )
+                            }
+                        } else {
+                            0
+                        };
+                        (a_time_us - first_video_time_us).abs()
+                    })
+                    .map(|p| p.pts())
                     .unwrap_or(0);
 
                 let mut prepared: Vec<(i64, Packet)> = Vec::with_capacity(drain.len());
@@ -470,6 +489,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             }
         });
 
+        let stream_start = std::time::Instant::now();
+        let mut last_video_pts: i64 = -1;
         let mut ticker = crossbeam_channel::tick(std::time::Duration::from_nanos(1_000_000_000 / config.fps.max(1) as u64));
         let mut latest_frame: Option<Frame> = None;
         let mut has_new_frame = false;
@@ -592,10 +613,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                     pkt.set_stream_index(1);
                                     if normal_recording && !normal_waiting_keyframe
                                         && let Some(muxer) = normal_muxer.as_mut() {
-                                            if rec_base_audio_pts < 0 {
-                                                rec_base_audio_pts = pkt.pts();
-                                            }
-                                            if pkt.pts() >= rec_base_audio_pts {
+                                            let rec_base_video_time_us = unsafe {
+                                                ffmpeg_next::ffi::av_rescale_q(
+                                                    rec_base_video_pts,
+                                                    video_time_base,
+                                                    ffmpeg_next::ffi::AVRational { num: 1, den: 1_000_000 },
+                                                )
+                                            };
+                                            let a_time_us = if let Some(a_tb) = audio_time_base {
+                                                unsafe {
+                                                    ffmpeg_next::ffi::av_rescale_q(
+                                                        pkt.pts(),
+                                                        a_tb,
+                                                        ffmpeg_next::ffi::AVRational { num: 1, den: 1_000_000 },
+                                                    )
+                                                }
+                                            } else {
+                                                0
+                                            };
+                                            if a_time_us >= rec_base_video_time_us {
+                                                if rec_base_audio_pts < 0 {
+                                                    rec_base_audio_pts = pkt.pts();
+                                                }
                                                 let rebased = pkt.rebased(rec_base_audio_pts);
                                                 let _ = muxer.write_packet(&rebased);
                                             }
@@ -614,15 +653,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     }
                 },
                 recv(ticker) -> _ => {
+                    let now = std::time::Instant::now();
+                    let elapsed = now.duration_since(stream_start);
+                    let raw_pts = (elapsed.as_secs_f64() * config.fps as f64).round() as i64;
+                    let pts = if raw_pts > last_video_pts { raw_pts } else { last_video_pts + 1 };
+
                     let packets_res = if has_new_frame {
                         has_new_frame = false;
+                        last_video_pts = pts;
                         if let Some(ref f) = latest_frame {
-                            encoder.encode_frame(f)
+                            encoder.encode_frame(f, pts)
                         } else {
                             Ok(Vec::new())
                         }
                     } else {
-                        encoder.encode_cached_frame()
+                        // Heartbeat / keepalive: if no new frame for 500ms, emit cached frame to keep video track flowing smoothly
+                        if pts - last_video_pts >= (config.fps as i64 / 2).max(1) {
+                            last_video_pts = pts;
+                            if let Some(ref f) = latest_frame {
+                                encoder.encode_frame(f, pts)
+                            } else {
+                                encoder.encode_cached_frame(pts)
+                            }
+                        } else {
+                            Ok(Vec::new())
+                        }
                     };
 
                     if let Ok(packets) = packets_res {

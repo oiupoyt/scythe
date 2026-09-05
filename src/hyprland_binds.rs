@@ -172,6 +172,8 @@ pub fn register_hyprland_binds(config: &ScytheConfig) {
     ];
 
     for (hotkey, cmd) in binds {
+        unbind_hotkey(hotkey);
+
         // Try modern Hyprland Lua eval first
         if let Some(lua_combo) = hotkey_to_hyprland_lua(hotkey) {
             let lua_script = format!(r#"hl.bind("{}", hl.dsp.exec_cmd("{}"))"#, lua_combo, cmd);
@@ -203,6 +205,37 @@ pub fn register_hyprland_binds(config: &ScytheConfig) {
 pub fn register_hyprland_binds(_config: &ScytheConfig) {}
 
 #[cfg(unix)]
+/// Unbind a specific hotkey combo from running Hyprland
+pub fn unbind_hotkey(hotkey: &str) {
+    if !is_hyprland() {
+        return;
+    }
+
+    if let Some(lua_combo) = hotkey_to_hyprland_lua(hotkey) {
+        let lua_script = format!(
+            r#"for i = 1, 10 do pcall(function() hl.unbind("{}") end) end"#,
+            lua_combo
+        );
+        let _ = Command::new("hyprctl")
+            .args(["eval", &lua_script])
+            .output();
+    }
+    if let Some((mods, key)) = hotkey_to_hyprland(hotkey) {
+        let unbind_arg = if mods.is_empty() {
+            key
+        } else {
+            format!("{}, {}", mods, key)
+        };
+        let _ = Command::new("hyprctl")
+            .args(["keyword", "unbind", &unbind_arg])
+            .output();
+    }
+}
+
+#[cfg(not(unix))]
+pub fn unbind_hotkey(_hotkey: &str) {}
+
+#[cfg(unix)]
 /// Dynamically remove binds from running Hyprland
 pub fn unregister_hyprland_binds(config: &ScytheConfig) {
     if !is_hyprland() {
@@ -217,22 +250,7 @@ pub fn unregister_hyprland_binds(config: &ScytheConfig) {
     ];
 
     for hotkey in hotkeys {
-        if let Some(lua_combo) = hotkey_to_hyprland_lua(hotkey) {
-            let lua_script = format!(r#"hl.unbind("{}")"#, lua_combo);
-            let _ = Command::new("hyprctl")
-                .args(["eval", &lua_script])
-                .output();
-        }
-        if let Some((mods, key)) = hotkey_to_hyprland(hotkey) {
-            let unbind_arg = if mods.is_empty() {
-                key
-            } else {
-                format!("{}, {}", mods, key)
-            };
-            let _ = Command::new("hyprctl")
-                .args(["keyword", "unbind", &unbind_arg])
-                .output();
-        }
+        unbind_hotkey(hotkey);
     }
 }
 
