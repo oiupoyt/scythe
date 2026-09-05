@@ -18,9 +18,12 @@ fn default_record_hotkey() -> String { "Ctrl+Shift+F9".to_string() }
 fn default_cursor_hotkey() -> String { "Ctrl+Shift+F10".to_string() }
 fn default_mic_volume() -> f32 { 0.60 }
 fn default_system_volume() -> f32 { 1.00 }
+fn default_accent_color() -> String { "blue".to_string() }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ScytheConfig {
+    #[serde(default = "default_accent_color")]
+    pub accent_color: String,
     #[serde(default = "default_true")]
     pub replay_enabled: bool,
     #[serde(default = "default_replay_duration")]
@@ -70,6 +73,7 @@ pub type VrecConfig = ScytheConfig;
 impl Default for ScytheConfig {
     fn default() -> Self {
         Self {
+            accent_color: default_accent_color(),
             replay_enabled: true,
             replay_duration_sec: 60,
             replay_bitrate_kbps: 18000,
@@ -184,6 +188,7 @@ mod tests {
     #[test]
     fn test_config_defaults_and_json() {
         let cfg = ScytheConfig::default();
+        assert_eq!(cfg.accent_color, "blue");
         assert_eq!(cfg.replay_duration_sec, 60);
         assert_eq!(cfg.replay_bitrate_kbps, 18000);
         assert_eq!(cfg.fps, 60);
@@ -192,6 +197,7 @@ mod tests {
         assert!(cfg.show_cursor);
         let json = serde_json::to_string(&cfg).unwrap();
         let parsed: ScytheConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.accent_color, "blue");
         assert_eq!(parsed.replay_duration_sec, 60);
         assert_eq!(parsed.audio_mode, "system");
         assert!(parsed.show_cursor);

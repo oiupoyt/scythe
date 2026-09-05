@@ -262,42 +262,76 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Some(Arc::clone(&audio_levels)),
     ).ok();
 
-    let mut source: Box<dyn FrameSource> = if std::env::args().any(|a| a == "--mock") {
+    let mut source_opt: Option<Box<dyn FrameSource>> = None;
+
+    if std::env::args().any(|a| a == "--mock") {
         println!("Initializing MOCK capture...");
-        Box::new(scythe::capture::mock::MockCapture::new())
+        source_opt = Some(Box::new(scythe::capture::mock::MockCapture::new()));
     } else if cfg!(target_os = "windows") {
         #[cfg(target_os = "windows")]
         {
             println!("Initializing Windows DXGI capture...");
-            Box::new(scythe::capture::windows::WindowsCapture::new()?)
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            unreachable!()
+            if let Ok(c) = scythe::capture::windows::WindowsCapture::new() {
+                source_opt = Some(Box::new(c));
+            }
         }
     } else if session_type.to_lowercase() == "wayland" {
         #[cfg(target_os = "linux")]
         {
-            println!("Initializing Wayland capture (cursor: {})...", initial_config.show_cursor);
-            Box::new(scythe::capture::wayland::WaylandCapture::new_with_cursor(initial_config.show_cursor).await?)
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            unreachable!()
+            for attempt in 1..=5 {
+                println!("Initializing Wayland capture (cursor: {}, attempt {}/5)...", initial_config.show_cursor, attempt);
+                // Ensure desktop portal is running
+                let _ = std::process::Command::new("systemctl")
+                    .args(["--user", "start", "xdg-desktop-portal-hyprland"])
+                    .status();
+
+                match scythe::capture::wayland::WaylandCapture::new_with_cursor(initial_config.show_cursor).await {
+                    Ok(cap) => {
+                        source_opt = Some(Box::new(cap));
+                        break;
+                    }
+                    Err(e) => {
+                        eprintln!("Wayland capture attempt {} failed: {}", attempt, e);
+                        if attempt < 5 {
+                            let _ = std::process::Command::new("systemctl")
+                                .args(["--user", "restart", "xdg-desktop-portal"])
+                                .status();
+                            tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+                        }
+                    }
+                }
+            }
         }
     } else {
         #[cfg(target_os = "linux")]
         {
             println!("Initializing X11 capture...");
-            Box::new(scythe::capture::x11::X11Capture::new()?)
+            if let Ok(c) = scythe::capture::x11::X11Capture::new() {
+                source_opt = Some(Box::new(c));
+            }
         }
-        #[cfg(not(target_os = "linux"))]
-        {
-            unreachable!()
+    }
+
+    let mut source: Box<dyn FrameSource> = match source_opt {
+        Some(s) => s,
+        None => {
+            eprintln!("Warning: Hardware capture unavailable; falling back to mock capture to preserve daemon IPC.");
+            Box::new(scythe::capture::mock::MockCapture::new())
         }
     };
 
-    let first_frame = source.next_frame()?;
+    let first_frame = match source.next_frame() {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("Initial frame capture error: {}. Using default frame.", e);
+            Frame::Raw {
+                data: vec![0u8; 1920 * 1080 * 4],
+                width: 1920,
+                height: 1080,
+                stride: 1920 * 4,
+            }
+        }
+    };
     let (width, height) = match &first_frame {
         Frame::Raw { width, height, .. } => (*width, *height),
         Frame::DmaBuf { width, height, .. } => (*width, *height),

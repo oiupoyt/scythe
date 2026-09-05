@@ -131,6 +131,18 @@ fn get_ui_cmd() -> std::process::Command {
 fn check_and_toggle_overlay() -> bool {
     let pid_path = scythe::ipc::get_overlay_pid_path();
     if pid_path.exists() {
+        if let Ok(metadata) = std::fs::metadata(&pid_path) {
+            if let Ok(modified) = metadata.modified() {
+                if let Ok(elapsed) = modified.elapsed() {
+                    // Debounce: if the overlay was spawned less than 400ms ago, this is a
+                    // duplicate event from concurrent triggers. Do not kill it; simply exit.
+                    if elapsed < std::time::Duration::from_millis(400) {
+                        return true;
+                    }
+                }
+            }
+        }
+
         if let Ok(content) = std::fs::read_to_string(&pid_path) {
             if let Ok(pid) = content.trim().parse::<i32>() {
                 #[cfg(unix)]
@@ -167,6 +179,11 @@ fn ensure_daemon_running_async() {
             || UnixStream::connect(scythe::ipc::get_legacy_socket_path()).is_ok() {
             return;
         }
+        if scythe::hyprland_binds::is_hyprland() {
+            let _ = std::process::Command::new("systemctl")
+                .args(["--user", "start", "xdg-desktop-portal-hyprland"])
+                .status();
+        }
     }
     let _ = get_daemon_cmd()
         .stdin(std::process::Stdio::null())
@@ -177,13 +194,21 @@ fn ensure_daemon_running_async() {
 
 fn ensure_daemon_running() {
     if query_status().is_err() {
+        #[cfg(target_os = "linux")]
+        {
+            if scythe::hyprland_binds::is_hyprland() {
+                let _ = std::process::Command::new("systemctl")
+                    .args(["--user", "start", "xdg-desktop-portal-hyprland"])
+                    .status();
+            }
+        }
         let _ = get_daemon_cmd()
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn();
-        for _ in 0..15 {
-            std::thread::sleep(std::time::Duration::from_millis(80));
+        for _ in 0..25 {
+            std::thread::sleep(std::time::Duration::from_millis(100));
             if query_status().is_ok() {
                 break;
             }
@@ -322,6 +347,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 return send_with_notification(Command::StopRecording, "Recording saved");
             }
             "--reload" => {
+                ensure_daemon_running();
                 return send_command(Command::ReloadConfig);
             }
             "--status" => {
@@ -421,7 +447,10 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let hotkey_record = HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::F9);
     let hotkey_cursor = HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::F10);
 
-    let _ = manager.register(hotkey_menu);
+    let is_on_hyprland = scythe::hyprland_binds::is_hyprland();
+    if !is_on_hyprland {
+        let _ = manager.register(hotkey_menu);
+    }
     let _ = manager.register(hotkey_save);
     let _ = manager.register(hotkey_record);
     let _ = manager.register(hotkey_cursor);
