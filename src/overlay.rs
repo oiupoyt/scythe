@@ -1,11 +1,12 @@
 use gtk::prelude::*;
 use gtk::{
     Application, ApplicationWindow, Box, Button, CheckButton, ComboBoxText, CssProvider,
-    Entry, Label, Orientation, Scale, ScrolledWindow, SpinButton, Stack,
-    StackTransitionType, StyleContext, Switch,
+    DrawingArea, Entry, Label, Orientation, Revealer, RevealerTransitionType, Scale,
+    ScrolledWindow, SpinButton, Stack, StackTransitionType, StyleContext, Switch,
 };
 #[cfg(target_os = "linux")]
 use gtk_layer_shell::{Layer, LayerShell};
+use std::f64::consts::PI;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -66,7 +67,7 @@ pub fn show_notification(message: &str) {
                 window.init_layer_shell();
                 window.set_layer(Layer::Overlay);
                 window.set_namespace("vrec-notification");
-                window.set_layer_shell_margin(gtk_layer_shell::Edge::Top, 35);
+                window.set_layer_shell_margin(gtk_layer_shell::Edge::Top, 45);
                 window.set_anchor(gtk_layer_shell::Edge::Top, true);
             }
 
@@ -89,11 +90,11 @@ pub fn show_notification(message: &str) {
                     background: transparent !important;
                 }
                 .notify-box {
-                    background-color: rgba(18, 24, 34, 0.94);
-                    border-radius: 12px;
-                    border: 1px solid rgba(118, 185, 0, 0.4);
+                    background-color: rgba(14, 18, 26, 0.94);
+                    border-radius: 10px;
+                    border: 1px solid #76b900;
                     box-shadow: 0px 8px 32px rgba(0, 0, 0, 0.8);
-                    padding: 8px 18px;
+                    padding: 8px 20px;
                 }
                 .notify-badge {
                     background-color: #76b900;
@@ -143,6 +144,94 @@ pub fn show_notification(message: &str) {
     }
 }
 
+// Vector Icon Drawing Helpers (NVIDIA ShadowPlay & GPU Screen Recorder Style)
+fn draw_replay_icon(cr: &gtk::cairo::Context, is_active: bool) {
+    let cx = 28.0;
+    let cy = 28.0;
+    let r = 16.0;
+
+    if is_active {
+        cr.set_source_rgb(0.463, 0.725, 0.0); // #76b900 NVIDIA green
+    } else {
+        cr.set_source_rgb(0.58, 0.64, 0.72); // #94a3b8
+    }
+    cr.set_line_width(3.2);
+    cr.arc(cx, cy, r, 0.25 * PI, 1.80 * PI);
+    let _ = cr.stroke();
+
+    // Arrowhead at top-left
+    let a_x = cx + r * (0.25 * PI).cos();
+    let a_y = cy + r * (0.25 * PI).sin();
+    cr.move_to(a_x, a_y);
+    cr.line_to(a_x - 7.0, a_y);
+    cr.line_to(a_x, a_y - 7.0);
+    cr.close_path();
+    let _ = cr.fill();
+
+    // Play triangle in center
+    let tri_r = 6.0;
+    cr.move_to(cx + tri_r, cy);
+    cr.line_to(cx - tri_r * 0.6, cy - tri_r * 0.86);
+    cr.line_to(cx - tri_r * 0.6, cy + tri_r * 0.86);
+    cr.close_path();
+    let _ = cr.fill();
+}
+
+fn draw_record_icon(cr: &gtk::cairo::Context, is_recording: bool) {
+    let cx = 28.0;
+    let cy = 28.0;
+    if is_recording {
+        // Glowing red recording indicator
+        cr.set_source_rgba(0.937, 0.267, 0.267, 0.25);
+        cr.arc(cx, cy, 22.0, 0.0, PI * 2.0);
+        let _ = cr.fill();
+
+        cr.set_source_rgb(0.937, 0.267, 0.267); // #ef4444
+        cr.set_line_width(2.8);
+        cr.arc(cx, cy, 18.0, 0.0, PI * 2.0);
+        let _ = cr.stroke();
+
+        cr.set_source_rgb(0.937, 0.267, 0.267);
+        cr.arc(cx, cy, 9.0, 0.0, PI * 2.0);
+        let _ = cr.fill();
+    } else {
+        cr.set_source_rgb(0.58, 0.64, 0.72); // #94a3b8
+        cr.set_line_width(2.5);
+        cr.arc(cx, cy, 17.0, 0.0, PI * 2.0);
+        let _ = cr.stroke();
+
+        cr.set_source_rgb(0.88, 0.91, 0.94);
+        cr.arc(cx, cy, 8.0, 0.0, PI * 2.0);
+        let _ = cr.fill();
+    }
+}
+
+fn draw_gear_icon(cr: &gtk::cairo::Context) {
+    let cx = 28.0;
+    let cy = 28.0;
+    let r = 16.0;
+
+    cr.set_source_rgb(0.58, 0.64, 0.72); // #94a3b8
+    cr.set_line_width(2.2);
+    cr.arc(cx, cy, r * 0.75, 0.0, PI * 2.0);
+    let _ = cr.stroke();
+
+    cr.arc(cx, cy, r * 0.30, 0.0, PI * 2.0);
+    let _ = cr.stroke();
+
+    for i in 0..8 {
+        let angle = i as f64 * (PI / 4.0);
+        let p_in_x = cx + angle.cos() * (r * 0.68);
+        let p_in_y = cy + angle.sin() * (r * 0.68);
+        let p_out_x = cx + angle.cos() * (r * 1.05);
+        let p_out_y = cy + angle.sin() * (r * 1.05);
+        cr.set_line_width(3.0);
+        cr.move_to(p_in_x, p_in_y);
+        cr.line_to(p_out_x, p_out_y);
+        let _ = cr.stroke();
+    }
+}
+
 pub fn show_menu_overlay() {
     #[cfg(unix)]
     if std::env::var("WAYLAND_DISPLAY").is_err() && std::env::var("DISPLAY").is_err() {
@@ -163,8 +252,8 @@ pub fn show_menu_overlay() {
 
         let window = ApplicationWindow::builder()
             .application(app)
-            .default_width(780)
-            .default_height(230)
+            .default_width(740)
+            .default_height(280)
             .build();
 
         #[cfg(target_os = "linux")]
@@ -173,7 +262,8 @@ pub fn show_menu_overlay() {
             window.set_layer(Layer::Overlay);
             window.set_namespace("vrec-overlay");
             window.set_keyboard_interactivity(true);
-            window.set_layer_shell_margin(gtk_layer_shell::Edge::Top, 45);
+            // Position at upper ~20-25% of the screen, just like GPU Screen Recorder UI
+            window.set_layer_shell_margin(gtk_layer_shell::Edge::Top, 110);
             window.set_anchor(gtk_layer_shell::Edge::Top, true);
         }
 
@@ -204,13 +294,13 @@ pub fn show_menu_overlay() {
         stack.set_homogeneous(false);
 
         // =========================================================================
-        // PAGE 1: 3 TRANSLUCENT CARDS (NVIDIA ShadowPlay Overlay Style)
+        // PAGE 1: 3 SQUARE CARDS WITH DROPDOWN MENUS (NVIDIA ShadowPlay Exact Match)
         // =========================================================================
-        let hud_page = Box::new(Orientation::Vertical, 10);
+        let hud_page = Box::new(Orientation::Vertical, 8);
         hud_page.style_context().add_class("hud-wrapper");
-        hud_page.set_size_request(760, -1);
+        hud_page.set_size_request(720, -1);
 
-        // Header Bar (Floating Frosted Strip)
+        // Top Bar (Floating frosted strip)
         let header_box = Box::new(Orientation::Horizontal, 10);
         header_box.style_context().add_class("header-bar");
 
@@ -234,126 +324,171 @@ pub fn show_menu_overlay() {
         header_box.pack_start(&spacer, true, true, 0);
         header_box.pack_start(&close_btn, false, false, 0);
 
-        // 3 Convenient Floating Cards Row
+        // Row of 3 Cards
         let cards_box = Box::new(Orientation::Horizontal, 14);
         cards_box.style_context().add_class("cards-container");
         cards_box.set_halign(gtk::Align::Center);
 
-        // -------------------------------------------------------------------------
-        // CARD 1: INSTANT REPLAY
-        // -------------------------------------------------------------------------
-        let replay_card = Box::new(Orientation::Vertical, 8);
-        replay_card.style_context().add_class("card-box");
-        replay_card.set_size_request(235, 175);
-
-        let replay_hdr = Box::new(Orientation::Horizontal, 6);
-        let replay_title = Label::new(Some("INSTANT REPLAY"));
-        replay_title.style_context().add_class("card-header-label");
-        let replay_pill = Label::new(Some(if config.replay_enabled { "ACTIVE" } else { "OFF" }));
-        replay_pill.style_context().add_class("status-pill");
-        replay_pill.style_context().add_class(if config.replay_enabled { "pill-active" } else { "pill-idle" });
-        let replay_sp = Box::new(Orientation::Horizontal, 0);
-        replay_hdr.pack_start(&replay_title, false, false, 0);
-        replay_hdr.pack_start(&replay_sp, true, true, 0);
-        replay_hdr.pack_start(&replay_pill, false, false, 0);
-
-        let replay_dur_label = Label::new(Some(&format!("{}s Rolling Buffer", config.replay_duration_sec)));
-        replay_dur_label.style_context().add_class("card-subtitle");
-
-        let replay_save_btn = Button::with_label("Save Replay");
-        replay_save_btn.style_context().add_class("action-btn");
-        replay_save_btn.set_size_request(-1, 38);
-
-        let replay_hotkey_hint = Label::new(Some("Ctrl + Shift + R"));
-        replay_hotkey_hint.style_context().add_class("hotkey-hint");
-
-        let replay_toggle_btn = Button::with_label(if config.replay_enabled { "Disable Replay" } else { "Enable Replay" });
-        replay_toggle_btn.style_context().add_class("sub-toggle-btn");
-
-        replay_card.pack_start(&replay_hdr, false, false, 0);
-        replay_card.pack_start(&replay_dur_label, false, false, 2);
-        replay_card.pack_start(&replay_save_btn, false, false, 6);
-        replay_card.pack_start(&replay_hotkey_hint, false, false, 0);
-        replay_card.pack_start(&replay_toggle_btn, false, false, 4);
+        // State Trackers for Dynamic Drawing
+        let replay_active_state = Arc::new(AtomicBool::new(config.replay_enabled));
+        let record_active_state = Arc::new(AtomicBool::new(false));
 
         // -------------------------------------------------------------------------
-        // CARD 2: RECORD
+        // CARD 1: INSTANT REPLAY (With Attached Dropdown Menu)
         // -------------------------------------------------------------------------
-        let record_card = Box::new(Orientation::Vertical, 8);
-        record_card.style_context().add_class("card-box");
-        record_card.set_size_request(235, 175);
+        let replay_col = Box::new(Orientation::Vertical, 0);
+        replay_col.set_size_request(215, -1);
 
-        let record_hdr = Box::new(Orientation::Horizontal, 6);
-        let record_title = Label::new(Some("RECORD"));
-        record_title.style_context().add_class("card-header-label");
-        let record_pill = Label::new(Some("READY"));
-        record_pill.style_context().add_class("status-pill");
-        record_pill.style_context().add_class("pill-idle");
-        let record_sp = Box::new(Orientation::Horizontal, 0);
-        record_hdr.pack_start(&record_title, false, false, 0);
-        record_hdr.pack_start(&record_sp, true, true, 0);
-        record_hdr.pack_start(&record_pill, false, false, 0);
+        let replay_card_btn = Button::new();
+        replay_card_btn.style_context().add_class("card-btn");
+        replay_card_btn.set_size_request(215, 180);
 
-        let record_info_label = Label::new(Some(&format!("{} FPS • {} Mbps", config.fps, config.record_bitrate_kbps / 1000)));
-        record_info_label.style_context().add_class("card-subtitle");
+        let replay_card_inner = Box::new(Orientation::Vertical, 6);
+        let replay_title_lbl = Label::new(Some("INSTANT REPLAY"));
+        replay_title_lbl.style_context().add_class("card-title");
 
-        let record_action_btn = Button::with_label("Start Recording");
-        record_action_btn.style_context().add_class("action-btn-secondary");
-        record_action_btn.set_size_request(-1, 38);
+        let replay_icon_area = DrawingArea::new();
+        replay_icon_area.set_size_request(56, 56);
+        let r_state_clone = Arc::clone(&replay_active_state);
+        replay_icon_area.connect_draw(move |_, cr| {
+            draw_replay_icon(cr, r_state_clone.load(Ordering::Relaxed));
+            gtk::glib::Propagation::Proceed
+        });
 
-        let record_hotkey_hint = Label::new(Some("Ctrl + Shift + F9"));
-        record_hotkey_hint.style_context().add_class("hotkey-hint");
+        let replay_status_lbl = Label::new(Some(if config.replay_enabled { "On" } else { "Off" }));
+        replay_status_lbl.style_context().add_class("card-status");
+        if config.replay_enabled {
+            replay_status_lbl.style_context().add_class("status-green");
+        }
 
-        let record_format_label = Label::new(Some(&format!("{} • {}", config.video_codec.to_uppercase(), config.audio_mode.to_uppercase())));
-        record_format_label.style_context().add_class("sub-info-label");
+        let replay_sub_lbl = Label::new(Some(&format!("{}s Buffer", config.replay_duration_sec)));
+        replay_sub_lbl.style_context().add_class("card-sub");
 
-        record_card.pack_start(&record_hdr, false, false, 0);
-        record_card.pack_start(&record_info_label, false, false, 2);
-        record_card.pack_start(&record_action_btn, false, false, 6);
-        record_card.pack_start(&record_hotkey_hint, false, false, 0);
-        record_card.pack_start(&record_format_label, false, false, 4);
+        replay_card_inner.pack_start(&replay_title_lbl, false, false, 0);
+        replay_card_inner.pack_start(&replay_icon_area, true, true, 4);
+        replay_card_inner.pack_start(&replay_status_lbl, false, false, 0);
+        replay_card_inner.pack_start(&replay_sub_lbl, false, false, 2);
+        replay_card_btn.add(&replay_card_inner);
+
+        // Instant Replay Attached Dropdown Menu
+        let replay_revealer = Revealer::new();
+        replay_revealer.set_transition_type(RevealerTransitionType::SlideDown);
+        replay_revealer.set_transition_duration(150);
+
+        let replay_menu_box = Box::new(Orientation::Vertical, 2);
+        replay_menu_box.style_context().add_class("dropdown-menu");
+
+        let replay_toggle_item = Button::with_label(if config.replay_enabled { "Turn off" } else { "Turn on" });
+        replay_toggle_item.style_context().add_class("dropdown-item");
+
+        let replay_save_item = Button::with_label("Save (Ctrl+Shift+R)");
+        replay_save_item.style_context().add_class("dropdown-item");
+
+        let replay_settings_item = Button::with_label("Settings");
+        replay_settings_item.style_context().add_class("dropdown-item");
+
+        replay_menu_box.pack_start(&replay_toggle_item, false, false, 0);
+        replay_menu_box.pack_start(&replay_save_item, false, false, 0);
+        replay_menu_box.pack_start(&replay_settings_item, false, false, 0);
+        replay_revealer.add(&replay_menu_box);
+
+        replay_col.pack_start(&replay_card_btn, false, false, 0);
+        replay_col.pack_start(&replay_revealer, false, false, 0);
 
         // -------------------------------------------------------------------------
-        // CARD 3: SETTINGS
+        // CARD 2: RECORD (With Attached Dropdown Menu)
         // -------------------------------------------------------------------------
-        let settings_card = Box::new(Orientation::Vertical, 8);
-        settings_card.style_context().add_class("card-box");
-        settings_card.set_size_request(235, 175);
+        let record_col = Box::new(Orientation::Vertical, 0);
+        record_col.set_size_request(215, -1);
 
-        let settings_hdr = Box::new(Orientation::Horizontal, 6);
-        let settings_title_hdr = Label::new(Some("SETTINGS"));
-        settings_title_hdr.style_context().add_class("card-header-label");
-        let settings_pill = Label::new(Some("CONFIG"));
-        settings_pill.style_context().add_class("status-pill");
-        settings_pill.style_context().add_class("pill-blue");
-        let settings_sp = Box::new(Orientation::Horizontal, 0);
-        settings_hdr.pack_start(&settings_title_hdr, false, false, 0);
-        settings_hdr.pack_start(&settings_sp, true, true, 0);
-        settings_hdr.pack_start(&settings_pill, false, false, 0);
+        let record_card_btn = Button::new();
+        record_card_btn.style_context().add_class("card-btn");
+        record_card_btn.set_size_request(215, 180);
 
-        let settings_sub = Label::new(Some("Cursor, Audio, Video & Storage"));
-        settings_sub.style_context().add_class("card-subtitle");
+        let record_card_inner = Box::new(Orientation::Vertical, 6);
+        let record_title_lbl = Label::new(Some("RECORD"));
+        record_title_lbl.style_context().add_class("card-title");
 
-        let settings_open_btn = Button::with_label("Open Settings");
-        settings_open_btn.style_context().add_class("action-btn-secondary");
-        settings_open_btn.set_size_request(-1, 38);
+        let record_icon_area = DrawingArea::new();
+        record_icon_area.set_size_request(56, 56);
+        let rec_state_clone = Arc::clone(&record_active_state);
+        record_icon_area.connect_draw(move |_, cr| {
+            draw_record_icon(cr, rec_state_clone.load(Ordering::Relaxed));
+            gtk::glib::Propagation::Proceed
+        });
 
-        let settings_hint = Label::new(Some("Alt + Z"));
-        settings_hint.style_context().add_class("hotkey-hint");
+        let record_status_lbl = Label::new(Some("Not recording"));
+        record_status_lbl.style_context().add_class("card-status");
 
-        let settings_extra = Label::new(Some("All Preferences • Esc to Close"));
-        settings_extra.style_context().add_class("sub-info-label");
+        let record_sub_lbl = Label::new(Some(&format!("{} FPS • {} Mbps", config.fps, config.record_bitrate_kbps / 1000)));
+        record_sub_lbl.style_context().add_class("card-sub");
 
-        settings_card.pack_start(&settings_hdr, false, false, 0);
-        settings_card.pack_start(&settings_sub, false, false, 2);
-        settings_card.pack_start(&settings_open_btn, false, false, 6);
-        settings_card.pack_start(&settings_hint, false, false, 0);
-        settings_card.pack_start(&settings_extra, false, false, 4);
+        record_card_inner.pack_start(&record_title_lbl, false, false, 0);
+        record_card_inner.pack_start(&record_icon_area, true, true, 4);
+        record_card_inner.pack_start(&record_status_lbl, false, false, 0);
+        record_card_inner.pack_start(&record_sub_lbl, false, false, 2);
+        record_card_btn.add(&record_card_inner);
 
-        // Pack the 3 cards
-        cards_box.pack_start(&replay_card, true, true, 0);
-        cards_box.pack_start(&record_card, true, true, 0);
-        cards_box.pack_start(&settings_card, true, true, 0);
+        // Record Attached Dropdown Menu
+        let record_revealer = Revealer::new();
+        record_revealer.set_transition_type(RevealerTransitionType::SlideDown);
+        record_revealer.set_transition_duration(150);
+
+        let record_menu_box = Box::new(Orientation::Vertical, 2);
+        record_menu_box.style_context().add_class("dropdown-menu");
+
+        let record_toggle_item = Button::with_label("Start (Ctrl+Shift+F9)");
+        record_toggle_item.style_context().add_class("dropdown-item");
+
+        let record_settings_item = Button::with_label("Settings");
+        record_settings_item.style_context().add_class("dropdown-item");
+
+        record_menu_box.pack_start(&record_toggle_item, false, false, 0);
+        record_menu_box.pack_start(&record_settings_item, false, false, 0);
+        record_revealer.add(&record_menu_box);
+
+        record_col.pack_start(&record_card_btn, false, false, 0);
+        record_col.pack_start(&record_revealer, false, false, 0);
+
+        // -------------------------------------------------------------------------
+        // CARD 3: SETTINGS (Direct Click to Settings Page)
+        // -------------------------------------------------------------------------
+        let settings_col = Box::new(Orientation::Vertical, 0);
+        settings_col.set_size_request(215, -1);
+
+        let settings_card_btn = Button::new();
+        settings_card_btn.style_context().add_class("card-btn");
+        settings_card_btn.set_size_request(215, 180);
+
+        let settings_card_inner = Box::new(Orientation::Vertical, 6);
+        let settings_title_lbl = Label::new(Some("SETTINGS"));
+        settings_title_lbl.style_context().add_class("card-title");
+
+        let settings_icon_area = DrawingArea::new();
+        settings_icon_area.set_size_request(56, 56);
+        settings_icon_area.connect_draw(|_, cr| {
+            draw_gear_icon(cr);
+            gtk::glib::Propagation::Proceed
+        });
+
+        let settings_status_lbl = Label::new(Some("Preferences"));
+        settings_status_lbl.style_context().add_class("card-status");
+
+        let settings_sub_lbl = Label::new(Some("Audio, Quality & Hotkeys"));
+        settings_sub_lbl.style_context().add_class("card-sub");
+
+        settings_card_inner.pack_start(&settings_title_lbl, false, false, 0);
+        settings_card_inner.pack_start(&settings_icon_area, true, true, 4);
+        settings_card_inner.pack_start(&settings_status_lbl, false, false, 0);
+        settings_card_inner.pack_start(&settings_sub_lbl, false, false, 2);
+        settings_card_btn.add(&settings_card_inner);
+
+        settings_col.pack_start(&settings_card_btn, false, false, 0);
+
+        // Pack the 3 columns
+        cards_box.pack_start(&replay_col, false, false, 0);
+        cards_box.pack_start(&record_col, false, false, 0);
+        cards_box.pack_start(&settings_col, false, false, 0);
 
         hud_page.pack_start(&header_box, false, false, 0);
         hud_page.pack_start(&cards_box, true, true, 0);
@@ -363,7 +498,7 @@ pub fn show_menu_overlay() {
         // =========================================================================
         let settings_page = Box::new(Orientation::Vertical, 10);
         settings_page.style_context().add_class("settings-panel");
-        settings_page.set_size_request(760, -1);
+        settings_page.set_size_request(740, -1);
 
         // Settings Header Bar with Back Button
         let settings_header = Box::new(Orientation::Horizontal, 12);
@@ -394,7 +529,7 @@ pub fn show_menu_overlay() {
         settings_body.set_margin_end(6);
 
         // -------------------------------------------------------------------------
-        // SECTION 1: DISPLAY & CAPTURE (Mouse Cursor right at the top!)
+        // SECTION 1: DISPLAY & CAPTURE (Mouse Cursor toggle prominently inside)
         // -------------------------------------------------------------------------
         let sec1_lbl = Label::new(Some("DISPLAY & CAPTURE"));
         sec1_lbl.style_context().add_class("section-header");
@@ -405,7 +540,7 @@ pub fn show_menu_overlay() {
         sec1_grid.set_column_spacing(18);
         sec1_grid.set_row_spacing(8);
 
-        // 1.1 Mouse Cursor Toggle
+        // 1.1 Mouse Cursor Checkbox
         let cursor_lbl = Label::new(Some("Mouse Cursor:"));
         cursor_lbl.set_halign(gtk::Align::Start);
         let cursor_box = Box::new(Orientation::Horizontal, 10);
@@ -640,7 +775,7 @@ pub fn show_menu_overlay() {
 
         // Apply & Save Settings Button
         let apply_btn = Button::with_label("Apply & Save Settings");
-        apply_btn.style_context().add_class("action-btn");
+        apply_btn.style_context().add_class("apply-save-btn");
         apply_btn.set_size_request(-1, 42);
 
         settings_page.pack_start(&settings_header, false, false, 0);
@@ -666,7 +801,7 @@ pub fn show_menu_overlay() {
                 padding: 0px;
             }
             .header-bar {
-                background-color: rgba(14, 18, 26, 0.88);
+                background-color: rgba(10, 14, 20, 0.88);
                 border: 1px solid rgba(255, 255, 255, 0.12);
                 border-radius: 10px;
                 padding: 6px 14px;
@@ -703,116 +838,74 @@ pub fn show_menu_overlay() {
             .close-btn:hover {
                 color: #ef4444;
             }
-            .card-box {
-                background-color: rgba(18, 24, 34, 0.88);
+            /* Square Action Cards */
+            .card-btn {
+                background-color: rgba(14, 18, 26, 0.85);
                 border: 1px solid rgba(255, 255, 255, 0.12);
                 border-radius: 14px;
-                padding: 14px 16px;
+                padding: 14px;
                 box-shadow: 0px 12px 36px rgba(0, 0, 0, 0.7);
             }
-            .card-box:hover {
-                background-color: rgba(24, 32, 45, 0.94);
-                border-color: rgba(118, 185, 0, 0.45);
+            .card-btn:hover {
+                background-color: rgba(10, 14, 20, 0.98);
+                border-color: #76b900;
+                box-shadow: 0 0 16px rgba(118, 185, 0, 0.4);
             }
-            .card-header-label {
+            .card-btn-active {
+                background-color: rgba(10, 14, 20, 0.98);
+                border-color: #76b900;
+                border-bottom-left-radius: 0px;
+                border-bottom-right-radius: 0px;
+                box-shadow: 0 0 16px rgba(118, 185, 0, 0.4);
+            }
+            .card-title {
                 color: #ffffff;
                 font-size: 11.5px;
                 font-weight: 800;
                 letter-spacing: 0.8px;
             }
-            .card-subtitle {
+            .card-status {
                 color: #94a3b8;
                 font-size: 11px;
-                font-weight: 600;
-            }
-            .status-pill {
-                font-size: 9.5px;
-                font-weight: 800;
-                padding: 2px 8px;
-                border-radius: 6px;
-            }
-            .pill-active {
-                background-color: rgba(118, 185, 0, 0.2);
-                color: #76b900;
-                border: 1px solid rgba(118, 185, 0, 0.5);
-            }
-            .pill-idle {
-                background-color: rgba(148, 163, 184, 0.14);
-                color: #94a3b8;
-                border: 1px solid rgba(148, 163, 184, 0.25);
-            }
-            .pill-rec {
-                background-color: rgba(239, 68, 68, 0.25);
-                color: #ef4444;
-                border: 1px solid rgba(239, 68, 68, 0.6);
-            }
-            .pill-blue {
-                background-color: rgba(56, 189, 248, 0.15);
-                color: #38bdf8;
-                border: 1px solid rgba(56, 189, 248, 0.4);
-            }
-            .action-btn {
-                background-color: #76b900;
-                color: #0b1204;
-                font-size: 13px;
-                font-weight: 800;
-                border-radius: 8px;
-                border: none;
-                padding: 8px 14px;
-            }
-            .action-btn:hover {
-                background-color: #8ce000;
-            }
-            .action-btn-secondary {
-                background-color: rgba(255, 255, 255, 0.08);
-                color: #ffffff;
-                font-size: 13px;
                 font-weight: 700;
-                border-radius: 8px;
-                border: 1px solid rgba(255, 255, 255, 0.15);
-                padding: 8px 14px;
             }
-            .action-btn-secondary:hover {
-                background-color: rgba(255, 255, 255, 0.14);
-                border-color: rgba(255, 255, 255, 0.3);
+            .status-green {
+                color: #76b900 !important;
             }
-            .action-btn-rec-stop {
-                background-color: #dc2626;
-                color: #ffffff;
-                font-size: 13px;
-                font-weight: 800;
-                border-radius: 8px;
-                border: none;
-                padding: 8px 14px;
+            .status-red {
+                color: #ef4444 !important;
             }
-            .action-btn-rec-stop:hover {
-                background-color: #ef4444;
-            }
-            .sub-toggle-btn {
-                background-color: transparent;
-                color: #94a3b8;
-                font-size: 11px;
-                font-weight: 600;
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 6px;
-                padding: 4px 8px;
-            }
-            .sub-toggle-btn:hover {
-                background-color: rgba(255, 255, 255, 0.08);
-                color: #ffffff;
-            }
-            .hotkey-hint {
+            .card-sub {
                 color: #64748b;
                 font-size: 10px;
-                font-weight: 600;
-            }
-            .sub-info-label {
-                color: #64748b;
-                font-size: 10.5px;
                 font-weight: 500;
             }
+            /* Attached Dropdown Menus */
+            .dropdown-menu {
+                background-color: rgba(10, 14, 20, 0.98);
+                border: 1px solid rgba(255, 255, 255, 0.14);
+                border-top: none;
+                border-bottom-left-radius: 12px;
+                border-bottom-right-radius: 12px;
+                padding: 6px;
+                box-shadow: 0px 16px 36px rgba(0, 0, 0, 0.85);
+            }
+            .dropdown-item {
+                background-color: transparent;
+                color: #e2e8f0;
+                font-size: 12px;
+                font-weight: 700;
+                border-radius: 6px;
+                border: 1px solid transparent;
+                padding: 8px 12px;
+            }
+            .dropdown-item:hover {
+                background-color: rgba(255, 255, 255, 0.08);
+                border-color: #76b900;
+                color: #76b900;
+            }
             .settings-panel {
-                background-color: rgba(16, 22, 32, 0.94);
+                background-color: rgba(14, 18, 26, 0.96);
                 border: 1px solid rgba(255, 255, 255, 0.14);
                 border-radius: 14px;
                 padding: 16px 22px;
@@ -857,6 +950,18 @@ pub fn show_menu_overlay() {
                 border-color: #76b900;
                 color: #ffffff;
             }
+            .apply-save-btn {
+                background-color: #76b900;
+                color: #0b1204;
+                font-size: 13px;
+                font-weight: 800;
+                border-radius: 8px;
+                border: none;
+                padding: 8px 14px;
+            }
+            .apply-save-btn:hover {
+                background-color: #8ce000;
+            }
             checkbutton check {
                 background-color: #1a2230;
                 border: 1px solid rgba(255, 255, 255, 0.2);
@@ -897,6 +1002,11 @@ pub fn show_menu_overlay() {
                 min-width: 14px;
                 min-height: 14px;
             }
+            .sub-info-label {
+                color: #64748b;
+                font-size: 10.5px;
+                font-weight: 500;
+            }
         "#;
         let _ = css_provider.load_from_data(css.as_bytes());
         if let Some(screen) = gdk::Screen::default() {
@@ -910,13 +1020,11 @@ pub fn show_menu_overlay() {
         // =========================================================================
         // EVENT HANDLERS & NAVIGATION
         // =========================================================================
-        // Close Buttons
         let w_close1 = window.clone();
         close_btn.connect_clicked(move |_| w_close1.close());
         let w_close2 = window.clone();
         settings_close_btn.connect_clicked(move |_| w_close2.close());
 
-        // Escape Key Closes
         let w_esc = window.clone();
         window.connect_key_press_event(move |_, key| {
             if key.keyval() == gdk::keys::constants::Escape {
@@ -927,25 +1035,94 @@ pub fn show_menu_overlay() {
             }
         });
 
-        // Switch to Settings Page
-        let stack_to_settings = stack.clone();
-        let w_to_settings = window.clone();
-        settings_open_btn.connect_clicked(move |_| {
-            stack_to_settings.set_visible_child_name("settings");
-            w_to_settings.resize(780, 560);
+        // -------------------------------------------------------------------------
+        // CARD INTERACTION: TOGGLE ATTACHED DROPDOWNS
+        // -------------------------------------------------------------------------
+        // 1. Replay Card Click -> Toggle Replay Dropdown
+        let rev_r_click = replay_revealer.clone();
+        let rev_rec_close = record_revealer.clone();
+        let card_r_btn = replay_card_btn.clone();
+        let card_rec_btn = record_card_btn.clone();
+        replay_card_btn.connect_clicked(move |_| {
+            let next_rev = !rev_r_click.reveals_child();
+            rev_r_click.set_reveal_child(next_rev);
+            rev_rec_close.set_reveal_child(false);
+            card_rec_btn.style_context().remove_class("card-btn-active");
+            if next_rev {
+                card_r_btn.style_context().add_class("card-btn-active");
+            } else {
+                card_r_btn.style_context().remove_class("card-btn-active");
+            }
         });
 
-        // Switch back to HUD Page
+        // 2. Record Card Click -> Toggle Record Dropdown
+        let rev_rec_click = record_revealer.clone();
+        let rev_r_close = replay_revealer.clone();
+        let card_rec_btn2 = record_card_btn.clone();
+        let card_r_btn2 = replay_card_btn.clone();
+        record_card_btn.connect_clicked(move |_| {
+            let next_rev = !rev_rec_click.reveals_child();
+            rev_rec_click.set_reveal_child(next_rev);
+            rev_r_close.set_reveal_child(false);
+            card_r_btn2.style_context().remove_class("card-btn-active");
+            if next_rev {
+                card_rec_btn2.style_context().add_class("card-btn-active");
+            } else {
+                card_rec_btn2.style_context().remove_class("card-btn-active");
+            }
+        });
+
+        // 3. Settings Card Click -> Navigate directly to Settings Page
+        let stack_to_settings = stack.clone();
+        let w_to_settings = window.clone();
+        settings_card_btn.connect_clicked(move |_| {
+            stack_to_settings.set_visible_child_name("settings");
+            w_to_settings.resize(740, 560);
+        });
+
+        // Back to HUD from Settings
         let stack_to_hud = stack.clone();
         let w_to_hud = window.clone();
         back_btn.connect_clicked(move |_| {
             stack_to_hud.set_visible_child_name("hud");
-            w_to_hud.resize(780, 230);
+            w_to_hud.resize(740, 280);
         });
 
-        // Action: Save Replay
+        // Replay Menu Items:
+        // Item 1: Turn on / Turn off Replay
+        let r_toggle_lbl = replay_toggle_item.clone();
+        let r_status_lbl_sync = replay_status_lbl.clone();
+        let r_state_sync = Arc::clone(&replay_active_state);
+        let r_icon_sync = replay_icon_area.clone();
+        let rev_r_hide = replay_revealer.clone();
+        let card_r_deactivate = replay_card_btn.clone();
+        replay_toggle_item.connect_clicked(move |_| {
+            let mut cfg = VrecConfig::load();
+            cfg.replay_enabled = !cfg.replay_enabled;
+            let _ = cfg.save();
+            VrecConfig::notify_daemon_reload();
+
+            r_state_sync.store(cfg.replay_enabled, Ordering::Relaxed);
+            r_icon_sync.queue_draw();
+
+            if cfg.replay_enabled {
+                r_toggle_lbl.set_label("Turn off");
+                r_status_lbl_sync.set_label("On");
+                r_status_lbl_sync.style_context().add_class("status-green");
+            } else {
+                r_toggle_lbl.set_label("Turn on");
+                r_status_lbl_sync.set_label("Off");
+                r_status_lbl_sync.style_context().remove_class("status-green");
+            }
+            rev_r_hide.set_reveal_child(false);
+            card_r_deactivate.style_context().remove_class("card-btn-active");
+        });
+
+        // Item 2: Save Replay
         let banner_save = status_banner.clone();
-        replay_save_btn.connect_clicked(move |_| {
+        let rev_r_hide2 = replay_revealer.clone();
+        let card_r_deactivate2 = replay_card_btn.clone();
+        replay_save_item.connect_clicked(move |_| {
             let _ = ipc::send_command(Command::SaveReplay);
             banner_save.set_text("Replay saved successfully!");
             let b_clear = banner_save.clone();
@@ -953,35 +1130,45 @@ pub fn show_menu_overlay() {
                 b_clear.set_text("");
                 gtk::glib::ControlFlow::Break
             });
+            rev_r_hide2.set_reveal_child(false);
+            card_r_deactivate2.style_context().remove_class("card-btn-active");
         });
 
-        // Action: Toggle Replay Buffer
-        let r_btn_clone = replay_toggle_btn.clone();
-        let r_pill_clone = replay_pill.clone();
-        replay_toggle_btn.connect_clicked(move |_| {
-            let mut cfg = VrecConfig::load();
-            cfg.replay_enabled = !cfg.replay_enabled;
-            let _ = cfg.save();
-            VrecConfig::notify_daemon_reload();
-            if cfg.replay_enabled {
-                r_btn_clone.set_label("Disable Replay");
-                r_pill_clone.set_label("ACTIVE");
-                r_pill_clone.style_context().remove_class("pill-idle");
-                r_pill_clone.style_context().add_class("pill-active");
-            } else {
-                r_btn_clone.set_label("Enable Replay");
-                r_pill_clone.set_label("OFF");
-                r_pill_clone.style_context().remove_class("pill-active");
-                r_pill_clone.style_context().add_class("pill-idle");
-            }
+        // Item 3: Replay Settings
+        let stack_r_settings = stack.clone();
+        let w_r_settings = window.clone();
+        let rev_r_hide3 = replay_revealer.clone();
+        let card_r_deactivate3 = replay_card_btn.clone();
+        replay_settings_item.connect_clicked(move |_| {
+            rev_r_hide3.set_reveal_child(false);
+            card_r_deactivate3.style_context().remove_class("card-btn-active");
+            stack_r_settings.set_visible_child_name("settings");
+            w_r_settings.resize(740, 560);
         });
 
-        // Action: Toggle Record
-        record_action_btn.connect_clicked(|_| {
+        // Record Menu Items:
+        // Item 1: Start / Stop Record
+        let rev_rec_hide = record_revealer.clone();
+        let card_rec_deactivate = record_card_btn.clone();
+        record_toggle_item.connect_clicked(move |_| {
             let _ = ipc::send_command(Command::ToggleRecording);
+            rev_rec_hide.set_reveal_child(false);
+            card_rec_deactivate.style_context().remove_class("card-btn-active");
         });
 
-        // Action: Direct Mouse Cursor Checkbox Toggle
+        // Item 2: Record Settings
+        let stack_rec_settings = stack.clone();
+        let w_rec_settings = window.clone();
+        let rev_rec_hide2 = record_revealer.clone();
+        let card_rec_deactivate2 = record_card_btn.clone();
+        record_settings_item.connect_clicked(move |_| {
+            rev_rec_hide2.set_reveal_child(false);
+            card_rec_deactivate2.style_context().remove_class("card-btn-active");
+            stack_rec_settings.set_visible_child_name("settings");
+            w_rec_settings.resize(740, 560);
+        });
+
+        // Direct Mouse Cursor Checkbox Toggle
         let cursor_check_sync = cursor_check.clone();
         let banner_cur = status_banner.clone();
         cursor_check.connect_toggled(move |c| {
@@ -1000,13 +1187,12 @@ pub fn show_menu_overlay() {
             }
         });
 
-        // Action: Apply & Save Settings
+        // Apply & Save Settings
         let stack_after_save = stack.clone();
         let w_after_save = window.clone();
         let banner_after_save = status_banner.clone();
-        let r_dur_lbl_sync = replay_dur_label.clone();
-        let rec_info_lbl_sync = record_info_label.clone();
-        let rec_fmt_lbl_sync = record_format_label.clone();
+        let r_sub_lbl_sync = replay_sub_lbl.clone();
+        let rec_sub_lbl_sync = record_sub_lbl.clone();
 
         apply_btn.connect_clicked(move |_| {
             let mut cfg = VrecConfig::load();
@@ -1041,10 +1227,8 @@ pub fn show_menu_overlay() {
             let _ = cfg.save();
             VrecConfig::notify_daemon_reload();
 
-            // Update HUD card labels
-            r_dur_lbl_sync.set_text(&format!("{}s Rolling Buffer", cfg.replay_duration_sec));
-            rec_info_lbl_sync.set_text(&format!("{} FPS • {} Mbps", cfg.fps, cfg.record_bitrate_kbps / 1000));
-            rec_fmt_lbl_sync.set_text(&format!("{} • {}", cfg.video_codec.to_uppercase(), cfg.audio_mode.to_uppercase()));
+            r_sub_lbl_sync.set_text(&format!("{}s Buffer", cfg.replay_duration_sec));
+            rec_sub_lbl_sync.set_text(&format!("{} FPS • {} Mbps", cfg.fps, cfg.record_bitrate_kbps / 1000));
 
             banner_after_save.set_text("Settings saved!");
             let b_clear = banner_after_save.clone();
@@ -1054,17 +1238,22 @@ pub fn show_menu_overlay() {
             });
 
             stack_after_save.set_visible_child_name("hud");
-            w_after_save.resize(780, 230);
+            w_after_save.resize(740, 280);
         });
 
         // =========================================================================
-        // LIVE STATUS POLLER (Syncs Daemon States & Timers Every 300ms)
+        // LIVE STATUS POLLER (Syncs Daemon States, Vectors & Timers Every 300ms)
         // =========================================================================
-        let rec_btn_sync = record_action_btn.clone();
-        let rec_pill_sync = record_pill.clone();
-        let rec_info_sync = record_info_label.clone();
-        let r_pill_sync = replay_pill.clone();
-        let r_btn_sync = replay_toggle_btn.clone();
+        let rec_status_sync = record_status_lbl.clone();
+        let rec_toggle_item_sync = record_toggle_item.clone();
+        let rec_state_sync2 = Arc::clone(&record_active_state);
+        let rec_icon_sync = record_icon_area.clone();
+
+        let r_status_sync2 = replay_status_lbl.clone();
+        let r_toggle_item_sync2 = replay_toggle_item.clone();
+        let r_state_sync2 = Arc::clone(&replay_active_state);
+        let r_icon_sync2 = replay_icon_area.clone();
+
         let is_running = Arc::new(AtomicBool::new(true));
         let is_running_clone = Arc::clone(&is_running);
 
@@ -1074,40 +1263,36 @@ pub fn show_menu_overlay() {
             }
 
             if let Ok(st) = ipc::query_status() {
-                // Recording status sync
+                // 1. Recording status sync
+                let prev_rec = rec_state_sync2.swap(st.is_recording, Ordering::Relaxed);
                 if st.is_recording {
                     let mins = st.recording_duration_sec / 60;
                     let secs = st.recording_duration_sec % 60;
-                    rec_btn_sync.set_label("Stop Recording");
-                    rec_btn_sync.style_context().remove_class("action-btn-secondary");
-                    rec_btn_sync.style_context().add_class("action-btn-rec-stop");
-
-                    rec_pill_sync.set_label(&format!("REC {:02}:{:02}", mins, secs));
-                    rec_pill_sync.style_context().remove_class("pill-idle");
-                    rec_pill_sync.style_context().add_class("pill-rec");
-
-                    rec_info_sync.set_label(&format!("Recording {:02}:{:02}", mins, secs));
+                    rec_status_sync.set_label(&format!("Recording {:02}:{:02}", mins, secs));
+                    rec_status_sync.style_context().add_class("status-red");
+                    rec_toggle_item_sync.set_label("Stop (Ctrl+Shift+F9)");
                 } else {
-                    rec_btn_sync.set_label("Start Recording");
-                    rec_btn_sync.style_context().remove_class("action-btn-rec-stop");
-                    rec_btn_sync.style_context().add_class("action-btn-secondary");
-
-                    rec_pill_sync.set_label("READY");
-                    rec_pill_sync.style_context().remove_class("pill-rec");
-                    rec_pill_sync.style_context().add_class("pill-idle");
+                    rec_status_sync.set_label("Not recording");
+                    rec_status_sync.style_context().remove_class("status-red");
+                    rec_toggle_item_sync.set_label("Start (Ctrl+Shift+F9)");
+                }
+                if prev_rec != st.is_recording {
+                    rec_icon_sync.queue_draw();
                 }
 
-                // Replay status sync
+                // 2. Replay status sync
+                let prev_replay = r_state_sync2.swap(st.is_replay_active, Ordering::Relaxed);
                 if st.is_replay_active {
-                    r_pill_sync.set_label("ACTIVE");
-                    r_pill_sync.style_context().remove_class("pill-idle");
-                    r_pill_sync.style_context().add_class("pill-active");
-                    r_btn_sync.set_label("Disable Replay");
+                    r_status_sync2.set_label("On");
+                    r_status_sync2.style_context().add_class("status-green");
+                    r_toggle_item_sync2.set_label("Turn off");
                 } else {
-                    r_pill_sync.set_label("OFF");
-                    r_pill_sync.style_context().remove_class("pill-active");
-                    r_pill_sync.style_context().add_class("pill-idle");
-                    r_btn_sync.set_label("Enable Replay");
+                    r_status_sync2.set_label("Off");
+                    r_status_sync2.style_context().remove_class("status-green");
+                    r_toggle_item_sync2.set_label("Turn on");
+                }
+                if prev_replay != st.is_replay_active {
+                    r_icon_sync2.queue_draw();
                 }
             }
             gtk::glib::ControlFlow::Continue
