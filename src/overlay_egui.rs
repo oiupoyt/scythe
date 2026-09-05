@@ -200,6 +200,96 @@ impl VrecOverlayApp {
     }
 }
 
+// Cross-platform helper to reveal or open directories
+fn open_folder(path: &std::path::Path) {
+    let p = path.to_path_buf();
+    std::thread::spawn(move || {
+        #[cfg(target_os = "windows")]
+        {
+            let _ = std::process::Command::new("explorer").arg(&p).spawn();
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let _ = std::process::Command::new("open").arg(&p).spawn();
+        }
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        {
+            let _ = std::process::Command::new("xdg-open").arg(&p).spawn();
+        }
+    });
+}
+
+// Cross-platform helper to launch media files with default player
+fn open_file(path: &std::path::Path) {
+    let p = path.to_path_buf();
+    std::thread::spawn(move || {
+        #[cfg(target_os = "windows")]
+        {
+            let _ = std::process::Command::new("cmd")
+                .args(["/c", "start", "", &p.to_string_lossy()])
+                .spawn();
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let _ = std::process::Command::new("open").arg(&p).spawn();
+        }
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        {
+            let _ = std::process::Command::new("xdg-open").arg(&p).spawn();
+        }
+    });
+}
+
+// Cross-platform folder picker dialog
+fn pick_folder(current_dir: &str, tx: Sender<String>) {
+    let cur = current_dir.to_string();
+    std::thread::spawn(move || {
+        #[cfg(target_os = "windows")]
+        {
+            let script = format!(
+                "[System.Reflection.Assembly]::LoadWithPartialName('System.windows.forms') | Out-Null; \
+                 $f = New-Object System.Windows.Forms.FolderBrowserDialog; \
+                 $f.SelectedPath = '{}'; \
+                 if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {{ Write-Host $f.SelectedPath }}",
+                cur.replace('\'', "''")
+            );
+            if let Ok(out) = std::process::Command::new("powershell")
+                .args(["-NoProfile", "-Command", &script])
+                .output()
+            {
+                let sel = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if !sel.is_empty() {
+                    let _ = tx.send(sel);
+                    return;
+                }
+            }
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            if let Ok(out) = std::process::Command::new("kdialog")
+                .args(["--getexistingdirectory", &cur])
+                .output()
+            {
+                let sel = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if !sel.is_empty() {
+                    let _ = tx.send(sel);
+                    return;
+                }
+            }
+            if let Ok(out) = std::process::Command::new("zenity")
+                .args(["--file-selection", "--directory"])
+                .output()
+            {
+                let sel = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if !sel.is_empty() {
+                    let _ = tx.send(sel);
+                }
+            }
+        }
+    });
+}
+
 // Helper to render realistic mechanical keyboard keycap badges
 fn render_keycap(ui: &mut egui::Ui, text: &str) {
     egui::Frame::NONE
@@ -375,9 +465,7 @@ impl eframe::App for VrecOverlayApp {
                         if ui.add_sized([86.0, 26.0], folder_btn).clicked() {
                             let resolved = VrecConfig::expand_tilde(&self.output_dir);
                             let _ = std::fs::create_dir_all(&resolved);
-                            std::thread::spawn(move || {
-                                let _ = std::process::Command::new("xdg-open").arg(resolved).spawn();
-                            });
+                            open_folder(&resolved);
                         }
 
                         // Quick Cursor Toggle Capsule
@@ -853,9 +941,7 @@ impl eframe::App for VrecOverlayApp {
                             if ui.add_sized([90.0, 24.0], open_folder_btn).clicked() {
                                 let resolved = VrecConfig::expand_tilde(&self.output_dir);
                                 let _ = std::fs::create_dir_all(&resolved);
-                                std::thread::spawn(move || {
-                                    let _ = std::process::Command::new("xdg-open").arg(resolved).spawn();
-                                });
+                                open_folder(&resolved);
                             }
                         });
                     });
@@ -936,11 +1022,8 @@ impl eframe::App for VrecOverlayApp {
                                                     .fill(Color32::from_rgb(16, 185, 129))
                                                     .stroke(Stroke::new(1.0_f32, Color32::from_rgb(52, 211, 153)))
                                                     .corner_radius(CornerRadius::same(5_u8));
-                                                let p = clip.path.clone();
                                                 if ui.add_sized([85.0, 26.0], play_btn).clicked() {
-                                                    std::thread::spawn(move || {
-                                                        let _ = std::process::Command::new("xdg-open").arg(p).spawn();
-                                                    });
+                                                    open_file(&clip.path);
                                                 }
                                             });
                                         });
@@ -999,28 +1082,7 @@ impl eframe::App for VrecOverlayApp {
                                         .corner_radius(CornerRadius::same(5_u8));
                                     if ui.add(browse_btn).clicked() {
                                         let cur = VrecConfig::expand_tilde(&self.output_dir).to_string_lossy().to_string();
-                                        let tx = self.folder_tx.clone();
-                                        std::thread::spawn(move || {
-                                            if let Ok(out) = std::process::Command::new("kdialog")
-                                                .args(["--getexistingdirectory", &cur])
-                                                .output()
-                                            {
-                                                let sel = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                                                if !sel.is_empty() {
-                                                    let _ = tx.send(sel);
-                                                    return;
-                                                }
-                                            }
-                                            if let Ok(out) = std::process::Command::new("zenity")
-                                                .args(["--file-selection", "--directory"])
-                                                .output()
-                                            {
-                                                let sel = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                                                if !sel.is_empty() {
-                                                    let _ = tx.send(sel);
-                                                }
-                                            }
-                                        });
+                                        pick_folder(&cur, self.folder_tx.clone());
                                     }
 
                                     let open_btn = egui::Button::new(egui::RichText::new("Open").color(Color32::from_rgb(203, 213, 225)))
@@ -1029,21 +1091,25 @@ impl eframe::App for VrecOverlayApp {
                                     if ui.add(open_btn).clicked() {
                                         let dir = VrecConfig::expand_tilde(&self.output_dir);
                                         let _ = std::fs::create_dir_all(&dir);
-                                        std::thread::spawn(move || {
-                                            let _ = std::process::Command::new("xdg-open").arg(dir).spawn();
-                                        });
+                                        open_folder(&dir);
                                     }
                                 });
 
                                 ui.add_space(8.0);
                                 ui.horizontal(|ui| {
                                     ui.label(egui::RichText::new("Quick Presets:").font(FontId::proportional(10.0)).color(Color32::from_rgb(100, 116, 139)));
-                                    let v_dir = format!("{}/Videos/vrec", std::env::var("HOME").unwrap_or_default());
-                                    let c_dir = format!("{}/Videos/Captures", std::env::var("HOME").unwrap_or_default());
-                                    let d_dir = format!("{}/Downloads/vrec", std::env::var("HOME").unwrap_or_default());
-                                    if pill(ui, "~/Videos/vrec", self.output_dir == v_dir) { self.output_dir = v_dir; }
-                                    if pill(ui, "~/Videos/Captures", self.output_dir == c_dir) { self.output_dir = c_dir; }
-                                    if pill(ui, "~/Downloads/vrec", self.output_dir == d_dir) { self.output_dir = d_dir; }
+                                    let v_base = dirs::video_dir().or_else(|| dirs::home_dir().map(|h| h.join("Videos")));
+                                    let d_base = dirs::download_dir().or_else(|| dirs::home_dir().map(|h| h.join("Downloads")));
+                                    if let Some(ref vb) = v_base {
+                                        let v_dir = vb.join("vrec").to_string_lossy().to_string();
+                                        let c_dir = vb.join("Captures").to_string_lossy().to_string();
+                                        if pill(ui, "Videos/vrec", self.output_dir == v_dir) { self.output_dir = v_dir; }
+                                        if pill(ui, "Videos/Captures", self.output_dir == c_dir) { self.output_dir = c_dir; }
+                                    }
+                                    if let Some(ref db) = d_base {
+                                        let d_dir = db.join("vrec").to_string_lossy().to_string();
+                                        if pill(ui, "Downloads/vrec", self.output_dir == d_dir) { self.output_dir = d_dir; }
+                                    }
                                 });
                             });
 
@@ -1098,7 +1164,11 @@ impl eframe::App for VrecOverlayApp {
                                     });
 
                                     ui.add_space(8.0);
-                                    ui.label(egui::RichText::new("Codec: Hardware VAAPI H.264 (NV12 Direct Buffer Sharing)").font(FontId::monospace(9.0)).color(Color32::from_rgb(100, 116, 139)));
+                                    #[cfg(target_os = "windows")]
+                                    let codec_info = "Codec: Hardware D3D11 / NVENC H.264 (DirectX Desktop Duplication)";
+                                    #[cfg(not(target_os = "windows"))]
+                                    let codec_info = "Codec: Hardware VAAPI H.264 (NV12 Direct Buffer Sharing)";
+                                    ui.label(egui::RichText::new(codec_info).font(FontId::monospace(9.0)).color(Color32::from_rgb(100, 116, 139)));
                                 });
 
                             // Column 2: Replay Buffer & Hotkeys

@@ -138,6 +138,9 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 vrec::overlay_egui::run_egui_overlay();
                 return Ok(());
             }
+            "--hotkeys" | "--background" => {
+                // fall through to hotkey loop
+            }
             "--record" | "--toggle" => {
                 return handle_toggle_recording();
             }
@@ -177,8 +180,9 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             "--help" | "-h" => {
                 println!("vrec-ui - UI Overlay and Hotkey listener for vrec");
                 println!("Usage:");
-                println!("  vrec-ui                Run global hotkey manager in background");
-                println!("  vrec-ui --menu         Open overlay menu");
+                println!("  vrec-ui                Open the interactive overlay UI menu (default)");
+                println!("  vrec-ui --menu         Open the interactive overlay UI menu");
+                println!("  vrec-ui --hotkeys      Run global hotkey manager in background");
                 println!("  vrec-ui --status       Query current daemon status");
                 println!("  vrec-ui --save         Save instant replay and show notification");
                 println!("  vrec-ui --record       Toggle normal recording on/off (with notification)");
@@ -191,6 +195,10 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             }
             _ => {}
         }
+    } else {
+        ensure_daemon_running();
+        vrec::overlay_egui::run_egui_overlay();
+        return Ok(());
     }
 
     println!("Starting vrec UI/Hotkey process...");
