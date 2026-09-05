@@ -20,17 +20,24 @@ fn ensure_wayland_env() {
                         }
                     }
             }
+            if env::var("DISPLAY").is_err() && std::path::Path::new("/tmp/.X11-unix/X0").exists() {
+                env::set_var("DISPLAY", ":0");
+            }
             if env::var("DBUS_SESSION_BUS_ADDRESS").is_err() {
                 let bus_path = format!("{}/bus", runtime_dir);
                 if std::path::Path::new(&bus_path).exists() {
                     env::set_var("DBUS_SESSION_BUS_ADDRESS", format!("unix:path={}", bus_path));
                 }
             }
-            if env::var("XDG_CURRENT_DESKTOP").is_err() {
+            if env::var("XDG_CURRENT_DESKTOP").is_err() && env::var("WAYLAND_DISPLAY").is_ok() {
                 env::set_var("XDG_CURRENT_DESKTOP", "Hyprland");
             }
-            if env::var("XDG_SESSION_TYPE").map(|s| s == "tty" || s.is_empty()).unwrap_or(true) && env::var("WAYLAND_DISPLAY").is_ok() {
-                env::set_var("XDG_SESSION_TYPE", "wayland");
+            if env::var("XDG_SESSION_TYPE").map(|s| s == "tty" || s.is_empty()).unwrap_or(true) {
+                if env::var("WAYLAND_DISPLAY").is_ok() {
+                    env::set_var("XDG_SESSION_TYPE", "wayland");
+                } else if env::var("DISPLAY").is_ok() {
+                    env::set_var("XDG_SESSION_TYPE", "x11");
+                }
             }
         }
     }
@@ -211,6 +218,12 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 #[cfg(not(target_os = "windows"))]
                 vrec::overlay::show_menu_overlay();
                 #[cfg(target_os = "windows")]
+                vrec::overlay_egui::run_egui_overlay();
+                return Ok(());
+            }
+            "--egui" => {
+                ensure_daemon_running();
+                ensure_hotkeys_running();
                 vrec::overlay_egui::run_egui_overlay();
                 return Ok(());
             }

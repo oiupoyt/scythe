@@ -63,12 +63,27 @@ pub fn show_notification(message: &str) {
                 .build();
 
             #[cfg(target_os = "linux")]
-            {
+            let layer_shell_ok = gtk_layer_shell::is_supported();
+            #[cfg(not(target_os = "linux"))]
+            let layer_shell_ok = false;
+
+            if layer_shell_ok {
                 window.init_layer_shell();
                 window.set_layer(Layer::Overlay);
                 window.set_namespace("vrec-notification");
                 window.set_layer_shell_margin(gtk_layer_shell::Edge::Top, 40);
                 window.set_anchor(gtk_layer_shell::Edge::Top, true);
+            } else {
+                window.set_decorated(false);
+                window.set_keep_above(true);
+                window.set_skip_taskbar_hint(true);
+                if let Some(display) = gdk::Display::default()
+                    && let Some(mon) = display.primary_monitor().or_else(|| display.monitor(0)) {
+                        let geom = mon.geometry();
+                        let x = geom.x() + (geom.width() - 320) / 2;
+                        let y = geom.y() + 40;
+                        window.move_(x, y);
+                }
             }
 
             if let Some(screen) = gdk::Screen::default()
@@ -85,9 +100,11 @@ pub fn show_notification(message: &str) {
 
             let css_provider = CssProvider::new();
             let css = r#"
-                window {
+                window, window.background, .background {
                     background-color: transparent !important;
                     background: transparent !important;
+                    border: none !important;
+                    box-shadow: none !important;
                 }
                 .notify-box {
                     background-color: rgba(18, 24, 36, 0.78);
@@ -115,9 +132,10 @@ pub fn show_notification(message: &str) {
                 StyleContext::add_provider_for_screen(
                     &screen,
                     &css_provider,
-                    gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+                    gtk::STYLE_PROVIDER_PRIORITY_USER,
                 );
             }
+            window.style_context().add_provider(&css_provider, gtk::STYLE_PROVIDER_PRIORITY_USER);
 
             let hbox = Box::new(Orientation::Horizontal, 10);
             hbox.style_context().add_class("notify-box");
@@ -237,16 +255,19 @@ fn draw_gear_icon(cr: &gtk::cairo::Context, width: f64, height: f64) {
 pub fn show_menu_overlay() {
     #[cfg(unix)]
     if std::env::var("WAYLAND_DISPLAY").is_err() && std::env::var("DISPLAY").is_err() {
-        eprintln!("Error: No display server detected (WAYLAND_DISPLAY and DISPLAY are unset).");
+        eprintln!("Note: No display server detected for GTK. Falling back to cross-platform egui overlay...");
+        crate::overlay_egui::run_egui_overlay();
         return;
     }
     if gtk::init().is_err() {
-        eprintln!("Error: Failed to connect to display server.");
+        eprintln!("Note: GTK display init failed. Falling back to cross-platform egui overlay...");
+        crate::overlay_egui::run_egui_overlay();
         return;
     }
 
     let app = Application::builder()
         .application_id("com.vrec.hud")
+        .flags(gtk::gio::ApplicationFlags::NON_UNIQUE)
         .build();
 
     app.connect_activate(|app| {
@@ -259,7 +280,11 @@ pub fn show_menu_overlay() {
             .build();
 
         #[cfg(target_os = "linux")]
-        {
+        let layer_shell_ok = gtk_layer_shell::is_supported();
+        #[cfg(not(target_os = "linux"))]
+        let layer_shell_ok = false;
+
+        if layer_shell_ok {
             window.init_layer_shell();
             window.set_layer(Layer::Overlay);
             window.set_namespace("vrec-overlay");
@@ -267,14 +292,18 @@ pub fn show_menu_overlay() {
             // Shifted higher towards the top (50px margin) per user feedback
             window.set_layer_shell_margin(gtk_layer_shell::Edge::Top, 50);
             window.set_anchor(gtk_layer_shell::Edge::Top, true);
-        }
-
-        #[cfg(not(target_os = "linux"))]
-        {
+        } else {
             window.set_decorated(false);
             window.set_keep_above(true);
             window.set_skip_taskbar_hint(true);
             window.set_position(gtk::WindowPosition::Center);
+            if let Some(display) = gdk::Display::default()
+                && let Some(mon) = display.primary_monitor().or_else(|| display.monitor(0)) {
+                    let geom = mon.geometry();
+                    let x = geom.x() + (geom.width() - 760) / 2;
+                    let y = geom.y() + 50;
+                    window.move_(x, y);
+            }
         }
 
         // RGBA transparent visual setup
@@ -840,9 +869,11 @@ pub fn show_menu_overlay() {
         // =========================================================================
         let css_provider = CssProvider::new();
         let css = r#"
-            window {
+            window, window.background, .background {
                 background-color: transparent !important;
                 background: transparent !important;
+                border: none !important;
+                box-shadow: none !important;
             }
             .hud-wrapper {
                 background-color: transparent;
@@ -1074,9 +1105,10 @@ pub fn show_menu_overlay() {
             StyleContext::add_provider_for_screen(
                 &screen,
                 &css_provider,
-                gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+                gtk::STYLE_PROVIDER_PRIORITY_USER,
             );
         }
+        window.style_context().add_provider(&css_provider, gtk::STYLE_PROVIDER_PRIORITY_USER);
 
         // =========================================================================
         // EVENT HANDLERS & NAVIGATION (Esc key closes cleanly)
