@@ -16,79 +16,96 @@ pub fn show_notification_overlay() {
 }
 
 pub fn show_notification(message: &str) {
-    #[cfg(unix)]
-    if std::env::var("WAYLAND_DISPLAY").is_err() && std::env::var("DISPLAY").is_err() {
-        return;
-    }
-    if gtk::init().is_err() {
+    #[cfg(target_os = "windows")]
+    {
+        let msg = message.to_string();
+        std::thread::spawn(move || {
+            use std::os::windows::process::CommandExt;
+            let script = format!(
+                "[reflection.assembly]::loadwithpartialname('System.Windows.Forms') | Out-Null; \
+                 $notify = new-object system.windows.forms.notifyicon; \
+                 $notify.icon = [System.Drawing.SystemIcons]::Information; \
+                 $notify.visible = $true; \
+                 $notify.showballoontip(2000, 'vrec', '{}', [system.windows.forms.tooltipicon]::Info); \
+                 Start-Sleep -Seconds 2; \
+                 $notify.dispose()",
+                msg.replace('\'', "''")
+            );
+            let _ = std::process::Command::new("powershell")
+                .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
+                .creation_flags(0x08000000)
+                .output();
+        });
         return;
     }
 
-    let app = Application::builder()
-        .application_id("com.vrec.notification")
-        .build();
+    #[cfg(not(target_os = "windows"))]
+    {
+        if std::env::var("WAYLAND_DISPLAY").is_err() && std::env::var("DISPLAY").is_err() {
+            return;
+        }
+        if gtk::init().is_err() {
+            return;
+        }
 
-    let msg_text = message.to_string();
-    app.connect_activate(move |app| {
-        let window = ApplicationWindow::builder()
-            .application(app)
-            .default_width(320)
-            .default_height(60)
+        let app = Application::builder()
+            .application_id("com.vrec.notification")
             .build();
 
-        #[cfg(target_os = "linux")]
-        {
-            window.init_layer_shell();
-            window.set_layer(Layer::Overlay);
-            window.set_namespace("vrec-notification");
-            window.set_layer_shell_margin(gtk_layer_shell::Edge::Top, 30);
-            window.set_anchor(gtk_layer_shell::Edge::Top, true);
-        }
+        let msg_text = message.to_string();
+        app.connect_activate(move |app| {
+            let window = ApplicationWindow::builder()
+                .application(app)
+                .default_width(320)
+                .default_height(60)
+                .build();
 
-        #[cfg(not(target_os = "linux"))]
-        {
-            window.set_decorated(false);
-            window.set_keep_above(true);
-            window.set_skip_taskbar_hint(true);
-            window.set_position(gtk::WindowPosition::Center);
-        }
-
-        let css_provider = CssProvider::new();
-        let css = r#"
-            window {
-                background-color: #12141a;
-                border-radius: 12px;
-                border: 1px solid rgba(255, 255, 255, 0.15);
-                box-shadow: 0px 8px 32px rgba(0, 0, 0, 0.8);
+            #[cfg(target_os = "linux")]
+            {
+                window.init_layer_shell();
+                window.set_layer(Layer::Overlay);
+                window.set_namespace("vrec-notification");
+                window.set_layer_shell_margin(gtk_layer_shell::Edge::Top, 30);
+                window.set_anchor(gtk_layer_shell::Edge::Top, true);
             }
-            label {
-                color: #ffffff;
-                font-weight: 700;
-                font-size: 14px;
-                padding: 10px 24px;
+
+            let css_provider = CssProvider::new();
+            let css = r#"
+                window {
+                    background-color: #12141a;
+                    border-radius: 12px;
+                    border: 1px solid rgba(255, 255, 255, 0.15);
+                    box-shadow: 0px 8px 32px rgba(0, 0, 0, 0.8);
+                }
+                label {
+                    color: #ffffff;
+                    font-weight: 700;
+                    font-size: 14px;
+                    padding: 10px 24px;
+                }
+            "#;
+            let _ = css_provider.load_from_data(css.as_bytes());
+            if let Some(screen) = gdk::Screen::default() {
+                StyleContext::add_provider_for_screen(
+                    &screen,
+                    &css_provider,
+                    gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+                );
             }
-        "#;
-        let _ = css_provider.load_from_data(css.as_bytes());
-        if let Some(screen) = gdk::Screen::default() {
-            StyleContext::add_provider_for_screen(
-                &screen,
-                &css_provider,
-                gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
-            );
-        }
 
-        let label = Label::new(Some(&msg_text));
-        window.add(&label);
-        window.show_all();
+            let label = Label::new(Some(&msg_text));
+            window.add(&label);
+            window.show_all();
 
-        let window_clone = window.clone();
-        gtk::glib::timeout_add_local(Duration::from_millis(2200), move || {
-            window_clone.close();
-            gtk::glib::ControlFlow::Break
+            let window_clone = window.clone();
+            gtk::glib::timeout_add_local(Duration::from_millis(2200), move || {
+                window_clone.close();
+                gtk::glib::ControlFlow::Break
+            });
         });
-    });
 
-    app.run_with_args(&[] as &[&str]);
+        app.run_with_args(&[] as &[&str]);
+    }
 }
 
 pub fn show_menu_overlay() {

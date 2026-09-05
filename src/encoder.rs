@@ -336,7 +336,7 @@ impl VaapiEncoder {
                     av_frame_free(&mut drm_frame);
                 }
                 #[cfg(target_os = "windows")]
-                Frame::D3D11Texture { handle } => {
+                Frame::D3D11Texture { handle, .. } => {
                     println!("D3D11: Mock encoding D3D11 texture (Windows zero-copy). Handle: {}", handle);
                 }
             }

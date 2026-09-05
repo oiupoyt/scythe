@@ -1,3 +1,5 @@
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+
 use vrec::capture::{Frame, FrameSource};
 use vrec::encoder::VideoEncoder;
 use vrec::ring::Packet;
@@ -99,9 +101,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     #[cfg(windows)]
     let listener = {
-        let l = std::net::TcpListener::bind("127.0.0.1:42069")?;
-        println!("Daemon listening on TCP IPC: 127.0.0.1:42069");
-        l
+        match std::net::TcpListener::bind("127.0.0.1:42069") {
+            Ok(l) => {
+                println!("Daemon listening on TCP IPC: 127.0.0.1:42069");
+                l
+            }
+            Err(e) => {
+                if vrec::ipc::query_status().is_ok() {
+                    println!("Another instance of vrec-daemon is already running. Exiting cleanly.");
+                    return Ok(());
+                }
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                std::net::TcpListener::bind("127.0.0.1:42069")?
+            }
+        }
     };
 
     let cmd_tx_ipc = cmd_tx.clone();
@@ -114,75 +127,90 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         for stream in listener.incoming() {
             match stream {
                 Ok(mut stream) => {
-                    let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(1000)));
-                    let _ = stream.set_write_timeout(Some(std::time::Duration::from_millis(1000)));
-                    let mut len_buf = [0u8; 4];
-                    if stream.read_exact(&mut len_buf).is_ok() {
-                        let len = u32::from_le_bytes(len_buf) as usize;
-                        let mut payload = vec![0u8; len];
-                        if stream.read_exact(&mut payload).is_ok()
-                            && let Ok(cmd) = serde_json::from_slice::<Command>(&payload) {
-                                match cmd {
-                                    Command::GetStatus => {
-                                        let rec = is_recording_state_ipc.load(Ordering::SeqCst);
-                                        let start_ts = record_start_state_ipc.load(Ordering::SeqCst);
-                                        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
-                                        let duration = if rec && start_ts > 0 {
-                                            now.saturating_sub(start_ts)
-                                        } else {
-                                            0
-                                        };
-                                        let cfg = vrec::config::VrecConfig::load();
-                                        let status = DaemonStatus {
-                                            is_recording: rec,
-                                            recording_duration_sec: duration,
-                                            is_replay_active: replay_enabled_state_ipc.load(Ordering::SeqCst),
-                                            audio_muted: audio_muted_state_ipc.load(Ordering::SeqCst),
-                                            audio_mode: cfg.audio_mode,
-                                            show_cursor: cfg.show_cursor,
-                                            mic_volume: cfg.mic_volume,
-                                            system_volume: cfg.system_volume,
-                                        };
-                                        if let Ok(resp) = serde_json::to_vec(&status) {
-                                            let len_resp = (resp.len() as u32).to_le_bytes();
-                                            let _ = stream.write_all(&len_resp);
-                                            let _ = stream.write_all(&resp);
+                    let cmd_tx_ipc = cmd_tx_ipc.clone();
+                    let is_recording_state_ipc = Arc::clone(&is_recording_state_ipc);
+                    let record_start_state_ipc = Arc::clone(&record_start_state_ipc);
+                    let replay_enabled_state_ipc = Arc::clone(&replay_enabled_state_ipc);
+                    let audio_muted_state_ipc = Arc::clone(&audio_muted_state_ipc);
+
+                    std::thread::spawn(move || {
+                        let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(1500)));
+                        let _ = stream.set_write_timeout(Some(std::time::Duration::from_millis(1500)));
+                        let mut len_buf = [0u8; 4];
+                        if stream.read_exact(&mut len_buf).is_ok() {
+                            let len = u32::from_le_bytes(len_buf) as usize;
+                            let mut payload = vec![0u8; len];
+                            if stream.read_exact(&mut payload).is_ok()
+                                && let Ok(cmd) = serde_json::from_slice::<Command>(&payload) {
+                                    match cmd {
+                                        Command::GetStatus => {
+                                            let rec = is_recording_state_ipc.load(Ordering::SeqCst);
+                                            let start_ts = record_start_state_ipc.load(Ordering::SeqCst);
+                                            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+                                            let duration = if rec && start_ts > 0 {
+                                                now.saturating_sub(start_ts)
+                                            } else {
+                                                0
+                                            };
+                                            let cfg = vrec::config::VrecConfig::load();
+                                            let status = DaemonStatus {
+                                                is_recording: rec,
+                                                recording_duration_sec: duration,
+                                                is_replay_active: replay_enabled_state_ipc.load(Ordering::SeqCst),
+                                                audio_muted: audio_muted_state_ipc.load(Ordering::SeqCst),
+                                                audio_mode: cfg.audio_mode,
+                                                show_cursor: cfg.show_cursor,
+                                                mic_volume: cfg.mic_volume,
+                                                system_volume: cfg.system_volume,
+                                            };
+                                            if let Ok(resp) = serde_json::to_vec(&status) {
+                                                let len_resp = (resp.len() as u32).to_le_bytes();
+                                                let _ = stream.write_all(&len_resp);
+                                                let _ = stream.write_all(&resp);
+                                            }
+                                        },
+                                        Command::ToggleCursor => {
+                                            let mut cfg = vrec::config::VrecConfig::load();
+                                            cfg.show_cursor = !cfg.show_cursor;
+                                            let _ = cfg.save();
+                                            #[cfg(target_os = "linux")]
+                                            {
+                                                let session_type = env::var("XDG_SESSION_TYPE").unwrap_or_default();
+                                                if session_type.to_lowercase() == "wayland" {
+                                                    println!("Cursor display toggled to: {}. Restarting Wayland session...", cfg.show_cursor);
+                                                    let _ = cmd_tx_ipc.send(Command::StopRecording);
+                                                    std::thread::sleep(std::time::Duration::from_millis(150));
+                                                    std::process::exit(0);
+                                                }
+                                            }
+                                            println!("Cursor display toggled to: {}", cfg.show_cursor);
+                                        },
+                                        Command::CycleAudioMode => {
+                                            let mut cfg = vrec::config::VrecConfig::load();
+                                            cfg.audio_mode = match cfg.audio_mode.as_str() {
+                                                "system" => "mic",
+                                                "mic" => "both",
+                                                "both" => "muted",
+                                                _ => "system",
+                                            }.to_string();
+                                            let _ = cfg.save();
+                                            println!("Audio mode cycled to: {}", cfg.audio_mode);
+                                            let _ = cmd_tx_ipc.try_send(Command::ReloadConfig);
+                                        },
+                                        Command::StopDaemon => {
+                                            println!("StopDaemon requested: Finalizing active recordings...");
+                                            vrec::hyprland_binds::unregister_hyprland_binds(&vrec::config::VrecConfig::load());
+                                            let _ = cmd_tx_ipc.send(Command::StopRecording);
+                                            std::thread::sleep(std::time::Duration::from_millis(350));
+                                            std::process::exit(0);
+                                        },
+                                        other => {
+                                            let _ = cmd_tx_ipc.try_send(other);
                                         }
-                                    },
-                                    Command::ToggleCursor => {
-                                        let mut cfg = vrec::config::VrecConfig::load();
-                                        cfg.show_cursor = !cfg.show_cursor;
-                                        let _ = cfg.save();
-                                        println!("Cursor display toggled to: {}. Restarting daemon for new capture session...", cfg.show_cursor);
-                                        let _ = cmd_tx_ipc.send(Command::StopRecording);
-                                        std::thread::sleep(std::time::Duration::from_millis(150));
-                                        std::process::exit(0);
-                                    },
-                                    Command::CycleAudioMode => {
-                                        let mut cfg = vrec::config::VrecConfig::load();
-                                        cfg.audio_mode = match cfg.audio_mode.as_str() {
-                                            "system" => "mic",
-                                            "mic" => "both",
-                                            "both" => "muted",
-                                            _ => "system",
-                                        }.to_string();
-                                        let _ = cfg.save();
-                                        println!("Audio mode cycled to: {}", cfg.audio_mode);
-                                        let _ = cmd_tx_ipc.try_send(Command::ReloadConfig);
-                                    },
-                                    Command::StopDaemon => {
-                                        println!("StopDaemon requested: Finalizing active recordings...");
-                                        vrec::hyprland_binds::unregister_hyprland_binds(&vrec::config::VrecConfig::load());
-                                        let _ = cmd_tx_ipc.send(Command::StopRecording);
-                                        std::thread::sleep(std::time::Duration::from_millis(350));
-                                        std::process::exit(0);
-                                    },
-                                    other => {
-                                        let _ = cmd_tx_ipc.try_send(other);
                                     }
                                 }
-                            }
-                    }
+                        }
+                    });
                 }
                 Err(err) => {
                     eprintln!("Socket error: {}", err);
@@ -253,7 +281,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Frame::Raw { width, height, .. } => (*width, *height),
         Frame::DmaBuf { width, height, .. } => (*width, *height),
         #[cfg(target_os = "windows")]
-        Frame::D3D11Texture { .. } => (1920, 1080),
+        Frame::D3D11Texture { width, height, .. } => (*width, *height),
     };
 
     let _ = frame_tx.send(first_frame);

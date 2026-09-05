@@ -14,7 +14,7 @@ RequestExecutionLevel user
 
 !define MUI_FINISHPAGE_RUN "$INSTDIR\vrec-ui.exe"
 !define MUI_FINISHPAGE_RUN_PARAMETERS "--menu"
-!define MUI_FINISHPAGE_RUN_TEXT "Launch vrec Studio Overlay"
+!define MUI_FINISHPAGE_RUN_TEXT "Launch vrec"
 !insertmacro MUI_PAGE_FINISH
 
 !insertmacro MUI_UNPAGE_CONFIRM
@@ -28,8 +28,7 @@ Section "vrec" SecMain
 
   ; Create Start Menu and Desktop shortcuts
   CreateDirectory "$SMPROGRAMS\vrec"
-  CreateShortcut "$SMPROGRAMS\vrec\vrec Studio.lnk" "$INSTDIR\vrec-ui.exe" "--menu"
-  CreateShortcut "$SMPROGRAMS\vrec\vrec Background Engine.lnk" "$INSTDIR\vrec-daemon.exe" ""
+  CreateShortcut "$SMPROGRAMS\vrec\vrec.lnk" "$INSTDIR\vrec-ui.exe" "--menu"
   CreateShortcut "$DESKTOP\vrec.lnk" "$INSTDIR\vrec-ui.exe" "--menu"
 
   ; Register uninstaller with Windows Control Panel / Settings

@@ -35,6 +35,8 @@ pub enum Frame {
     #[cfg(target_os = "windows")]
     D3D11Texture {
         handle: usize,
+        width: u32,
+        height: u32,
     },
 }
 

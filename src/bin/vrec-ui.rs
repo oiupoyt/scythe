@@ -1,3 +1,5 @@
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+
 use vrec::ipc::{Command, send_command, query_status};
 use vrec::overlay::show_notification;
 use std::env;
@@ -35,7 +37,8 @@ fn ensure_wayland_env() {
 }
 
 fn get_daemon_cmd() -> std::process::Command {
-    if let Ok(mut path) = std::env::current_exe() {
+    #[allow(unused_mut)]
+    let mut cmd = if let Ok(mut path) = std::env::current_exe() {
         path.pop();
         #[cfg(target_os = "windows")]
         let candidate = path.join("vrec-daemon.exe");
@@ -43,30 +46,99 @@ fn get_daemon_cmd() -> std::process::Command {
         let candidate = path.join("vrec-daemon");
 
         if candidate.exists() {
-            return std::process::Command::new(candidate);
+            std::process::Command::new(candidate)
+        } else {
+            #[cfg(target_os = "windows")]
+            {
+                std::process::Command::new("vrec-daemon.exe")
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                std::process::Command::new("vrec-daemon")
+            }
         }
-    }
+    } else {
+        #[cfg(target_os = "windows")]
+        {
+            std::process::Command::new("vrec-daemon.exe")
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            std::process::Command::new("vrec-daemon")
+        }
+    };
+
     #[cfg(target_os = "windows")]
-    return std::process::Command::new("vrec-daemon.exe");
-    #[cfg(not(target_os = "windows"))]
-    return std::process::Command::new("vrec-daemon");
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+
+    cmd
+}
+
+fn get_ui_cmd() -> std::process::Command {
+    #[allow(unused_mut)]
+    let mut cmd = if let Ok(path) = std::env::current_exe() {
+        std::process::Command::new(path)
+    } else {
+        #[cfg(target_os = "windows")]
+        {
+            std::process::Command::new("vrec-ui.exe")
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            std::process::Command::new("vrec-ui")
+        }
+    };
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+
+    cmd
 }
 
 fn ensure_daemon_running() {
     if query_status().is_err() {
-        println!("vrec-daemon not running. Auto-launching vrec-daemon...");
         let _ = get_daemon_cmd()
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn();
-        for _ in 0..20 {
-            std::thread::sleep(std::time::Duration::from_millis(150));
+        for _ in 0..15 {
+            std::thread::sleep(std::time::Duration::from_millis(100));
             if query_status().is_ok() {
-                println!("vrec-daemon successfully connected.");
                 break;
             }
         }
+    }
+}
+
+fn ensure_hotkeys_running() {
+    #[cfg(target_os = "windows")]
+    {
+        unsafe {
+            use windows::Win32::Foundation::{CloseHandle, GetLastError, WIN32_ERROR};
+            use windows::Win32::System::Threading::CreateMutexW;
+
+            if let Ok(handle) = CreateMutexW(None, false, windows::core::w!("Global\\vrec_hotkeys_single_instance")) {
+                if GetLastError() == WIN32_ERROR(183) { // ERROR_ALREADY_EXISTS
+                    let _ = CloseHandle(handle);
+                    return;
+                }
+                let _ = CloseHandle(handle);
+            }
+        }
+
+        let _ = get_ui_cmd()
+            .arg("--hotkeys")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
     }
 }
 
@@ -135,6 +207,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             }
             "--menu" => {
                 ensure_daemon_running();
+                ensure_hotkeys_running();
                 vrec::overlay_egui::run_egui_overlay();
                 return Ok(());
             }
@@ -197,9 +270,22 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
     } else {
         ensure_daemon_running();
+        ensure_hotkeys_running();
         vrec::overlay_egui::run_egui_overlay();
         return Ok(());
     }
+
+    #[cfg(target_os = "windows")]
+    let _mutex = unsafe {
+        use windows::Win32::Foundation::{GetLastError, WIN32_ERROR};
+        use windows::Win32::System::Threading::CreateMutexW;
+
+        let handle = CreateMutexW(None, true, windows::core::w!("Global\\vrec_hotkeys_single_instance"));
+        if GetLastError() == WIN32_ERROR(183) {
+            return Ok(());
+        }
+        handle.ok()
+    };
 
     println!("Starting vrec UI/Hotkey process...");
     
@@ -223,7 +309,13 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         println!("X11 session detected.");
     }
     
-    let manager = GlobalHotKeyManager::new()?;
+    let manager = match GlobalHotKeyManager::new() {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("Failed to create global hotkey manager: {}", e);
+            return Ok(());
+        }
+    };
     let hotkey_menu = HotKey::new(Some(Modifiers::ALT), Code::KeyZ);
     let hotkey_save = HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyR);
     let hotkey_record = HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::F9);
@@ -241,7 +333,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if let Ok(event) = receiver.try_recv() {
             if event.id == hotkey_menu.id() {
                 ensure_daemon_running();
-                vrec::overlay_egui::run_egui_overlay();
+                let _ = get_ui_cmd().arg("--menu").spawn();
             } else if event.id == hotkey_save.id() {
                 let _ = send_with_notification(Command::SaveReplay, "Replay saved");
             } else if event.id == hotkey_record.id() {

@@ -16,8 +16,8 @@ pub struct WindowsCapture {
     context: ID3D11DeviceContext,
     duplication: IDXGIOutputDuplication,
     gpu_texture: ID3D11Texture2D,
-    width: u32,
-    height: u32,
+    pub width: u32,
+    pub height: u32,
 }
 
 #[cfg(target_os = "windows")]
@@ -30,14 +30,40 @@ impl WindowsCapture {
             // Initialize COM library on capture thread
             let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
 
-            // Create D3D11 hardware device
+            // Create DXGI Factory to find the display adapter with active outputs
+            let factory: IDXGIFactory1 = CreateDXGIFactory1()?;
+            let mut chosen_adapter: Option<IDXGIAdapter1> = None;
+            let mut chosen_output: Option<IDXGIOutput1> = None;
+
+            let mut a_idx = 0;
+            while let Ok(adapter) = factory.EnumAdapters1(a_idx) {
+                let mut o_idx = 0;
+                while let Ok(output) = adapter.EnumOutputs(o_idx) {
+                    if let Ok(output1) = output.cast::<IDXGIOutput1>() {
+                        chosen_adapter = Some(adapter);
+                        chosen_output = Some(output1);
+                        break;
+                    }
+                    o_idx += 1;
+                }
+                if chosen_adapter.is_some() {
+                    break;
+                }
+                a_idx += 1;
+            }
+
+            let (adapter, output1) = match (chosen_adapter, chosen_output) {
+                (Some(a), Some(o)) => (a, o),
+                _ => return Err("No active display output found for Windows desktop capture".into()),
+            };
+
             let mut device: Option<ID3D11Device> = None;
             let mut context: Option<ID3D11DeviceContext> = None;
             let mut feature_level = D3D_FEATURE_LEVEL_11_0;
 
             D3D11CreateDevice(
-                None,
-                D3D_DRIVER_TYPE_HARDWARE,
+                Some(&adapter),
+                D3D_DRIVER_TYPE_UNKNOWN,
                 HMODULE(std::ptr::null_mut()),
                 D3D11_CREATE_DEVICE_BGRA_SUPPORT,
                 Some(&[D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0]),
@@ -50,21 +76,14 @@ impl WindowsCapture {
             let device = device.ok_or("Failed to create D3D11 device")?;
             let context = context.ok_or("Failed to create D3D11 context")?;
 
-            // Retrieve DXGI Output for the primary display
-            let dxgi_device: IDXGIDevice = device.cast()?;
-            let adapter = dxgi_device.GetAdapter()?;
-            let output = adapter.EnumOutputs(0)?;
-            let output1: IDXGIOutput1 = output.cast()?;
-
-            let desc = output.GetDesc()?;
-            let width = (desc.DesktopCoordinates.right - desc.DesktopCoordinates.left) as u32;
-            let height = (desc.DesktopCoordinates.bottom - desc.DesktopCoordinates.top) as u32;
+            let desc = output1.GetDesc()?;
+            let width = (desc.DesktopCoordinates.right - desc.DesktopCoordinates.left).unsigned_abs();
+            let height = (desc.DesktopCoordinates.bottom - desc.DesktopCoordinates.top).unsigned_abs();
 
             // Initialize Desktop Duplication
             let duplication = output1.DuplicateOutput(&device)?;
 
             // Allocate a dedicated VRAM-resident GPU texture for 100% zero-copy capture
-            // (Frame stays on GPU die, zero PCIe bus readback, 0% CPU consumption)
             let gpu_desc = D3D11_TEXTURE2D_DESC {
                 Width: width,
                 Height: height,
@@ -99,10 +118,17 @@ impl WindowsCapture {
         unsafe {
             let dxgi_device: IDXGIDevice = self.device.cast()?;
             let adapter = dxgi_device.GetAdapter()?;
-            let output = adapter.EnumOutputs(0)?;
-            let output1: IDXGIOutput1 = output.cast()?;
-            self.duplication = output1.DuplicateOutput(&self.device)?;
-            Ok(())
+            let mut o_idx = 0;
+            while let Ok(output) = adapter.EnumOutputs(o_idx) {
+                if let Ok(output1) = output.cast::<IDXGIOutput1>() {
+                    if let Ok(dup) = output1.DuplicateOutput(&self.device) {
+                        self.duplication = dup;
+                        return Ok(());
+                    }
+                }
+                o_idx += 1;
+            }
+            Err("Failed to reinitialize desktop duplication".into())
         }
     }
 }
@@ -120,24 +146,26 @@ impl FrameSource for WindowsCapture {
                         if let Some(resource) = desktop_resource {
                             let texture: ID3D11Texture2D = resource.cast()?;
                             
-                            // Copy directly on the GPU from the desktop buffer to our persistent VRAM texture
+                            // Copy directly on the GPU from desktop buffer to persistent VRAM texture
                             self.context.CopyResource(&self.gpu_texture, &texture);
                             
                             // Immediately release the desktop frame back to the DWM compositor
                             let _ = self.duplication.ReleaseFrame();
 
-                            // Pass the VRAM texture handle directly to the hardware encoder (Zero CPU copy!)
                             return Ok(Frame::D3D11Texture {
                                 handle: self.gpu_texture.as_raw() as usize,
+                                width: self.width,
+                                height: self.height,
                             });
                         }
                         let _ = self.duplication.ReleaseFrame();
                     }
                     Err(e) if e.code() == DXGI_ERROR_WAIT_TIMEOUT => {
-                        // Display is idle (no new pixels), yield current texture without spinning CPU
                         std::thread::sleep(std::time::Duration::from_millis(8));
                         return Ok(Frame::D3D11Texture {
                             handle: self.gpu_texture.as_raw() as usize,
+                            width: self.width,
+                            height: self.height,
                         });
                     }
                     Err(e) if e.code() == DXGI_ERROR_ACCESS_LOST => {
@@ -154,6 +182,8 @@ impl FrameSource for WindowsCapture {
 
             Ok(Frame::D3D11Texture {
                 handle: self.gpu_texture.as_raw() as usize,
+                width: self.width,
+                height: self.height,
             })
         }
     }

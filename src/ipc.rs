@@ -87,11 +87,12 @@ pub fn send_command(cmd: Command) -> Result<(), Box<dyn std::error::Error + Send
 
         #[cfg(windows)]
         {
-            use std::net::TcpStream;
-            match TcpStream::connect("127.0.0.1:42069") {
+            use std::net::{SocketAddr, TcpStream};
+            let addr: SocketAddr = "127.0.0.1:42069".parse().unwrap();
+            match TcpStream::connect_timeout(&addr, Duration::from_millis(300)) {
                 Ok(mut stream) => {
-                    let _ = stream.set_write_timeout(Some(Duration::from_millis(1000)));
-                    let _ = stream.set_read_timeout(Some(Duration::from_millis(1000)));
+                    let _ = stream.set_write_timeout(Some(Duration::from_millis(600)));
+                    let _ = stream.set_read_timeout(Some(Duration::from_millis(600)));
                     if stream.write_all(&len_buf).is_ok() && stream.write_all(&payload).is_ok() {
                         return Ok(());
                     }
@@ -128,14 +129,15 @@ pub fn query_status() -> Result<DaemonStatus, Box<dyn std::error::Error + Send +
 
         #[cfg(windows)]
         let stream_res = {
-            use std::net::TcpStream;
-            TcpStream::connect("127.0.0.1:42069")
+            use std::net::{SocketAddr, TcpStream};
+            let addr: SocketAddr = "127.0.0.1:42069".parse().unwrap();
+            TcpStream::connect_timeout(&addr, Duration::from_millis(300))
         };
 
         match stream_res {
             Ok(mut stream) => {
-                let _ = stream.set_write_timeout(Some(Duration::from_millis(1000)));
-                let _ = stream.set_read_timeout(Some(Duration::from_millis(1000)));
+                let _ = stream.set_write_timeout(Some(Duration::from_millis(600)));
+                let _ = stream.set_read_timeout(Some(Duration::from_millis(600)));
 
                 if stream.write_all(&len_buf).is_err() || stream.write_all(&payload).is_err() {
                     continue;
