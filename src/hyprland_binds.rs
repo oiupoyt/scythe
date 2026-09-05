@@ -113,7 +113,7 @@ pub fn register_hyprland_binds(config: &ScytheConfig) {
         .args(["eval", r#"hl.layer_rule({ match = { namespace = "scythe-notification" }, blur = true, ignore_alpha = 0.1 })"#])
         .output();
     let _ = Command::new("hyprctl")
-        .args(["eval", r#"hl.window_rule({ match = { class = "scythe-overlay" }, float = true, pin = true, stay_focused = true })"#])
+        .args(["eval", r#"hl.window_rule({ match = { class = "scythe-overlay" }, float = true, pin = true, stay_focused = true, move = "0 0", size = "100% 100%" })"#])
         .output();
     let _ = Command::new("hyprctl")
         .args(["eval", r#"hl.layer_rule({ match = { namespace = "vrec-overlay" }, blur = true, ignore_alpha = 0.1 })"#])
@@ -122,17 +122,20 @@ pub fn register_hyprland_binds(config: &ScytheConfig) {
     // Also register legacy window rules for backward compatibility with older Hyprland versions
     let legacy_rules = [
         "float, class:^(scythe-overlay)$",
-        "move 50% 45, class:^(scythe-overlay)$",
+        "move 0 0, class:^(scythe-overlay)$",
+        "size 100% 100%, class:^(scythe-overlay)$",
         "pin, class:^(scythe-overlay)$",
         "stayfocused, class:^(scythe-overlay)$",
         "noborder, class:^(scythe-overlay)$",
         "float, class:^(scythe-hud)$",
-        "move 50% 45, class:^(scythe-hud)$",
+        "move 0 0, class:^(scythe-hud)$",
+        "size 100% 100%, class:^(scythe-hud)$",
         "pin, class:^(scythe-hud)$",
         "stayfocused, class:^(scythe-hud)$",
         "noborder, class:^(scythe-hud)$",
         "float, class:^(vrec-overlay)$",
-        "move 50% 45, class:^(vrec-overlay)$",
+        "move 0 0, class:^(vrec-overlay)$",
+        "size 100% 100%, class:^(vrec-overlay)$",
         "pin, class:^(vrec-overlay)$",
         "stayfocused, class:^(vrec-overlay)$",
         "noborder, class:^(vrec-overlay)$",

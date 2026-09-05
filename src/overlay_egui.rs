@@ -13,6 +13,38 @@ pub enum ShadowPlayView {
     Gallery,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeybindAction {
+    Menu,
+    SaveReplay,
+    ToggleRecord,
+    ToggleCursor,
+}
+
+fn format_egui_key(key: egui::Key) -> Option<String> {
+    match key {
+        egui::Key::Escape => None,
+        egui::Key::Space => Some("Space".to_string()),
+        egui::Key::Tab => Some("Tab".to_string()),
+        egui::Key::Enter => Some("Return".to_string()),
+        egui::Key::Backspace => Some("BackSpace".to_string()),
+        egui::Key::Insert => Some("Insert".to_string()),
+        egui::Key::Delete => Some("Delete".to_string()),
+        egui::Key::Home => Some("Home".to_string()),
+        egui::Key::End => Some("End".to_string()),
+        egui::Key::PageUp => Some("Page_Up".to_string()),
+        egui::Key::PageDown => Some("Page_Down".to_string()),
+        _ => {
+            let name = format!("{:?}", key);
+            if name.starts_with("Num") && name.len() > 3 {
+                Some(name[3..].to_string())
+            } else {
+                Some(name)
+            }
+        }
+    }
+}
+
 fn probe_duration_sec(path: &std::path::Path) -> f32 {
     let out = std::process::Command::new("ffprobe")
         .args([
@@ -95,7 +127,7 @@ fn render_vu_meter(ui: &mut egui::Ui, level: f32, width: f32, height: f32, label
 
     let bg_color = Color32::from_rgb(18, 24, 34);
     let border_stroke = Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 30));
-    ui.painter().rect(rect, CornerRadius::same(3_u8), bg_color, border_stroke, egui::StrokeKind::Inside);
+    ui.painter().rect(rect, CornerRadius::ZERO, bg_color, border_stroke, egui::StrokeKind::Inside);
 
     let fill_w = (rect.width() * clamped).max(0.0);
     if fill_w > 0.5 {
@@ -105,9 +137,9 @@ fn render_vu_meter(ui: &mut egui::Ui, level: f32, width: f32, height: f32, label
         } else if clamped > 0.65 {
             Color32::from_rgb(234, 179, 8)
         } else {
-            Color32::from_rgb(118, 185, 0)
+            Color32::from_rgb(34, 197, 94)
         };
-        ui.painter().rect_filled(fill_rect, CornerRadius::same(2_u8), fill_color);
+        ui.painter().rect_filled(fill_rect, CornerRadius::ZERO, fill_color);
     }
 
     if clamped > 0.05 {
@@ -243,11 +275,12 @@ fn pick_folder(current_dir: &str, tx: Sender<String>) {
 }
 
 // Helper to render mechanical keyboard keycap badges
+#[allow(dead_code)]
 fn render_keycap(ui: &mut egui::Ui, text: &str) {
     egui::Frame::NONE
         .fill(Color32::from_rgb(18, 22, 30))
         .stroke(Stroke::new(1.0_f32, Color32::from_rgb(50, 60, 78)))
-        .corner_radius(CornerRadius::same(4_u8))
+        .corner_radius(CornerRadius::ZERO)
         .inner_margin(Margin::symmetric(6_i8, 2_i8))
         .show(ui, |ui| {
             ui.label(
@@ -259,33 +292,74 @@ fn render_keycap(ui: &mut egui::Ui, text: &str) {
         });
 }
 
-// Pill button selector
-fn pill_button(ui: &mut egui::Ui, text: &str, active: bool) -> bool {
-    let fill = if active {
-        Color32::from_rgb(118, 185, 0)
+// Clickable keycap button for interactive rebinding
+fn render_keycap_button(
+    ui: &mut egui::Ui,
+    text: &str,
+    listening: bool,
+) -> bool {
+    let (fill, stroke, text_color, label_text) = if listening {
+        (
+            Color32::from_rgba_unmultiplied(34, 197, 94, 45),
+            Stroke::new(1.5_f32, Color32::from_rgb(34, 197, 94)),
+            Color32::from_rgb(34, 197, 94),
+            "PRESS KEYS...".to_string(),
+        )
     } else {
-        Color32::from_rgba_unmultiplied(255, 255, 255, 14)
+        (
+            Color32::from_rgba_unmultiplied(20, 26, 38, 220),
+            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 35)),
+            Color32::from_rgb(226, 232, 240),
+            text.to_string(),
+        )
+    };
+
+    let btn = egui::Button::new(
+        egui::RichText::new(label_text)
+            .font(FontId::monospace(10.5))
+            .strong()
+            .color(text_color),
+    )
+    .fill(fill)
+    .stroke(stroke)
+    .corner_radius(CornerRadius::ZERO)
+    .min_size(Vec2::new(130.0, 26.0));
+
+    ui.add(btn).clicked()
+}
+
+// Minimal squared button selector
+fn squared_button(ui: &mut egui::Ui, text: &str, active: bool) -> bool {
+    let fill = if active {
+        Color32::from_rgb(34, 197, 94)
+    } else {
+        Color32::from_rgba_unmultiplied(255, 255, 255, 12)
     };
     let stroke = if active {
-        Stroke::new(1.0_f32, Color32::from_rgb(140, 224, 0))
+        Stroke::new(1.0_f32, Color32::from_rgb(34, 197, 94))
     } else {
-        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 28))
+        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 25))
     };
     let text_color = if active {
-        Color32::from_rgb(11, 18, 4)
+        Color32::from_rgb(10, 14, 22)
     } else {
         Color32::from_rgb(203, 213, 225)
     };
     let btn = egui::Button::new(egui::RichText::new(text).size(11.0).strong().color(text_color))
         .fill(fill)
         .stroke(stroke)
-        .corner_radius(CornerRadius::same(6_u8));
+        .corner_radius(CornerRadius::ZERO);
     ui.add(btn).clicked()
 }
 
-// Sleek Switch Toggle (iOS / Modern ShadowPlay Style)
+#[allow(dead_code)]
+fn pill_button(ui: &mut egui::Ui, text: &str, active: bool) -> bool {
+    squared_button(ui, text, active)
+}
+
+// Sleek Squared Switch Toggle
 fn toggle_switch(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
-    let desired_size = egui::vec2(42.0, 22.0);
+    let desired_size = egui::vec2(38.0, 20.0);
     let (rect, mut response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
     if response.clicked() {
         *on = !*on;
@@ -296,16 +370,16 @@ fn toggle_switch(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
     if ui.is_rect_visible(rect) {
         let how_on = ui.ctx().animate_bool(response.id, *on);
         let bg_color = if *on {
-            Color32::from_rgb(118, 185, 0)
+            Color32::from_rgb(34, 197, 94)
         } else {
-            Color32::from_rgb(30, 40, 56)
+            Color32::from_rgb(30, 41, 59)
         };
-        let stroke = Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 50));
-        let radius = 0.5 * rect.height();
-        ui.painter().rect(rect, CornerRadius::same(radius as u8), bg_color, stroke, egui::StrokeKind::Inside);
-        let circle_x = egui::lerp((rect.left() + radius)..=(rect.right() - radius), how_on);
-        let center = egui::pos2(circle_x, rect.center().y);
-        ui.painter().circle_filled(center, radius - 2.5, Color32::WHITE);
+        let stroke = Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 40));
+        ui.painter().rect(rect, CornerRadius::ZERO, bg_color, stroke, egui::StrokeKind::Inside);
+        let knob_w = rect.height() - 4.0;
+        let knob_x = egui::lerp((rect.left() + 2.0)..=(rect.right() - knob_w - 2.0), how_on);
+        let knob_rect = egui::Rect::from_min_size(egui::pos2(knob_x, rect.top() + 2.0), egui::vec2(knob_w, knob_w));
+        ui.painter().rect_filled(knob_rect, CornerRadius::ZERO, Color32::WHITE);
     }
     response
 }
@@ -314,11 +388,11 @@ fn toggle_switch(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
 fn draw_replay_icon(painter: &egui::Painter, center: egui::Pos2, radius: f32, is_active: bool) {
     use std::f32::consts::PI;
     let color = if is_active {
-        Color32::from_rgb(118, 185, 0)
+        Color32::from_rgb(34, 197, 94)
     } else {
         Color32::from_rgb(148, 163, 184)
     };
-    let stroke = Stroke::new(3.8_f32, color);
+    let stroke = Stroke::new(3.5_f32, color);
     let start_angle = 0.25 * PI;
     let end_angle = 1.80 * PI;
     let steps = 32;
@@ -336,8 +410,8 @@ fn draw_replay_icon(painter: &egui::Painter, center: egui::Pos2, radius: f32, is
     let arrow_tip = points[0];
     let tangent = Vec2::new(-start_angle.sin(), start_angle.cos());
     let normal = Vec2::new(start_angle.cos(), start_angle.sin());
-    let p1 = arrow_tip - tangent * 8.5 + normal * 5.5;
-    let p2 = arrow_tip - tangent * 8.5 - normal * 5.5;
+    let p1 = arrow_tip - tangent * 8.0 + normal * 5.0;
+    let p2 = arrow_tip - tangent * 8.0 - normal * 5.0;
     painter.add(egui::Shape::convex_polygon(
         vec![arrow_tip, p1, p2],
         color,
@@ -361,31 +435,83 @@ fn draw_record_icon(painter: &egui::Painter, center: egui::Pos2, radius: f32, is
     if is_recording {
         let pulse = ((anim_time * 5.0).sin() * 0.5 + 0.5) * 4.0;
         let glow_color = Color32::from_rgba_unmultiplied(239, 68, 68, 60);
-        painter.circle_filled(center, radius + 6.0 + pulse, glow_color);
-        painter.circle_stroke(center, radius + 2.0, Stroke::new(3.5_f32, Color32::from_rgb(239, 68, 68)));
-        painter.circle_filled(center, radius * 0.50, Color32::from_rgb(239, 68, 68));
+        painter.rect_filled(
+            egui::Rect::from_center_size(center, Vec2::splat((radius + pulse) * 2.0)),
+            CornerRadius::ZERO,
+            glow_color,
+        );
+        painter.rect_stroke(
+            egui::Rect::from_center_size(center, Vec2::splat(radius * 2.2)),
+            CornerRadius::ZERO,
+            Stroke::new(2.5_f32, Color32::from_rgb(239, 68, 68)),
+            egui::StrokeKind::Inside,
+        );
+        painter.rect_filled(
+            egui::Rect::from_center_size(center, Vec2::splat(radius * 1.1)),
+            CornerRadius::ZERO,
+            Color32::from_rgb(239, 68, 68),
+        );
     } else {
-        painter.circle_stroke(center, radius + 1.0, Stroke::new(3.2_f32, Color32::from_rgb(148, 163, 184)));
-        painter.circle_filled(center, radius * 0.48, Color32::from_rgb(226, 232, 240));
+        painter.rect_stroke(
+            egui::Rect::from_center_size(center, Vec2::splat(radius * 2.0)),
+            CornerRadius::ZERO,
+            Stroke::new(2.0_f32, Color32::from_rgb(148, 163, 184)),
+            egui::StrokeKind::Inside,
+        );
+        painter.rect_filled(
+            egui::Rect::from_center_size(center, Vec2::splat(radius * 1.0)),
+            CornerRadius::ZERO,
+            Color32::from_rgb(226, 232, 240),
+        );
     }
 }
 
 fn draw_gear_icon(painter: &egui::Painter, center: egui::Pos2, radius: f32, color: Color32) {
-    let stroke = Stroke::new(3.0_f32, color);
-    painter.circle_stroke(center, radius * 0.75, stroke);
-    painter.circle_filled(center, radius * 0.32, Color32::from_rgb(18, 20, 24));
-    painter.circle_stroke(center, radius * 0.32, stroke);
-
-    use std::f32::consts::PI;
-    for i in 0..8 {
-        let angle = i as f32 * (PI / 4.0);
-        let p_in = center + Vec2::new(angle.cos() * (radius * 0.68), angle.sin() * (radius * 0.68));
-        let p_out = center + Vec2::new(angle.cos() * (radius * 1.08), angle.sin() * (radius * 1.08));
-        painter.line_segment([p_in, p_out], Stroke::new(4.2_f32, color));
-    }
+    let stroke = Stroke::new(2.2_f32, color);
+    let size = radius * 1.5;
+    // Central squared ring
+    painter.rect_stroke(
+        egui::Rect::from_center_size(center, Vec2::splat(size)),
+        CornerRadius::ZERO,
+        stroke,
+        egui::StrokeKind::Inside,
+    );
+    // Inner square
+    painter.rect_filled(
+        egui::Rect::from_center_size(center, Vec2::splat(size * 0.42)),
+        CornerRadius::ZERO,
+        color,
+    );
+    // 4 square teeth projecting out
+    let tooth_len = radius * 0.38;
+    let tooth_w = radius * 0.36;
+    // Top
+    painter.rect_filled(
+        egui::Rect::from_min_size(center + Vec2::new(-tooth_w / 2.0, -size / 2.0 - tooth_len), Vec2::new(tooth_w, tooth_len)),
+        CornerRadius::ZERO,
+        color,
+    );
+    // Bottom
+    painter.rect_filled(
+        egui::Rect::from_min_size(center + Vec2::new(-tooth_w / 2.0, size / 2.0), Vec2::new(tooth_w, tooth_len)),
+        CornerRadius::ZERO,
+        color,
+    );
+    // Left
+    painter.rect_filled(
+        egui::Rect::from_min_size(center + Vec2::new(-size / 2.0 - tooth_len, -tooth_w / 2.0), Vec2::new(tooth_len, tooth_w)),
+        CornerRadius::ZERO,
+        color,
+    );
+    // Right
+    painter.rect_filled(
+        egui::Rect::from_min_size(center + Vec2::new(size / 2.0, -tooth_w / 2.0), Vec2::new(tooth_len, tooth_w)),
+        CornerRadius::ZERO,
+        color,
+    );
 }
 
-// Frosted Glass Action Card Renderer (Matches GTK overlay exact layout)
+// Minimal Squared Action Card Renderer
 #[allow(clippy::too_many_arguments)]
 fn render_action_card(
     ui: &mut egui::Ui,
@@ -403,56 +529,45 @@ fn render_action_card(
     let hovered = response.hovered();
 
     let bg = if dropdown_open {
-        Color32::from_rgba_unmultiplied(26, 38, 56, 230)
+        Color32::from_rgba_unmultiplied(20, 28, 42, 245)
     } else if hovered {
-        Color32::from_rgba_unmultiplied(26, 38, 56, 210)
+        Color32::from_rgba_unmultiplied(18, 25, 38, 235)
     } else {
-        Color32::from_rgba_unmultiplied(20, 28, 42, 175)
+        Color32::from_rgba_unmultiplied(12, 16, 24, 225)
     };
 
     let border = if dropdown_open || hovered {
-        Color32::from_rgb(118, 185, 0)
+        Color32::from_rgb(34, 197, 94)
     } else {
-        Color32::from_rgba_unmultiplied(255, 255, 255, 38)
-    };
-
-    let corner_radius = if dropdown_open {
-        CornerRadius { nw: 14, ne: 14, sw: 0, se: 0 }
-    } else {
-        CornerRadius::same(14_u8)
+        Color32::from_rgba_unmultiplied(255, 255, 255, 30)
     };
 
     let painter = ui.painter();
     // Drop shadow
     painter.rect_filled(
-        rect.translate(Vec2::new(0.0, 8.0)),
-        corner_radius,
+        rect.translate(Vec2::new(0.0, 6.0)),
+        CornerRadius::ZERO,
         Color32::from_rgba_unmultiplied(0, 0, 0, 90),
     );
-    // Card background
-    painter.rect(rect, corner_radius, bg, Stroke::new(1.0_f32, border), egui::StrokeKind::Inside);
-
-    // Top specular highlight line
-    let p_left = egui::pos2(rect.left() + 10.0, rect.top() + 1.0);
-    let p_right = egui::pos2(rect.right() - 10.0, rect.top() + 1.0);
-    painter.line_segment([p_left, p_right], Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 45)));
+    // Card background - SQUARED
+    painter.rect(rect, CornerRadius::ZERO, bg, Stroke::new(1.0_f32, border), egui::StrokeKind::Inside);
 
     // Card Title
     painter.text(
-        egui::pos2(rect.center().x, rect.top() + 26.0),
+        egui::pos2(rect.center().x, rect.top() + 24.0),
         egui::Align2::CENTER_CENTER,
         title,
-        FontId::proportional(11.5),
-        if is_active { Color32::from_rgb(118, 185, 0) } else { Color32::WHITE },
+        FontId::proportional(12.0),
+        if is_active { Color32::from_rgb(34, 197, 94) } else { Color32::WHITE },
     );
 
     // Centered Vector Icon
-    let icon_center = egui::pos2(rect.center().x, rect.top() + 94.0);
+    let icon_center = egui::pos2(rect.center().x, rect.top() + 85.0);
     draw_icon(painter, icon_center);
 
     // Status label
     painter.text(
-        egui::pos2(rect.center().x, rect.top() + 150.0),
+        egui::pos2(rect.center().x, rect.top() + 138.0),
         egui::Align2::CENTER_CENTER,
         status_text,
         FontId::proportional(11.5),
@@ -461,7 +576,7 @@ fn render_action_card(
 
     // Subtitle label
     painter.text(
-        egui::pos2(rect.center().x, rect.top() + 170.0),
+        egui::pos2(rect.center().x, rect.top() + 158.0),
         egui::Align2::CENTER_CENTER,
         sub_text,
         FontId::proportional(10.0),
@@ -471,50 +586,50 @@ fn render_action_card(
     response.clicked()
 }
 
-// Attached Dropdown Menu Container
+// Attached Squared Dropdown Menu Container
 fn render_dropdown_menu(
     ui: &mut egui::Ui,
     width: f32,
     add_contents: impl FnOnce(&mut egui::Ui),
 ) {
     egui::Frame::NONE
-        .fill(Color32::from_rgba_unmultiplied(16, 22, 34, 230))
-        .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 38)))
-        .corner_radius(CornerRadius { nw: 0, ne: 0, sw: 12, se: 12 })
-        .inner_margin(Margin::same(8_i8))
+        .fill(Color32::from_rgba_unmultiplied(12, 16, 24, 250))
+        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 197, 94)))
+        .corner_radius(CornerRadius::ZERO)
+        .inner_margin(Margin::same(6_i8))
         .show(ui, |ui| {
-            ui.set_width(width - 16.0);
+            ui.set_width(width);
             add_contents(ui);
         });
 }
 
-// Sleek Dropdown Action Menu Item
+// Sleek Squared Dropdown Action Menu Item
 fn render_menu_item(ui: &mut egui::Ui, label: &str) -> bool {
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 32.0), egui::Sense::click());
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 30.0), egui::Sense::click());
     let hovered = response.hovered();
 
     let bg = if hovered {
-        Color32::from_rgba_unmultiplied(118, 185, 0, 38)
+        Color32::from_rgba_unmultiplied(34, 197, 94, 35)
     } else {
         Color32::TRANSPARENT
     };
     let border = if hovered {
-        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(118, 185, 0, 120))
+        Stroke::new(1.0_f32, Color32::from_rgb(34, 197, 94))
     } else {
         Stroke::NONE
     };
     let text_color = if hovered {
-        Color32::from_rgb(118, 185, 0)
+        Color32::from_rgb(34, 197, 94)
     } else {
         Color32::from_rgb(226, 232, 240)
     };
 
-    ui.painter().rect(rect, CornerRadius::same(6_u8), bg, border, egui::StrokeKind::Inside);
+    ui.painter().rect(rect, CornerRadius::ZERO, bg, border, egui::StrokeKind::Inside);
     ui.painter().text(
         rect.center(),
         egui::Align2::CENTER_CENTER,
         label,
-        FontId::proportional(12.5),
+        FontId::proportional(11.5),
         text_color,
     );
 
@@ -524,19 +639,19 @@ fn render_menu_item(ui: &mut egui::Ui, label: &str) -> bool {
 // Section card helper for Settings view
 fn render_section_card(ui: &mut egui::Ui, header: &str, add_contents: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::NONE
-        .fill(Color32::from_rgba_unmultiplied(24, 32, 46, 140))
-        .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 20)))
-        .corner_radius(CornerRadius::same(12_u8))
-        .inner_margin(Margin::symmetric(16_i8, 12_i8))
+        .fill(Color32::from_rgba_unmultiplied(16, 22, 32, 200))
+        .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 18)))
+        .corner_radius(CornerRadius::ZERO)
+        .inner_margin(Margin::symmetric(14_i8, 10_i8))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.label(
                 egui::RichText::new(header)
-                    .size(11.0)
+                    .size(10.5)
                     .strong()
-                    .color(Color32::from_rgb(118, 185, 0)),
+                    .color(Color32::from_rgb(34, 197, 94)),
             );
-            ui.add_space(6.0);
+            ui.add_space(4.0);
             add_contents(ui);
         });
 }
@@ -571,6 +686,9 @@ pub struct ScytheOverlayApp {
     folder_rx: Receiver<String>,
     clips: Vec<VideoClipInfo>,
     initial_pos_set: bool,
+    listening_keybind: Option<KeybindAction>,
+    fps_input_str: String,
+    panel_rect: egui::Rect,
 }
 
 pub type VrecOverlayApp = ScytheOverlayApp;
@@ -611,6 +729,7 @@ impl ScytheOverlayApp {
 
         let (folder_tx, folder_rx) = channel::<String>();
         let clips = scan_recordings(&output_dir);
+        let fps_input_str = target_fps.to_string();
 
         Self {
             config,
@@ -642,6 +761,9 @@ impl ScytheOverlayApp {
             folder_rx,
             clips,
             initial_pos_set: false,
+            listening_keybind: None,
+            fps_input_str,
+            panel_rect: egui::Rect::NOTHING,
         }
     }
 
@@ -678,27 +800,15 @@ impl ScytheOverlayApp {
         }
     }
 
-    pub fn update_window_size(&self, ctx: &egui::Context) {
-        if self.current_view == ShadowPlayView::MainHud {
-            let target_h = if self.replay_dropdown_open || self.record_dropdown_open {
-                385.0
-            } else {
-                270.0
-            };
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(760.0, target_h)));
-        }
+    pub fn update_window_size(&self, _ctx: &egui::Context) {
+        // Fullscreen surface handles internal layout dynamically without window resize jitter
     }
 
-    pub fn switch_view(&mut self, view: ShadowPlayView, ctx: &egui::Context) {
+    pub fn switch_view(&mut self, view: ShadowPlayView, _ctx: &egui::Context) {
         self.current_view = view;
-        let target_h = match view {
-            ShadowPlayView::MainHud => {
-                if self.replay_dropdown_open || self.record_dropdown_open { 385.0 } else { 270.0 }
-            }
-            ShadowPlayView::Settings => 580.0,
-            ShadowPlayView::Gallery => 580.0,
-        };
-        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(760.0, target_h)));
+        self.listening_keybind = None;
+        self.replay_dropdown_open = false;
+        self.record_dropdown_open = false;
     }
 
     fn render_main_hud(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
@@ -707,283 +817,237 @@ impl ScytheOverlayApp {
         let rec_dur = self.status.recording_duration_sec;
         let is_replay_active = self.status.is_replay_active;
 
-        ui.vertical_centered(|ui| {
-            // TOP FLOATING HEADER BAR
-            egui::Frame::NONE
-                .fill(Color32::from_rgba_unmultiplied(18, 26, 38, 185))
-                .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 38)))
-                .corner_radius(CornerRadius::same(12_u8))
-                .inner_margin(Margin::symmetric(18_i8, 8_i8))
-                .show(ui, |ui| {
-                    ui.set_width(730.0);
-                    ui.horizontal(|ui| {
-                        // SCYTHE Badge
-                        let (badge_rect, _) = ui.allocate_exact_size(Vec2::new(56.0, 20.0), egui::Sense::hover());
-                        ui.painter().rect_filled(badge_rect, CornerRadius::same(4_u8), Color32::from_rgb(118, 185, 0));
-                        ui.painter().text(
-                            badge_rect.center(),
-                            egui::Align2::CENTER_CENTER,
-                            "SCYTHE",
-                            FontId::proportional(11.0),
-                            Color32::from_rgb(11, 18, 4),
-                        );
+        let screen_w = ui.available_width();
+        let card_w = 210.0;
+        let card_h = 185.0;
+        let card_gap = 14.0;
+        let total_cards_w = 3.0 * card_w + 2.0 * card_gap;
+        let left_pad = ((screen_w - total_cards_w) / 2.0).max(10.0);
+        let top_pad = 70.0;
 
-                        ui.add_space(8.0);
-                        ui.label(
-                            egui::RichText::new("SHADOWPLAY OVERLAY")
-                                .font(FontId::proportional(12.0))
-                                .strong()
-                                .color(Color32::from_rgb(241, 245, 249)),
-                        );
+        let hud_rect = egui::Rect::from_min_size(
+            egui::pos2(left_pad, top_pad),
+            egui::vec2(
+                total_cards_w,
+                if self.replay_dropdown_open || self.record_dropdown_open { card_h + 125.0 } else { card_h + 40.0 },
+            ),
+        );
+        self.panel_rect = hud_rect;
 
-                        ui.add_space(12.0);
-                        if let Some((msg, ts)) = &self.status_msg {
-                            if ts.elapsed() < Duration::from_secs(3) {
+        ui.allocate_new_ui(egui::UiBuilder::new().max_rect(hud_rect), |ui| {
+            ui.vertical_centered(|ui| {
+                // Sleek status toast if present
+                if let Some((msg, ts)) = &self.status_msg {
+                    if ts.elapsed() < Duration::from_secs(3) {
+                        egui::Frame::NONE
+                            .fill(Color32::from_rgba_unmultiplied(12, 16, 24, 240))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 197, 94)))
+                            .corner_radius(CornerRadius::ZERO)
+                            .inner_margin(Margin::symmetric(14_i8, 5_i8))
+                            .show(ui, |ui| {
                                 ui.label(
                                     egui::RichText::new(msg)
-                                        .size(11.5)
+                                        .font(FontId::monospace(11.0))
                                         .strong()
-                                        .color(Color32::from_rgb(118, 185, 0)),
+                                        .color(Color32::from_rgb(34, 197, 94)),
                                 );
-                            }
-                        } else if is_recording {
-                            let pulse = ((anim_time * 5.0).sin() * 0.5 + 0.5) * 2.5;
-                            let (dot_rect, _) = ui.allocate_exact_size(Vec2::new(10.0, 10.0), egui::Sense::hover());
-                            ui.painter().circle_filled(dot_rect.center(), 4.0 + pulse, Color32::from_rgba_unmultiplied(239, 68, 68, 90));
-                            ui.painter().circle_filled(dot_rect.center(), 3.5, Color32::from_rgb(239, 68, 68));
-                            let mins = rec_dur / 60;
-                            let secs = rec_dur % 60;
-                            ui.label(
-                                egui::RichText::new(format!("RECORDING {:02}:{:02}", mins, secs))
-                                    .size(11.5)
-                                    .strong()
-                                    .color(Color32::from_rgb(239, 68, 68)),
-                            );
+                            });
+                        ui.add_space(8.0);
+                    }
+                }
+
+                ui.horizontal(|ui| {
+                    // =========================================================================
+                    // CARD 1: INSTANT REPLAY
+                    // =========================================================================
+                    ui.vertical(|ui| {
+                        let card1_clicked = render_action_card(
+                            ui,
+                            card_w,
+                            card_h,
+                            "INSTANT REPLAY",
+                            is_replay_active,
+                            self.replay_dropdown_open,
+                            |painter, center| {
+                                draw_replay_icon(painter, center, 22.0, is_replay_active);
+                            },
+                            if is_replay_active { "Turned on" } else { "Turned off" },
+                            if is_replay_active { Color32::from_rgb(34, 197, 94) } else { Color32::from_rgb(148, 163, 184) },
+                            "(Click for menu)",
+                        );
+
+                        if card1_clicked {
+                            self.replay_dropdown_open = !self.replay_dropdown_open;
+                            self.record_dropdown_open = false;
                         }
 
-                        // Live audio VU meters
-                        ui.add_space(8.0);
-                        render_vu_meter(ui, self.mic_vu, 42.0, 14.0, "MIC");
-                        ui.add_space(4.0);
-                        render_vu_meter(ui, self.sys_vu, 42.0, 14.0, "SYS");
+                        if self.replay_dropdown_open {
+                            render_dropdown_menu(ui, card_w, |ui| {
+                                let toggle_text = if is_replay_active { "Turn off" } else { "Turn on" };
+                                if render_menu_item(ui, toggle_text) {
+                                    let mut cfg = ScytheConfig::load();
+                                    cfg.replay_enabled = !cfg.replay_enabled;
+                                    let _ = cfg.save();
+                                    ScytheConfig::notify_daemon_reload();
+                                    self.config.replay_enabled = cfg.replay_enabled;
+                                    self.status.is_replay_active = cfg.replay_enabled;
+                                    self.replay_dropdown_open = false;
+                                }
+                                if render_menu_item(ui, "Save Replay") {
+                                    let _ = ipc::send_command(Command::SaveReplay);
+                                    self.status_msg = Some(("Replay Saved!".to_string(), Instant::now()));
+                                    self.replay_dropdown_open = false;
+                                }
+                                if render_menu_item(ui, "Settings") {
+                                    self.replay_dropdown_open = false;
+                                    self.switch_view(ShadowPlayView::Settings, ctx);
+                                }
+                            });
+                        }
+                    });
 
-                        // Right side controls (Esc hint & Gallery button)
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            egui::Frame::NONE
-                                .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 20))
-                                .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 35)))
-                                .corner_radius(CornerRadius::same(6_u8))
-                                .inner_margin(Margin::symmetric(8_i8, 3_i8))
-                                .show(ui, |ui| {
-                                    ui.label(
-                                        egui::RichText::new("Esc to Close")
-                                            .size(10.5)
-                                            .strong()
-                                            .color(Color32::from_rgb(148, 163, 184)),
-                                    );
-                                });
+                    ui.add_space(card_gap);
 
-                            ui.add_space(8.0);
+                    // =========================================================================
+                    // CARD 2: RECORD
+                    // =========================================================================
+                    ui.vertical(|ui| {
+                        let rec_status_str = if is_recording {
+                            let mins = rec_dur / 60;
+                            let secs = rec_dur % 60;
+                            format!("Recording {:02}:{:02}", mins, secs)
+                        } else {
+                            "Idle".to_string()
+                        };
 
-                            let gallery_btn = egui::Button::new(
-                                egui::RichText::new(format!("Gallery ({})", self.clips.len()))
-                                    .size(11.0)
-                                    .strong()
-                                    .color(Color32::from_rgb(226, 232, 240)),
-                            )
-                            .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 16))
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 30)))
-                            .corner_radius(CornerRadius::same(6_u8));
+                        let card2_clicked = render_action_card(
+                            ui,
+                            card_w,
+                            card_h,
+                            "RECORD",
+                            is_recording,
+                            self.record_dropdown_open,
+                            |painter, center| {
+                                draw_record_icon(painter, center, 22.0, is_recording, anim_time);
+                            },
+                            &rec_status_str,
+                            if is_recording { Color32::from_rgb(239, 68, 68) } else { Color32::from_rgb(148, 163, 184) },
+                            "(Click for menu)",
+                        );
 
-                            if ui.add(gallery_btn).clicked() {
-                                self.switch_view(ShadowPlayView::Gallery, ctx);
-                            }
-                        });
+                        if card2_clicked {
+                            self.record_dropdown_open = !self.record_dropdown_open;
+                            self.replay_dropdown_open = false;
+                        }
+
+                        if self.record_dropdown_open {
+                            render_dropdown_menu(ui, card_w, |ui| {
+                                let rec_toggle_text = if is_recording { "Stop Recording" } else { "Start Recording" };
+                                if render_menu_item(ui, rec_toggle_text) {
+                                    let _ = ipc::send_command(Command::ToggleRecording);
+                                    self.record_dropdown_open = false;
+                                }
+                                if render_menu_item(ui, "Settings") {
+                                    self.record_dropdown_open = false;
+                                    self.switch_view(ShadowPlayView::Settings, ctx);
+                                }
+                            });
+                        }
+                    });
+
+                    ui.add_space(card_gap);
+
+                    // =========================================================================
+                    // CARD 3: SETTINGS
+                    // =========================================================================
+                    ui.vertical(|ui| {
+                        let card3_clicked = render_action_card(
+                            ui,
+                            card_w,
+                            card_h,
+                            "SETTINGS",
+                            false,
+                            false,
+                            |painter, center| {
+                                draw_gear_icon(painter, center, 22.0, Color32::from_rgb(148, 163, 184));
+                            },
+                            "Hardware & Tuning",
+                            Color32::from_rgb(148, 163, 184),
+                            "(Click to open)",
+                        );
+
+                        if card3_clicked {
+                            self.replay_dropdown_open = false;
+                            self.record_dropdown_open = false;
+                            self.switch_view(ShadowPlayView::Settings, ctx);
+                        }
                     });
                 });
 
-            ui.add_space(10.0);
-
-            // ROW OF 3 CARDS
-            let card_w = 230.0;
-            let card_h = 195.0;
-            let card_gap = 16.0;
-
-            ui.horizontal(|ui| {
-                let left_pad = ((ui.available_width() - (3.0 * card_w + 2.0 * card_gap)) / 2.0).max(0.0);
-                ui.add_space(left_pad);
-
-                // =========================================================================
-                // CARD 1: INSTANT REPLAY
-                // =========================================================================
-                ui.vertical(|ui| {
-                    let card1_clicked = render_action_card(
-                        ui,
-                        card_w,
-                        card_h,
-                        "INSTANT REPLAY",
-                        is_replay_active,
-                        self.replay_dropdown_open,
-                        |painter, center| {
-                            draw_replay_icon(painter, center, 24.0, is_replay_active);
-                        },
-                        if is_replay_active { "Turned on" } else { "Turned off" },
-                        if is_replay_active { Color32::from_rgb(118, 185, 0) } else { Color32::from_rgb(148, 163, 184) },
-                        "(Alt+Shift+F10 to toggle)",
-                    );
-
-                    if card1_clicked {
-                        self.replay_dropdown_open = !self.replay_dropdown_open;
-                        self.record_dropdown_open = false;
-                        self.update_window_size(ctx);
-                    }
-
-                    if self.replay_dropdown_open {
-                        render_dropdown_menu(ui, card_w, |ui| {
-                            let toggle_text = if is_replay_active { "Turn off" } else { "Turn on" };
-                            if render_menu_item(ui, toggle_text) {
-                                let mut cfg = ScytheConfig::load();
-                                cfg.replay_enabled = !cfg.replay_enabled;
-                                let _ = cfg.save();
-                                ScytheConfig::notify_daemon_reload();
-                                self.config.replay_enabled = cfg.replay_enabled;
-                                self.status.is_replay_active = cfg.replay_enabled;
-                                self.replay_dropdown_open = false;
-                                self.update_window_size(ctx);
-                            }
-                            if render_menu_item(ui, "Save") {
-                                let _ = ipc::send_command(Command::SaveReplay);
-                                self.status_msg = Some(("Replay Saved!".to_string(), Instant::now()));
-                                self.replay_dropdown_open = false;
-                                self.update_window_size(ctx);
-                            }
-                            if render_menu_item(ui, "Settings") {
-                                self.replay_dropdown_open = false;
-                                self.switch_view(ShadowPlayView::Settings, ctx);
-                            }
-                        });
-                    }
-                });
-
-                ui.add_space(card_gap);
-
-                // =========================================================================
-                // CARD 2: RECORD
-                // =========================================================================
-                ui.vertical(|ui| {
-                    let card2_clicked = render_action_card(
-                        ui,
-                        card_w,
-                        card_h,
-                        "RECORD",
-                        is_recording,
-                        self.record_dropdown_open,
-                        |painter, center| {
-                            draw_record_icon(painter, center, 24.0, is_recording, anim_time);
-                        },
-                        if is_recording { "Recording..." } else { "Idle" },
-                        if is_recording { Color32::from_rgb(239, 68, 68) } else { Color32::from_rgb(148, 163, 184) },
-                        "(Alt+F9 to record)",
-                    );
-
-                    if card2_clicked {
-                        self.record_dropdown_open = !self.record_dropdown_open;
-                        self.replay_dropdown_open = false;
-                        self.update_window_size(ctx);
-                    }
-
-                    if self.record_dropdown_open {
-                        render_dropdown_menu(ui, card_w, |ui| {
-                            let rec_toggle_text = if is_recording { "Stop" } else { "Start" };
-                            if render_menu_item(ui, rec_toggle_text) {
-                                let _ = ipc::send_command(Command::ToggleRecording);
-                                self.record_dropdown_open = false;
-                                self.update_window_size(ctx);
-                            }
-                            if render_menu_item(ui, "Settings") {
-                                self.record_dropdown_open = false;
-                                self.switch_view(ShadowPlayView::Settings, ctx);
-                            }
-                        });
-                    }
-                });
-
-                ui.add_space(card_gap);
-
-                // =========================================================================
-                // CARD 3: SETTINGS
-                // =========================================================================
-                ui.vertical(|ui| {
-                    let card3_clicked = render_action_card(
-                        ui,
-                        card_w,
-                        card_h,
-                        "SETTINGS",
-                        false,
-                        false,
-                        |painter, center| {
-                            draw_gear_icon(painter, center, 24.0, Color32::from_rgb(148, 163, 184));
-                        },
-                        "Hardware & Tuning",
-                        Color32::from_rgb(148, 163, 184),
-                        "(Click to configure)",
-                    );
-
-                    if card3_clicked {
-                        self.replay_dropdown_open = false;
-                        self.record_dropdown_open = false;
-                        self.switch_view(ShadowPlayView::Settings, ctx);
-                    }
-                });
+                ui.add_space(14.0);
+                ui.label(
+                    egui::RichText::new("ESC or click outside to close")
+                        .font(FontId::monospace(10.0))
+                        .color(Color32::from_rgba_unmultiplied(203, 213, 225, 120)),
+                );
             });
         });
     }
-
     fn render_settings_view(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
-        ui.vertical_centered(|ui| {
-            egui::Frame::NONE
-                .fill(Color32::from_rgba_unmultiplied(15, 22, 32, 230))
-                .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 40)))
-                .corner_radius(CornerRadius::same(16_u8))
-                .inner_margin(Margin::symmetric(22_i8, 16_i8))
-                .show(ui, |ui| {
-                    ui.set_width(720.0);
+        let screen_w = ui.available_width();
+        let screen_h = ui.available_height();
+        let modal_w = 480.0_f32;
+        let modal_h = (screen_h - 70.0).clamp(520.0, 720.0);
+        let left_pad = ((screen_w - modal_w) / 2.0).max(10.0);
+        let top_pad = ((screen_h - modal_h) / 2.0).max(20.0);
 
-                    // Header with Back Button (No X button!)
+        let modal_rect = egui::Rect::from_min_size(egui::pos2(left_pad, top_pad), egui::vec2(modal_w, modal_h));
+        self.panel_rect = modal_rect;
+
+        ui.allocate_new_ui(egui::UiBuilder::new().max_rect(modal_rect), |ui| {
+            egui::Frame::NONE
+                .fill(Color32::from_rgba_unmultiplied(12, 16, 24, 250))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 197, 94)))
+                .corner_radius(CornerRadius::ZERO)
+                .inner_margin(Margin::symmetric(20_i8, 16_i8))
+                .show(ui, |ui| {
+                    ui.set_width(modal_w - 40.0);
+
+                    // Portrait Header: Back Button, Title, Close Hint (No X button)
                     ui.horizontal(|ui| {
                         let back_btn = egui::Button::new(
-                            egui::RichText::new("< Back to Overlay")
-                                .size(11.5)
+                            egui::RichText::new("< BACK")
+                                .font(FontId::monospace(11.0))
                                 .strong()
-                                .color(Color32::from_rgb(118, 185, 0)),
+                                .color(Color32::from_rgb(34, 197, 94)),
                         )
-                        .fill(Color32::from_rgba_unmultiplied(118, 185, 0, 30))
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(118, 185, 0, 115)))
-                        .corner_radius(CornerRadius::same(8_u8));
+                        .fill(Color32::from_rgba_unmultiplied(34, 197, 94, 30))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 197, 94)))
+                        .corner_radius(CornerRadius::ZERO);
 
                         if ui.add(back_btn).clicked() {
                             self.switch_view(ShadowPlayView::MainHud, ctx);
                             return;
                         }
 
-                        ui.add_space(14.0);
+                        ui.add_space(10.0);
                         ui.label(
-                            egui::RichText::new("RECORDER SETTINGS")
-                                .font(FontId::proportional(13.5))
+                            egui::RichText::new("SETTINGS")
+                                .font(FontId::proportional(14.0))
                                 .strong()
                                 .color(Color32::WHITE),
                         );
 
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             egui::Frame::NONE
-                                .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 20))
-                                .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 35)))
-                                .corner_radius(CornerRadius::same(6_u8))
-                                .inner_margin(Margin::symmetric(8_i8, 3_i8))
+                                .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 12))
+                                .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 25)))
+                                .corner_radius(CornerRadius::ZERO)
+                                .inner_margin(Margin::symmetric(7_i8, 3_i8))
                                 .show(ui, |ui| {
                                     ui.label(
-                                        egui::RichText::new("Esc to Close")
-                                            .size(10.5)
+                                        egui::RichText::new("ESC TO CLOSE")
+                                            .font(FontId::monospace(9.5))
                                             .strong()
                                             .color(Color32::from_rgb(148, 163, 184)),
                                     );
@@ -993,19 +1057,18 @@ impl ScytheOverlayApp {
 
                     ui.add_space(10.0);
 
+                    let scroll_h = modal_h - 110.0;
                     egui::ScrollArea::vertical()
-                        .max_height(450.0)
+                        .max_height(scroll_h)
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
                             // -----------------------------------------------------------------
                             // SECTION 1: DISPLAY & CAPTURE
                             // -----------------------------------------------------------------
                             render_section_card(ui, "DISPLAY & CAPTURE", |ui| {
+                                // Record Mouse Cursor
                                 ui.horizontal(|ui| {
-                                    ui.vertical(|ui| {
-                                        ui.label(egui::RichText::new("Record Mouse Cursor").size(13.0).strong().color(Color32::WHITE));
-                                        ui.label(egui::RichText::new("Capture the mouse pointer in gameplay recordings and instant replays").size(10.5).color(Color32::from_rgb(148, 163, 184)));
-                                    });
+                                    ui.label(egui::RichText::new("Record Mouse Cursor").size(11.5).strong().color(Color32::WHITE));
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         let mut cur = self.show_cursor;
                                         if toggle_switch(ui, &mut cur).changed() {
@@ -1022,54 +1085,73 @@ impl ScytheOverlayApp {
                                 ui.separator();
                                 ui.add_space(8.0);
 
+                                // Framerate (FPS) with direct input and presets
+                                ui.label(egui::RichText::new("Target Framerate (FPS):").size(11.0).strong().color(Color32::WHITE));
+                                ui.add_space(3.0);
                                 ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new("Target Framerate:").size(11.5).strong().color(Color32::WHITE));
-                                    for fps in [30, 60, 120, 144] {
-                                        if pill_button(ui, &format!("{} FPS", fps), self.target_fps == fps) {
+                                    ui.label(egui::RichText::new("FPS:").size(10.5).color(Color32::from_rgb(148, 163, 184)));
+                                    let edit_resp = ui.add(
+                                        egui::TextEdit::singleline(&mut self.fps_input_str)
+                                            .desired_width(45.0)
+                                            .font(FontId::monospace(11.0))
+                                    );
+                                    if edit_resp.changed() {
+                                        if let Ok(parsed) = self.fps_input_str.trim().parse::<u32>() {
+                                            if (15..=360).contains(&parsed) {
+                                                self.target_fps = parsed;
+                                            }
+                                        }
+                                    }
+
+                                    ui.add_space(6.0);
+                                    for fps in [30, 60, 120, 144, 240] {
+                                        if squared_button(ui, &fps.to_string(), self.target_fps == fps) {
                                             self.target_fps = fps;
+                                            self.fps_input_str = fps.to_string();
                                         }
                                     }
                                 });
 
                                 ui.add_space(8.0);
 
+                                // Video Bitrate
+                                ui.label(egui::RichText::new("Video Bitrate:").size(11.0).strong().color(Color32::WHITE));
+                                ui.add_space(3.0);
                                 ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new("Video Bitrate:").size(11.5).strong().color(Color32::WHITE));
                                     for mbps in [10, 20, 30, 50] {
-                                        if pill_button(ui, &format!("{}M", mbps), self.bitrate_mbps == mbps) {
+                                        if squared_button(ui, &format!("{}M", mbps), self.bitrate_mbps == mbps) {
                                             self.bitrate_mbps = mbps;
                                         }
                                     }
-                                    ui.add_space(6.0);
+                                    ui.add_space(4.0);
                                     let mut br = self.bitrate_mbps;
-                                    if ui.add(egui::Slider::new(&mut br, 5..=100).text("Mbps").step_by(5.0)).changed() {
+                                    if ui.add(egui::Slider::new(&mut br, 5..=100).suffix(" Mbps").step_by(5.0)).changed() {
                                         self.bitrate_mbps = br;
                                     }
                                 });
 
                                 ui.add_space(8.0);
 
+                                // Encoder Codec
+                                ui.label(egui::RichText::new("Encoder Codec:").size(11.0).strong().color(Color32::WHITE));
+                                ui.add_space(3.0);
                                 ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new("Encoder Codec:").size(11.5).strong().color(Color32::WHITE));
-                                    for (codec_key, label) in [("h264", "H.264 / AVC"), ("hevc", "HEVC / H.265"), ("av1", "AV1")] {
-                                        if pill_button(ui, label, self.video_codec == codec_key) {
+                                    for (codec_key, label) in [("h264", "H.264"), ("hevc", "HEVC / H.265"), ("av1", "AV1")] {
+                                        if squared_button(ui, label, self.video_codec == codec_key) {
                                             self.video_codec = codec_key.to_string();
                                         }
                                     }
                                 });
-                            });
 
-                            ui.add_space(10.0);
+                                ui.add_space(8.0);
 
-                            // -----------------------------------------------------------------
-                            // SECTION 2: INSTANT REPLAY BUFFER
-                            // -----------------------------------------------------------------
-                            render_section_card(ui, "INSTANT REPLAY BUFFER", |ui| {
+                                // Replay Duration
+                                ui.label(egui::RichText::new("Instant Replay Buffer Duration:").size(11.0).strong().color(Color32::WHITE));
+                                ui.add_space(3.0);
                                 ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new("Buffer Duration:").size(11.5).strong().color(Color32::WHITE));
                                     for sec in [15, 30, 60, 120, 300] {
                                         let label = if sec >= 60 { format!("{}m", sec / 60) } else { format!("{}s", sec) };
-                                        if pill_button(ui, &label, self.replay_sec == sec) {
+                                        if squared_button(ui, &label, self.replay_sec == sec) {
                                             self.replay_sec = sec;
                                         }
                                     }
@@ -1079,14 +1161,15 @@ impl ScytheOverlayApp {
                             ui.add_space(10.0);
 
                             // -----------------------------------------------------------------
-                            // SECTION 3: AUDIO CONFIGURATION
+                            // SECTION 2: AUDIO CONFIGURATION
                             // -----------------------------------------------------------------
                             render_section_card(ui, "AUDIO CONFIGURATION", |ui| {
+                                ui.label(egui::RichText::new("Audio Source:").size(11.0).strong().color(Color32::WHITE));
+                                ui.add_space(3.0);
                                 ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new("Audio Source:").size(11.5).strong().color(Color32::WHITE));
-                                    let modes = [("system", "System Audio"), ("mic", "Microphone"), ("both", "Combined Both"), ("muted", "Muted")];
+                                    let modes = [("system", "System"), ("mic", "Microphone"), ("both", "Both"), ("muted", "Muted")];
                                     for (idx, (_, m_label)) in modes.iter().enumerate() {
-                                        if pill_button(ui, m_label, self.audio_mode_idx == idx) {
+                                        if squared_button(ui, m_label, self.audio_mode_idx == idx) {
                                             self.audio_mode_idx = idx;
                                         }
                                     }
@@ -1094,44 +1177,74 @@ impl ScytheOverlayApp {
 
                                 ui.add_space(8.0);
 
+                                // Mic Volume + VU
                                 ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new("Mic Volume:").size(11.5).strong().color(Color32::WHITE));
+                                    ui.label(egui::RichText::new("Mic Vol:").size(11.0).strong().color(Color32::WHITE));
                                     let mut mv = self.mic_volume_pct;
                                     if ui.add(egui::Slider::new(&mut mv, 0..=200).suffix("%")).changed() {
                                         self.mic_volume_pct = mv;
                                     }
-                                    ui.add_space(8.0);
-                                    render_vu_meter(ui, self.mic_vu, 80.0, 16.0, &format!("{:.0}%", self.mic_vu * 100.0));
+                                    ui.add_space(4.0);
+                                    render_vu_meter(ui, self.mic_vu, 55.0, 16.0, "MIC");
                                 });
 
                                 ui.add_space(6.0);
 
+                                // System Audio Volume + VU
                                 ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new("System Audio:").size(11.5).strong().color(Color32::WHITE));
+                                    ui.label(egui::RichText::new("Sys Vol:").size(11.0).strong().color(Color32::WHITE));
                                     let mut sv = self.system_volume_pct;
                                     if ui.add(egui::Slider::new(&mut sv, 0..=200).suffix("%")).changed() {
                                         self.system_volume_pct = sv;
                                     }
-                                    ui.add_space(8.0);
-                                    render_vu_meter(ui, self.sys_vu, 80.0, 16.0, &format!("{:.0}%", self.sys_vu * 100.0));
+                                    ui.add_space(4.0);
+                                    render_vu_meter(ui, self.sys_vu, 55.0, 16.0, "SYS");
                                 });
+                            });
 
-                                let apps = crate::capture::audio::list_application_audio();
-                                if !apps.is_empty() {
-                                    ui.add_space(8.0);
+                            ui.add_space(10.0);
+
+                            // -----------------------------------------------------------------
+                            // SECTION 3: KEYBOARD SHORTCUTS (INTERACTIVE REBINDING)
+                            // -----------------------------------------------------------------
+                            render_section_card(ui, "KEYBOARD SHORTCUTS (CLICK TO REBIND)", |ui| {
+                                let binds = [
+                                    (KeybindAction::Menu, "Menu Overlay", &self.config.menu_hotkey),
+                                    (KeybindAction::SaveReplay, "Save Instant Replay", &self.config.save_hotkey),
+                                    (KeybindAction::ToggleRecord, "Start / Stop Record", &self.config.record_hotkey),
+                                    (KeybindAction::ToggleCursor, "Toggle Mouse Cursor", &self.config.cursor_hotkey),
+                                ];
+
+                                for (action, label, current_hotkey) in binds {
+                                    let is_listening = self.listening_keybind == Some(action);
                                     ui.horizontal(|ui| {
-                                        ui.label(egui::RichText::new("Active Sound Streams:").size(10.5).color(Color32::from_rgb(148, 163, 184)));
-                                        for app in apps.iter().take(4) {
-                                            egui::Frame::NONE
-                                                .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 14))
-                                                .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 24)))
-                                                .corner_radius(CornerRadius::same(4_u8))
-                                                .inner_margin(Margin::symmetric(5_i8, 2_i8))
-                                                .show(ui, |ui| {
-                                                    ui.label(egui::RichText::new(app).size(10.0).color(Color32::from_rgb(203, 213, 225)));
-                                                });
-                                        }
+                                        ui.label(
+                                            egui::RichText::new(label)
+                                                .size(11.0)
+                                                .color(if is_listening { Color32::from_rgb(34, 197, 94) } else { Color32::from_rgb(203, 213, 225) }),
+                                        );
+
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            if render_keycap_button(ui, current_hotkey, is_listening) {
+                                                if is_listening {
+                                                    self.listening_keybind = None;
+                                                } else {
+                                                    self.listening_keybind = Some(action);
+                                                }
+                                            }
+                                        });
                                     });
+                                    ui.add_space(4.0);
+                                }
+
+                                if self.listening_keybind.is_some() {
+                                    ui.add_space(4.0);
+                                    ui.label(
+                                        egui::RichText::new("Listening... Press your desired key combination or Esc to cancel.")
+                                            .size(10.5)
+                                            .strong()
+                                            .color(Color32::from_rgb(34, 197, 94)),
+                                    );
                                 }
                             });
 
@@ -1141,44 +1254,21 @@ impl ScytheOverlayApp {
                             // SECTION 4: STORAGE & DESTINATION
                             // -----------------------------------------------------------------
                             render_section_card(ui, "STORAGE & DESTINATION", |ui| {
+                                ui.label(egui::RichText::new("Save Folder:").size(11.0).strong().color(Color32::WHITE));
+                                ui.add_space(2.0);
                                 ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new("Save Location:").size(11.5).strong().color(Color32::WHITE));
-                                    ui.text_edit_singleline(&mut self.output_dir);
-                                    if ui.button(egui::RichText::new("Change").size(11.0)).clicked() {
+                                    ui.add(egui::TextEdit::singleline(&mut self.output_dir).desired_width(240.0));
+                                    if squared_button(ui, "Change", false) {
                                         pick_folder(&self.output_dir, self.folder_tx.clone());
                                     }
-                                    if ui.button(egui::RichText::new("Open").size(11.0)).clicked() {
+                                    if squared_button(ui, "Open", false) {
                                         open_folder(&ScytheConfig::expand_tilde(&self.output_dir));
                                     }
                                 });
-                                ui.add_space(4.0);
-                                ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new(format!("{} video recordings in destination folder.", self.clips.len())).size(10.5).color(Color32::from_rgb(148, 163, 184)));
-                                    if ui.button(egui::RichText::new("Open Clip Gallery & Trimmer").size(10.5).strong().color(Color32::from_rgb(118, 185, 0))).clicked() {
-                                        self.switch_view(ShadowPlayView::Gallery, ctx);
-                                    }
-                                });
-                            });
 
-                            ui.add_space(10.0);
-
-                            // -----------------------------------------------------------------
-                            // SECTION 5: KEYBOARD SHORTCUTS
-                            // -----------------------------------------------------------------
-                            render_section_card(ui, "GLOBAL SHORTCUTS", |ui| {
-                                let shortcuts = [
-                                    ("Alt + Z", "Open / Close Overlay"),
-                                    ("Ctrl + Shift + R", "Save Instant Replay Clip"),
-                                    ("Ctrl + Shift + F9", "Start / Stop Recording"),
-                                    ("Ctrl + Shift + F10", "Toggle Mouse Cursor In Recordings"),
-                                ];
-                                for (keys, action) in shortcuts {
-                                    ui.horizontal(|ui| {
-                                        render_keycap(ui, keys);
-                                        ui.add_space(8.0);
-                                        ui.label(egui::RichText::new(action).size(11.0).color(Color32::from_rgb(203, 213, 225)));
-                                    });
-                                    ui.add_space(3.0);
+                                ui.add_space(6.0);
+                                if squared_button(ui, &format!("OPEN RECORDINGS GALLERY & TRIMMER ({})", self.clips.len()), false) {
+                                    self.switch_view(ShadowPlayView::Gallery, ctx);
                                 }
                             });
 
@@ -1186,15 +1276,15 @@ impl ScytheOverlayApp {
 
                             // APPLY & SAVE BUTTON
                             let apply_btn = egui::Button::new(
-                                egui::RichText::new("Apply & Save Settings")
-                                    .size(13.0)
+                                egui::RichText::new("APPLY & SAVE SETTINGS")
+                                    .font(FontId::monospace(12.5))
                                     .strong()
                                     .color(Color32::from_rgb(11, 18, 4)),
                             )
-                            .fill(Color32::from_rgb(118, 185, 0))
+                            .fill(Color32::from_rgb(34, 197, 94))
                             .stroke(Stroke::NONE)
-                            .corner_radius(CornerRadius::same(8_u8))
-                            .min_size(Vec2::new(ui.available_width(), 38.0));
+                            .corner_radius(CornerRadius::ZERO)
+                            .min_size(Vec2::new(ui.available_width(), 36.0));
 
                             if ui.add(apply_btn).clicked() {
                                 self.config.show_cursor = self.show_cursor;
@@ -1212,9 +1302,9 @@ impl ScytheOverlayApp {
                                     3 => "muted".to_string(),
                                     _ => "system".to_string(),
                                 };
-                                self.config.audio_device = self.config.audio_device.clone();
                                 let _ = self.config.save();
-                                let _ = ipc::send_command(Command::ReloadConfig);
+                                crate::hyprland_binds::register_hyprland_binds(&self.config);
+                                crate::config::ScytheConfig::notify_daemon_reload();
                                 self.status_msg = Some(("Settings Saved & Applied!".to_string(), Instant::now()));
                                 self.switch_view(ShadowPlayView::MainHud, ctx);
                             }
@@ -1222,47 +1312,57 @@ impl ScytheOverlayApp {
                 });
         });
     }
-
     fn render_gallery_view(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
-        ui.vertical_centered(|ui| {
+        let screen_w = ui.available_width();
+        let screen_h = ui.available_height();
+        let modal_w = 740.0_f32;
+        let modal_h = (screen_h - 70.0).clamp(520.0, 700.0);
+        let left_pad = ((screen_w - modal_w) / 2.0).max(10.0);
+        let top_pad = ((screen_h - modal_h) / 2.0).max(20.0);
+
+        let modal_rect = egui::Rect::from_min_size(egui::pos2(left_pad, top_pad), egui::vec2(modal_w, modal_h));
+        self.panel_rect = modal_rect;
+
+        ui.allocate_new_ui(egui::UiBuilder::new().max_rect(modal_rect), |ui| {
             egui::Frame::NONE
-                .fill(Color32::from_rgba_unmultiplied(15, 22, 32, 235))
-                .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 40)))
-                .corner_radius(CornerRadius::same(16_u8))
-                .inner_margin(Margin::symmetric(22_i8, 16_i8))
+                .fill(Color32::from_rgba_unmultiplied(12, 16, 24, 250))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 197, 94)))
+                .corner_radius(CornerRadius::ZERO)
+                .inner_margin(Margin::symmetric(20_i8, 16_i8))
                 .show(ui, |ui| {
-                    ui.set_width(720.0);
+                    ui.set_width(modal_w - 40.0);
 
                     // Header with Back Button and Refresh
                     ui.horizontal(|ui| {
                         let back_btn = egui::Button::new(
-                            egui::RichText::new("< Back to Overlay")
-                                .size(11.5)
+                            egui::RichText::new("< BACK TO SETTINGS")
+                                .font(FontId::monospace(11.0))
                                 .strong()
-                                .color(Color32::from_rgb(118, 185, 0)),
+                                .color(Color32::from_rgb(34, 197, 94)),
                         )
-                        .fill(Color32::from_rgba_unmultiplied(118, 185, 0, 30))
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(118, 185, 0, 115)))
-                        .corner_radius(CornerRadius::same(8_u8));
+                        .fill(Color32::from_rgba_unmultiplied(34, 197, 94, 30))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 197, 94)))
+                        .corner_radius(CornerRadius::ZERO);
 
                         if ui.add(back_btn).clicked() {
-                            self.switch_view(ShadowPlayView::MainHud, ctx);
+                            self.switch_view(ShadowPlayView::Settings, ctx);
                             return;
                         }
 
                         ui.add_space(12.0);
                         ui.label(
                             egui::RichText::new("GALLERY & CLIP TRIMMER")
-                                .font(FontId::proportional(15.0))
+                                .font(FontId::proportional(14.0))
                                 .strong()
                                 .color(Color32::WHITE),
                         );
 
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.button(egui::RichText::new("Refresh").size(11.0)).clicked() {
+                            if squared_button(ui, "REFRESH", false) {
                                 self.refresh_clips();
                             }
-                            if ui.button(egui::RichText::new("Open Folder").size(11.0)).clicked() {
+                            ui.add_space(4.0);
+                            if squared_button(ui, "OPEN FOLDER", false) {
                                 open_folder(&ScytheConfig::expand_tilde(&self.output_dir));
                             }
                         });
@@ -1273,16 +1373,16 @@ impl ScytheOverlayApp {
                     if let Some((msg, ts)) = &self.trim_status_msg {
                         if ts.elapsed() < Duration::from_secs(4) {
                             egui::Frame::NONE
-                                .fill(Color32::from_rgba_unmultiplied(118, 185, 0, 25))
-                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(118, 185, 0)))
-                                .corner_radius(CornerRadius::same(6_u8))
+                                .fill(Color32::from_rgba_unmultiplied(34, 197, 94, 25))
+                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 197, 94)))
+                                .corner_radius(CornerRadius::ZERO)
                                 .inner_margin(Margin::symmetric(10_i8, 6_i8))
                                 .show(ui, |ui| {
                                     ui.label(
                                         egui::RichText::new(msg)
                                             .size(11.5)
                                             .strong()
-                                            .color(Color32::from_rgb(140, 224, 0)),
+                                            .color(Color32::from_rgb(34, 197, 94)),
                                     );
                                 });
                             ui.add_space(8.0);
@@ -1298,21 +1398,21 @@ impl ScytheOverlayApp {
                             ui.add_space(4.0);
 
                             egui::ScrollArea::vertical()
-                                .max_height(450.0)
+                                .max_height(modal_h - 120.0)
                                 .id_salt("gallery_clips_scroll")
                                 .show(ui, |ui| {
                                     if self.clips.is_empty() {
-                                        ui.label(egui::RichText::new("No recordings found yet.\nPress Alt+F9 or Save Replay to capture clips.").size(11.0).color(Color32::from_rgb(100, 116, 139)));
+                                        ui.label(egui::RichText::new("No recordings found yet.\nPress hotkeys to capture clips.").size(11.0).color(Color32::from_rgb(100, 116, 139)));
                                     } else {
                                         for (idx, clip) in self.clips.iter().enumerate() {
                                             let is_sel = self.selected_clip_idx == Some(idx);
                                             let card_bg = if is_sel {
-                                                Color32::from_rgba_unmultiplied(118, 185, 0, 35)
+                                                Color32::from_rgba_unmultiplied(34, 197, 94, 35)
                                             } else {
                                                 Color32::from_rgba_unmultiplied(255, 255, 255, 10)
                                             };
                                             let border = if is_sel {
-                                                Stroke::new(1.0_f32, Color32::from_rgb(118, 185, 0))
+                                                Stroke::new(1.0_f32, Color32::from_rgb(34, 197, 94))
                                             } else {
                                                 Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 20))
                                             };
@@ -1320,15 +1420,15 @@ impl ScytheOverlayApp {
                                             let resp = egui::Frame::NONE
                                                 .fill(card_bg)
                                                 .stroke(border)
-                                                .corner_radius(CornerRadius::same(6_u8))
+                                                .corner_radius(CornerRadius::ZERO)
                                                 .inner_margin(Margin::symmetric(8_i8, 6_i8))
                                                 .show(ui, |ui| {
                                                     ui.set_width(260.0);
                                                     ui.horizontal(|ui| {
-                                                        let badge_col = if clip.is_replay { Color32::from_rgb(118, 185, 0) } else { Color32::from_rgb(239, 68, 68) };
+                                                        let badge_col = if clip.is_replay { Color32::from_rgb(34, 197, 94) } else { Color32::from_rgb(239, 68, 68) };
                                                         let badge_txt = if clip.is_replay { "REPLAY" } else { "REC" };
                                                         let (b_rect, _) = ui.allocate_exact_size(Vec2::new(44.0, 16.0), egui::Sense::hover());
-                                                        ui.painter().rect_filled(b_rect, CornerRadius::same(3_u8), badge_col);
+                                                        ui.painter().rect_filled(b_rect, CornerRadius::ZERO, badge_col);
                                                         ui.painter().text(b_rect.center(), egui::Align2::CENTER_CENTER, badge_txt, FontId::monospace(8.5), Color32::from_rgb(11, 18, 4));
 
                                                         ui.add_space(4.0);
@@ -1356,7 +1456,7 @@ impl ScytheOverlayApp {
 
                         // Right Column: Preview, Details & Trimmer
                         ui.vertical(|ui| {
-                            ui.set_width(400.0);
+                            ui.set_width(modal_w - 320.0);
                             if let Some(idx) = self.selected_clip_idx {
                                 if idx < self.clips.len() {
                                     let clip = self.clips[idx].clone();
@@ -1375,25 +1475,29 @@ impl ScytheOverlayApp {
                                             ui.horizontal(|ui| {
                                                 ui.label(egui::RichText::new("Duration:").size(11.0).strong().color(Color32::WHITE));
                                                 let total_s = self.clip_duration_sec as u32;
-                                                ui.label(egui::RichText::new(format!("{:02}:{:02} ({:.1}s)", total_s / 60, total_s % 60, self.clip_duration_sec)).size(10.5).color(Color32::from_rgb(118, 185, 0)));
+                                                ui.label(egui::RichText::new(format!("{:02}:{:02} ({:.1}s)", total_s / 60, total_s % 60, self.clip_duration_sec)).size(10.5).color(Color32::from_rgb(34, 197, 94)));
                                             });
                                         }
 
                                         ui.add_space(6.0);
                                         ui.horizontal(|ui| {
-                                            let play_btn = egui::Button::new(egui::RichText::new("▶ Play Video").size(11.5).strong().color(Color32::from_rgb(11, 18, 4)))
-                                                .fill(Color32::from_rgb(118, 185, 0))
+                                            let play_btn = egui::Button::new(egui::RichText::new("PLAY VIDEO").size(11.0).strong().color(Color32::from_rgb(11, 18, 4)))
+                                                .fill(Color32::from_rgb(34, 197, 94))
                                                 .stroke(Stroke::NONE)
-                                                .corner_radius(CornerRadius::same(6_u8));
+                                                .corner_radius(CornerRadius::ZERO);
                                             if ui.add(play_btn).clicked() {
                                                 play_clip(&clip.path);
                                             }
 
-                                            if ui.button(egui::RichText::new("Show in Folder").size(11.0)).clicked() {
+                                            if squared_button(ui, "SHOW IN FOLDER", false) {
                                                 open_folder(&clip.path);
                                             }
 
-                                            if ui.button(egui::RichText::new("Delete").size(11.0).color(Color32::from_rgb(239, 68, 68))).clicked() {
+                                            let del_btn = egui::Button::new(egui::RichText::new("DELETE").size(11.0).strong().color(Color32::from_rgb(239, 68, 68)))
+                                                .fill(Color32::from_rgba_unmultiplied(239, 68, 68, 20))
+                                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(239, 68, 68)))
+                                                .corner_radius(CornerRadius::ZERO);
+                                            if ui.add(del_btn).clicked() {
                                                 let _ = std::fs::remove_file(&clip.path);
                                                 self.trim_status_msg = Some((format!("Deleted {}", clip.filename), Instant::now()));
                                                 self.selected_clip_idx = None;
@@ -1428,13 +1532,13 @@ impl ScytheOverlayApp {
 
                                         let trimmed_dur = (self.trim_end_sec - self.trim_start_sec).max(0.0);
                                         ui.add_space(4.0);
-                                        ui.label(egui::RichText::new(format!("Trimmed output length: {:.1} seconds (Instant stream-copy, lossless)", trimmed_dur)).size(10.5).color(Color32::from_rgb(148, 163, 184)));
+                                        ui.label(egui::RichText::new(format!("Trimmed output length: {:.1}s (Instant lossless copy)", trimmed_dur)).size(10.5).color(Color32::from_rgb(148, 163, 184)));
 
                                         ui.add_space(8.0);
-                                        let trim_btn = egui::Button::new(egui::RichText::new("Trim & Export Copy").size(12.0).strong().color(Color32::from_rgb(11, 18, 4)))
-                                            .fill(Color32::from_rgb(118, 185, 0))
+                                        let trim_btn = egui::Button::new(egui::RichText::new("TRIM & EXPORT COPY").size(11.5).strong().color(Color32::from_rgb(11, 18, 4)))
+                                            .fill(Color32::from_rgb(34, 197, 94))
                                             .stroke(Stroke::NONE)
-                                            .corner_radius(CornerRadius::same(6_u8))
+                                            .corner_radius(CornerRadius::ZERO)
                                             .min_size(Vec2::new(ui.available_width(), 32.0));
 
                                         if ui.add(trim_btn).clicked() {
@@ -1455,9 +1559,9 @@ impl ScytheOverlayApp {
                                 render_section_card(ui, "CLIP PREVIEW & TRIMMER", |ui| {
                                     ui.add_space(40.0);
                                     ui.vertical_centered(|ui| {
-                                        ui.label(egui::RichText::new("No clip selected").font(FontId::proportional(14.0)).strong().color(Color32::from_rgb(148, 163, 184)));
+                                        ui.label(egui::RichText::new("No clip selected").font(FontId::proportional(13.0)).strong().color(Color32::from_rgb(148, 163, 184)));
                                         ui.add_space(6.0);
-                                        ui.label(egui::RichText::new("Select a recording or instant replay from the list on the left to inspect, play, or losslessly trim.").size(11.0).color(Color32::from_rgb(100, 116, 139)));
+                                        ui.label(egui::RichText::new("Select a recording or instant replay from the list on the left to inspect, play, or losslessly trim.").size(10.5).color(Color32::from_rgb(100, 116, 139)));
                                     });
                                     ui.add_space(40.0);
                                 });
@@ -1477,28 +1581,105 @@ impl eframe::App for ScytheOverlayApp {
         self.anim_time += 0.033;
         ctx.request_repaint_after(Duration::from_millis(50));
 
-        // Position window a little at the top (50px margin) like an overlay
-        if !self.initial_pos_set
-            && let Some(monitor_size) = ctx.input(|i| i.viewport().monitor_size)
-            && monitor_size.x > 100.0
-            && monitor_size.y > 100.0
-        {
-            let win_w = 760.0;
-            let x = ((monitor_size.x - win_w) / 2.0).max(10.0);
-            let y = 50.0;
-            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(x, y)));
-            self.initial_pos_set = true;
+        // Auto-position and size to monitor on launch
+        if !self.initial_pos_set {
+            if let Some(monitor_size) = ctx.input(|i| i.viewport().monitor_size) {
+                if monitor_size.x > 100.0 && monitor_size.y > 100.0 {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(0.0, 0.0)));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(monitor_size));
+                    self.initial_pos_set = true;
+                }
+            }
         }
 
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            if self.replay_dropdown_open || self.record_dropdown_open {
-                self.replay_dropdown_open = false;
-                self.record_dropdown_open = false;
-                self.update_window_size(ctx);
-            } else {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                crate::ipc::clean_overlay_pid();
-                std::process::exit(0);
+        // Handle interactive keybind recording mode
+        if let Some(action) = self.listening_keybind {
+            let mut captured_combo: Option<String> = None;
+            ctx.input(|i| {
+                for event in &i.events {
+                    if let egui::Event::Key { key, pressed: true, modifiers, .. } = event {
+                        if *key == egui::Key::Escape {
+                            captured_combo = Some("CANCEL".to_string());
+                            break;
+                        }
+                        if let Some(key_name) = format_egui_key(*key) {
+                            let mut parts = Vec::new();
+                            if modifiers.ctrl {
+                                parts.push("Ctrl");
+                            }
+                            if modifiers.alt {
+                                parts.push("Alt");
+                            }
+                            if modifiers.shift {
+                                parts.push("Shift");
+                            }
+                            if modifiers.command && !modifiers.ctrl {
+                                parts.push("Super");
+                            }
+                            parts.push(&key_name);
+                            captured_combo = Some(parts.join("+"));
+                            break;
+                        }
+                    }
+                }
+            });
+
+            if let Some(combo) = captured_combo {
+                if combo == "CANCEL" {
+                    self.listening_keybind = None;
+                } else {
+                    let action_name = match action {
+                        KeybindAction::Menu => {
+                            self.config.menu_hotkey = combo.clone();
+                            "Menu Overlay"
+                        }
+                        KeybindAction::SaveReplay => {
+                            self.config.save_hotkey = combo.clone();
+                            "Instant Replay"
+                        }
+                        KeybindAction::ToggleRecord => {
+                            self.config.record_hotkey = combo.clone();
+                            "Record Toggle"
+                        }
+                        KeybindAction::ToggleCursor => {
+                            self.config.cursor_hotkey = combo.clone();
+                            "Cursor Toggle"
+                        }
+                    };
+                    let _ = self.config.save();
+                    crate::hyprland_binds::register_hyprland_binds(&self.config);
+                    crate::config::ScytheConfig::notify_daemon_reload();
+                    self.status_msg = Some((format!("Bound {}: {}", action_name, combo), Instant::now()));
+                    self.listening_keybind = None;
+                }
+            }
+        } else {
+            // Normal Escape handling
+            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                if self.replay_dropdown_open || self.record_dropdown_open {
+                    self.replay_dropdown_open = false;
+                    self.record_dropdown_open = false;
+                } else {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    crate::ipc::clean_overlay_pid();
+                    std::process::exit(0);
+                }
+            }
+
+            // Click outside active panel on darkened background to dismiss
+            if ctx.input(|i| i.pointer.primary_clicked()) {
+                if let Some(pos) = ctx.input(|i| i.pointer.interact_pos()) {
+                    if self.panel_rect.width() > 10.0 && !self.panel_rect.expand(6.0).contains(pos) {
+                        if self.replay_dropdown_open || self.record_dropdown_open {
+                            self.replay_dropdown_open = false;
+                            self.record_dropdown_open = false;
+                        } else {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                            crate::ipc::clean_overlay_pid();
+                            std::process::exit(0);
+                        }
+                    }
+                }
             }
         }
 
@@ -1507,8 +1688,9 @@ impl eframe::App for ScytheOverlayApp {
         visuals.window_fill = Color32::TRANSPARENT;
         ctx.set_visuals(visuals);
 
+        // Background screen darkening scrim (rgba 0, 0, 0, 115 gives ~45% dimming of background)
         egui::CentralPanel::default()
-            .frame(egui::Frame::NONE.fill(Color32::TRANSPARENT))
+            .frame(egui::Frame::NONE.fill(Color32::from_rgba_unmultiplied(0, 0, 0, 115)))
             .show(ctx, |ui| match self.current_view {
                 ShadowPlayView::MainHud => self.render_main_hud(ctx, ui),
                 ShadowPlayView::Settings => self.render_settings_view(ctx, ui),
@@ -1522,11 +1704,10 @@ pub fn run_egui_overlay() {
         viewport: egui::ViewportBuilder::default()
             .with_title("Scythe")
             .with_app_id("scythe-overlay")
-            .with_position([400.0, 50.0])
-            .with_inner_size([760.0, 270.0])
-            .with_min_inner_size([740.0, 250.0])
-            .with_max_inner_size([1100.0, 800.0])
-            .with_resizable(false)
+            .with_position([0.0, 0.0])
+            .with_inner_size([1920.0, 1080.0])
+            .with_maximized(true)
+            .with_resizable(true)
             .with_decorations(false)
             .with_transparent(true)
             .with_always_on_top(),
