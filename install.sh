@@ -25,6 +25,14 @@ ln -sf "$BIN_DIR/scythe-daemon" "$BIN_DIR/vrec-daemon"
 ln -sf "$BIN_DIR/scythe-ui" "$BIN_DIR/vrec-ui"
 ln -sf "$BIN_DIR/scythe-ui" "$BIN_DIR/vrec"
 
+if pgrep -x scythe-daemon > /dev/null; then
+    echo "Restarting active scythe-daemon engine..."
+    pkill -x scythe-daemon || true
+    sleep 0.5
+    nohup "$BIN_DIR/scythe-daemon" > /dev/null 2>&1 &
+    disown
+fi
+
 echo "[3/4] Creating application launcher..."
 cat > "$APP_DIR/scythe.desktop" << EOF
 [Desktop Entry]

@@ -54,6 +54,10 @@ pub struct ScytheConfig {
     
     #[serde(default)]
     pub autostart: bool,
+    #[serde(default)]
+    pub autostart_replay: bool,
+    #[serde(default)]
+    pub autostart_overlay: bool,
     #[serde(default = "default_lang")]
     pub language: String,
     #[serde(default = "default_theme")]
@@ -92,6 +96,8 @@ impl Default for ScytheConfig {
             system_volume: default_system_volume(),
             
             autostart: false,
+            autostart_replay: false,
+            autostart_overlay: false,
             language: "en".to_string(),
             ui_color_theme: "dark".to_string(),
             save_hotkey: "Ctrl+Shift+R".to_string(),
@@ -147,7 +153,10 @@ impl ScytheConfig {
     pub fn load() -> Self {
         let path = Self::config_path();
         if let Ok(content) = fs::read_to_string(&path)
-            && let Ok(cfg) = serde_json::from_str(&content) {
+            && let Ok(mut cfg) = serde_json::from_str::<Self>(&content) {
+                if cfg.autostart && !cfg.autostart_replay {
+                    cfg.autostart_replay = true;
+                }
                 return cfg;
         }
         let legacy = Self::legacy_config_path();
@@ -156,6 +165,9 @@ impl ScytheConfig {
                 // If the legacy config used the old default directory, update it to the new Scythe directory
                 if cfg.output_directory.ends_with("/Videos/vrec") || cfg.output_directory.ends_with("\\Videos\\vrec") {
                     cfg.output_directory = Self::default_output_directory();
+                }
+                if cfg.autostart && !cfg.autostart_replay {
+                    cfg.autostart_replay = true;
                 }
                 let _ = cfg.save();
                 return cfg;
@@ -180,14 +192,109 @@ impl ScytheConfig {
                 let _ = fs::write(legacy, &json);
         }
 
+        self.sync_autostart();
+
         Ok(())
+    }
+
+    pub fn sync_autostart(&self) {
+        #[cfg(unix)]
+        {
+            let home = match std::env::var("HOME") {
+                Ok(h) => PathBuf::from(h),
+                Err(_) => return,
+            };
+
+            let autostart_dir = home.join(".config").join("autostart");
+            let _ = fs::create_dir_all(&autostart_dir);
+
+            // 1. Replay daemon autostart entry
+            let daemon_desktop = autostart_dir.join("scythe-daemon.desktop");
+            if self.autostart_replay {
+                let content = "[Desktop Entry]\n\
+Type=Application\n\
+Name=Scythe Replay Engine\n\
+Comment=Scythe Background Screen Recorder & Instant Replay Daemon\n\
+Icon=media-record\n\
+Exec=scythe-daemon\n\
+Terminal=false\n\
+Hidden=false\n\
+X-GNOME-Autostart-enabled=true\n";
+                let _ = fs::write(&daemon_desktop, content);
+            } else {
+                let _ = fs::remove_file(&daemon_desktop);
+            }
+
+            // 2. Overlay autostart entry
+            let overlay_desktop = autostart_dir.join("scythe-overlay.desktop");
+            if self.autostart_overlay {
+                let content = "[Desktop Entry]\n\
+Type=Application\n\
+Name=Scythe Overlay\n\
+Comment=Scythe Screen Recorder HUD Overlay\n\
+Icon=media-record\n\
+Exec=scythe-ui --menu\n\
+Terminal=false\n\
+Hidden=false\n\
+X-GNOME-Autostart-enabled=true\n";
+                let _ = fs::write(&overlay_desktop, content);
+            } else {
+                let _ = fs::remove_file(&overlay_desktop);
+            }
+
+            // 3. Hyprland execs.lua integration if present
+            let hypr_execs_lua = home.join(".config").join("hypr").join("hyprland").join("execs.lua");
+            if hypr_execs_lua.exists() {
+                if let Ok(mut text) = fs::read_to_string(&hypr_execs_lua) {
+                    let mut modified = false;
+
+                    let daemon_cmd_pattern = "scythe-daemon";
+                    let daemon_cmd_line = "    hl.exec_cmd(\"scythe-daemon\")\n";
+                    if self.autostart_replay {
+                        if !text.contains(daemon_cmd_pattern) {
+                            if let Some(pos) = text.rfind("end)") {
+                                text.insert_str(pos, daemon_cmd_line);
+                                modified = true;
+                            }
+                        }
+                    } else if text.contains(daemon_cmd_pattern) {
+                        text = text.lines()
+                            .filter(|l| !l.contains(daemon_cmd_pattern))
+                            .collect::<Vec<_>>()
+                            .join("\n") + "\n";
+                        modified = true;
+                    }
+
+                    let overlay_cmd_pattern = "scythe-ui --menu";
+                    let overlay_cmd_line = "    hl.exec_cmd(\"scythe-ui --menu\")\n";
+                    if self.autostart_overlay {
+                        if !text.contains(overlay_cmd_pattern) {
+                            if let Some(pos) = text.rfind("end)") {
+                                text.insert_str(pos, overlay_cmd_line);
+                                modified = true;
+                            }
+                        }
+                    } else if text.contains(overlay_cmd_pattern) {
+                        text = text.lines()
+                            .filter(|l| !l.contains(overlay_cmd_pattern))
+                            .collect::<Vec<_>>()
+                            .join("\n") + "\n";
+                        modified = true;
+                    }
+
+                    if modified {
+                        let _ = fs::write(&hypr_execs_lua, text);
+                    }
+                }
+            }
+        }
     }
 
     pub fn notify_daemon_reload() {
         let _ = crate::ipc::send_command(crate::ipc::Command::ReloadConfig);
     }
 
-    /// Formats video filenames with informative local timestamps, e.g. "Replay-18-30-00-05-09-2026.mp4"
+    /// Formats video filenames with informative local timestamps, e.g. "Replay-18-30-00_05-09-2026.mp4"
     pub fn format_video_filename(prefix: &str, ext: &str) -> String {
         unsafe {
             let t = libc::time(std::ptr::null_mut());
@@ -204,7 +311,7 @@ impl ScytheConfig {
             let month = tm.tm_mon + 1;
             let year = tm.tm_year + 1900;
 
-            format!("{}-{:02}-{:02}-{:02}-{:02}-{:02}-{:04}.{}", prefix, hour, min, sec, day, month, year, ext)
+            format!("{}-{:02}-{:02}-{:02}_{:02}-{:02}-{:04}.{}", prefix, hour, min, sec, day, month, year, ext)
         }
     }
 }
@@ -239,12 +346,19 @@ mod tests {
         let name = ScytheConfig::format_video_filename("Replay", "mp4");
         assert!(name.starts_with("Replay-"));
         assert!(name.ends_with(".mp4"));
-        // Check pattern Replay-HH-MM-SS-DD-MM-YYYY.mp4 (7 parts separated by hyphen)
+        // Check pattern Replay-HH-MM-SS_DD-MM-YYYY.mp4
         let without_ext = name.strip_suffix(".mp4").unwrap();
-        let parts: Vec<&str> = without_ext.split('-').collect();
-        assert_eq!(parts.len(), 7, "Filename parts mismatch: {}", name);
-        assert_eq!(parts[0], "Replay");
-        for part in &parts[1..] {
+        let top_parts: Vec<&str> = without_ext.split('_').collect();
+        assert_eq!(top_parts.len(), 2, "Filename underscore separation mismatch: {}", name);
+        let time_parts: Vec<&str> = top_parts[0].split('-').collect();
+        assert_eq!(time_parts.len(), 4, "Time parts mismatch: {}", top_parts[0]);
+        assert_eq!(time_parts[0], "Replay");
+        for part in &time_parts[1..] {
+            assert!(part.chars().all(|c| c.is_ascii_digit()));
+        }
+        let date_parts: Vec<&str> = top_parts[1].split('-').collect();
+        assert_eq!(date_parts.len(), 3, "Date parts mismatch: {}", top_parts[1]);
+        for part in &date_parts {
             assert!(part.chars().all(|c| c.is_ascii_digit()));
         }
     }

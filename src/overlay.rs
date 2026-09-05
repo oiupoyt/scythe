@@ -1,7 +1,7 @@
 use gtk::prelude::*;
 use gtk::{
     Application, ApplicationWindow, Box, Button, ComboBoxText, CssProvider,
-    DrawingArea, Entry, Label, LevelBar, Orientation, Revealer, RevealerTransitionType, Scale,
+    DrawingArea, Entry, Fixed, Label, LevelBar, Orientation, Revealer, RevealerTransitionType, Scale,
     ScrolledWindow, SpinButton, Stack, StackTransitionType, StyleContext, Switch,
 };
 #[cfg(target_os = "linux")]
@@ -9,7 +9,7 @@ use gtk_layer_shell::{Layer, LayerShell};
 use std::f64::consts::PI;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use crate::config::ScytheConfig;
 use crate::ipc::{self, Command};
 
@@ -101,7 +101,7 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
             return;
         }
 
-        let app_id = format!("com.scythe.toast.{}", std::process::id());
+        let app_id = format!("com.scythe.toast.p{}", std::process::id());
         let app = Application::builder()
             .application_id(&app_id)
             .flags(gtk::gio::ApplicationFlags::NON_UNIQUE)
@@ -130,8 +130,8 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
         app.connect_activate(move |app| {
             let window = ApplicationWindow::builder()
                 .application(app)
-                .default_width(330)
-                .default_height(58)
+                .default_width(340)
+                .default_height(64)
                 .build();
 
             #[cfg(target_os = "linux")]
@@ -156,7 +156,7 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
                 if let Some(display) = gdk::Display::default()
                     && let Some(mon) = display.primary_monitor().or_else(|| display.monitor(0)) {
                         let geom = mon.geometry();
-                        let x = geom.x() + geom.width() - 330 - 24;
+                        let x = geom.x() + geom.width() - 340 - 24;
                         let y = geom.y() + 24;
                         window.move_(x, y);
                 }
@@ -184,7 +184,7 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
                     box-shadow: none !important;
                 }}
                 .shadowplay-toast {{
-                    background-color: rgba(11, 11, 13, 0.96);
+                    background-color: rgba(12, 13, 17, 0.82);
                     border: 1px solid rgba(255, 255, 255, 0.12);
                     border-left: 3.5px solid {accent};
                     border-radius: 0px !important;
@@ -321,13 +321,40 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
 
             hbox.pack_start(&icon_area, false, false, 0);
             hbox.pack_start(&vbox, true, true, 0);
-            window.add(&hbox);
+
+            let fixed = Fixed::new();
+            fixed.set_size_request(340, 64);
+            fixed.put(&hbox, 340, 5);
+            window.add(&fixed);
             window.show_all();
 
             let window_clone = window.clone();
-            gtk::glib::timeout_add_local(Duration::from_millis(2600), move || {
-                window_clone.close();
-                gtk::glib::ControlFlow::Break
+            let hbox_clone = hbox.clone();
+            let fixed_clone = fixed.clone();
+            let start_time = Instant::now();
+
+            gtk::glib::timeout_add_local(Duration::from_millis(16), move || {
+                let elapsed = start_time.elapsed().as_secs_f32();
+                if elapsed >= 2.80 {
+                    window_clone.close();
+                    return gtk::glib::ControlFlow::Break;
+                }
+
+                let slide_x = if elapsed < 0.35 {
+                    let t = (elapsed / 0.35).min(1.0);
+                    let ease = 1.0 - (1.0 - t).powi(3);
+                    (1.0 - ease) * 340.0
+                } else if elapsed < 2.40 {
+                    0.0
+                } else {
+                    let t = ((elapsed - 2.40) / 0.40).min(1.0);
+                    let ease = t.powi(3);
+                    ease * 340.0
+                };
+
+                let target_x = (slide_x + 10.0).round() as i32;
+                fixed_clone.move_(&hbox_clone, target_x, 5);
+                gtk::glib::ControlFlow::Continue
             });
         });
 
