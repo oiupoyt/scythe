@@ -10,6 +10,123 @@ use crate::ipc::{self, Command, DaemonStatus};
 pub enum ShadowPlayView {
     MainHud,
     Settings,
+    Gallery,
+}
+
+fn probe_duration_sec(path: &std::path::Path) -> f32 {
+    let out = std::process::Command::new("ffprobe")
+        .args([
+            "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+        ])
+        .arg(path)
+        .output();
+    if let Ok(out) = out {
+        let text = String::from_utf8_lossy(&out.stdout);
+        if let Ok(val) = text.trim().parse::<f32>() {
+            return val;
+        }
+    }
+    0.0
+}
+
+fn trim_clip(
+    input_path: &std::path::Path,
+    start_sec: f32,
+    end_sec: f32,
+) -> Result<PathBuf, String> {
+    let stem = input_path.file_stem().unwrap_or_default().to_string_lossy();
+    let ext = input_path.extension().unwrap_or_default().to_string_lossy();
+    let parent = input_path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    
+    let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_secs();
+    let out_name = format!("{}_trim_{}.{}", stem, now, ext);
+    let out_path = parent.join(&out_name);
+
+    let mut cmd = std::process::Command::new("ffmpeg");
+    cmd.args([
+        "-y",
+        "-ss", &format!("{:.2}", start_sec),
+        "-to", &format!("{:.2}", end_sec),
+        "-i",
+    ])
+    .arg(input_path)
+    .args([
+        "-c", "copy",
+        "-avoid_negative_ts", "make_zero",
+    ])
+    .arg(&out_path);
+
+    let res = cmd.output().map_err(|e| format!("Failed to spawn ffmpeg: {}", e))?;
+    if res.status.success() {
+        Ok(out_path)
+    } else {
+        let err_str = String::from_utf8_lossy(&res.stderr);
+        Err(format!("FFmpeg trim failed: {}", err_str.lines().last().unwrap_or("Unknown error")))
+    }
+}
+
+fn play_clip(path: &std::path::Path) {
+    let p = path.to_path_buf();
+    std::thread::spawn(move || {
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            let _ = std::process::Command::new("cmd")
+                .args(["/C", "start", "", &p.to_string_lossy()])
+                .creation_flags(0x08000000)
+                .spawn();
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            if std::process::Command::new("mpv").arg(&p).spawn().is_err()
+                && std::process::Command::new("vlc").arg(&p).spawn().is_err()
+            {
+                let _ = std::process::Command::new("xdg-open").arg(&p).spawn();
+            }
+        }
+    });
+}
+
+fn render_vu_meter(ui: &mut egui::Ui, level: f32, width: f32, height: f32, label: &str) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, height), egui::Sense::hover());
+    let clamped = level.clamp(0.0, 1.0);
+
+    let bg_color = Color32::from_rgb(18, 24, 34);
+    let border_stroke = Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 30));
+    ui.painter().rect(rect, CornerRadius::same(3_u8), bg_color, border_stroke, egui::StrokeKind::Inside);
+
+    let fill_w = (rect.width() * clamped).max(0.0);
+    if fill_w > 0.5 {
+        let fill_rect = egui::Rect::from_min_size(rect.min, Vec2::new(fill_w, rect.height()));
+        let fill_color = if clamped > 0.85 {
+            Color32::from_rgb(239, 68, 68)
+        } else if clamped > 0.65 {
+            Color32::from_rgb(234, 179, 8)
+        } else {
+            Color32::from_rgb(118, 185, 0)
+        };
+        ui.painter().rect_filled(fill_rect, CornerRadius::same(2_u8), fill_color);
+    }
+
+    if clamped > 0.05 {
+        let tick_x = rect.left() + rect.width() * clamped;
+        ui.painter().line_segment(
+            [egui::pos2(tick_x, rect.top()), egui::pos2(tick_x, rect.bottom())],
+            Stroke::new(1.5_f32, Color32::WHITE),
+        );
+    }
+
+    if !label.is_empty() {
+        ui.painter().text(
+            rect.left_center() + Vec2::new(3.0, 0.0),
+            egui::Align2::LEFT_CENTER,
+            label,
+            FontId::monospace(8.0),
+            Color32::from_rgba_unmultiplied(255, 255, 255, 200),
+        );
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -440,6 +557,13 @@ pub struct ScytheOverlayApp {
     show_cursor: bool,
     mic_volume_pct: u32,
     system_volume_pct: u32,
+    mic_vu: f32,
+    sys_vu: f32,
+    selected_clip_idx: Option<usize>,
+    trim_start_sec: f32,
+    trim_end_sec: f32,
+    trim_status_msg: Option<(String, Instant)>,
+    clip_duration_sec: f32,
     anim_time: f32,
     status_msg: Option<(String, Instant)>,
     status_rx: Receiver<DaemonStatus>,
@@ -481,7 +605,7 @@ impl ScytheOverlayApp {
                 if let Ok(s) = ipc::query_status() {
                     let _ = status_tx.send(s);
                 }
-                std::thread::sleep(Duration::from_millis(250));
+                std::thread::sleep(Duration::from_millis(50));
             }
         });
 
@@ -504,6 +628,13 @@ impl ScytheOverlayApp {
             show_cursor,
             mic_volume_pct,
             system_volume_pct,
+            mic_vu: 0.0,
+            sys_vu: 0.0,
+            selected_clip_idx: None,
+            trim_start_sec: 0.0,
+            trim_end_sec: 30.0,
+            trim_status_msg: None,
+            clip_duration_sec: 0.0,
             anim_time: 0.0,
             status_msg: None,
             status_rx,
@@ -520,6 +651,18 @@ impl ScytheOverlayApp {
 
     fn poll_async_events(&mut self) {
         while let Ok(s) = self.status_rx.try_recv() {
+            let target_mic = s.mic_level_peak;
+            let target_sys = s.system_level_peak;
+            self.mic_vu = if target_mic > self.mic_vu {
+                target_mic
+            } else {
+                self.mic_vu * 0.85 + target_mic * 0.15
+            };
+            self.sys_vu = if target_sys > self.sys_vu {
+                target_sys
+            } else {
+                self.sys_vu * 0.85 + target_sys * 0.15
+            };
             self.status = s;
             self.daemon_connected = true;
         }
@@ -553,6 +696,7 @@ impl ScytheOverlayApp {
                 if self.replay_dropdown_open || self.record_dropdown_open { 385.0 } else { 270.0 }
             }
             ShadowPlayView::Settings => 580.0,
+            ShadowPlayView::Gallery => 580.0,
         };
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(760.0, target_h)));
     }
@@ -617,7 +761,13 @@ impl ScytheOverlayApp {
                             );
                         }
 
-                        // Right side Esc hint badge (No close X button)
+                        // Live audio VU meters
+                        ui.add_space(8.0);
+                        render_vu_meter(ui, self.mic_vu, 42.0, 14.0, "MIC");
+                        ui.add_space(4.0);
+                        render_vu_meter(ui, self.sys_vu, 42.0, 14.0, "SYS");
+
+                        // Right side controls (Esc hint & Gallery button)
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             egui::Frame::NONE
                                 .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 20))
@@ -632,6 +782,22 @@ impl ScytheOverlayApp {
                                             .color(Color32::from_rgb(148, 163, 184)),
                                     );
                                 });
+
+                            ui.add_space(8.0);
+
+                            let gallery_btn = egui::Button::new(
+                                egui::RichText::new(format!("Gallery ({})", self.clips.len()))
+                                    .size(11.0)
+                                    .strong()
+                                    .color(Color32::from_rgb(226, 232, 240)),
+                            )
+                            .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 16))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 30)))
+                            .corner_radius(CornerRadius::same(6_u8));
+
+                            if ui.add(gallery_btn).clicked() {
+                                self.switch_view(ShadowPlayView::Gallery, ctx);
+                            }
                         });
                     });
                 });
@@ -934,6 +1100,8 @@ impl ScytheOverlayApp {
                                     if ui.add(egui::Slider::new(&mut mv, 0..=200).suffix("%")).changed() {
                                         self.mic_volume_pct = mv;
                                     }
+                                    ui.add_space(8.0);
+                                    render_vu_meter(ui, self.mic_vu, 80.0, 16.0, &format!("{:.0}%", self.mic_vu * 100.0));
                                 });
 
                                 ui.add_space(6.0);
@@ -944,7 +1112,27 @@ impl ScytheOverlayApp {
                                     if ui.add(egui::Slider::new(&mut sv, 0..=200).suffix("%")).changed() {
                                         self.system_volume_pct = sv;
                                     }
+                                    ui.add_space(8.0);
+                                    render_vu_meter(ui, self.sys_vu, 80.0, 16.0, &format!("{:.0}%", self.sys_vu * 100.0));
                                 });
+
+                                let apps = crate::capture::audio::list_application_audio();
+                                if !apps.is_empty() {
+                                    ui.add_space(8.0);
+                                    ui.horizontal(|ui| {
+                                        ui.label(egui::RichText::new("Active Sound Streams:").size(10.5).color(Color32::from_rgb(148, 163, 184)));
+                                        for app in apps.iter().take(4) {
+                                            egui::Frame::NONE
+                                                .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 14))
+                                                .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 24)))
+                                                .corner_radius(CornerRadius::same(4_u8))
+                                                .inner_margin(Margin::symmetric(5_i8, 2_i8))
+                                                .show(ui, |ui| {
+                                                    ui.label(egui::RichText::new(app).size(10.0).color(Color32::from_rgb(203, 213, 225)));
+                                                });
+                                        }
+                                    });
+                                }
                             });
 
                             ui.add_space(10.0);
@@ -963,7 +1151,13 @@ impl ScytheOverlayApp {
                                         open_folder(&ScytheConfig::expand_tilde(&self.output_dir));
                                     }
                                 });
-                                ui.label(egui::RichText::new(format!("{} video recordings in destination folder.", self.clips.len())).size(10.5).color(Color32::from_rgb(148, 163, 184)));
+                                ui.add_space(4.0);
+                                ui.horizontal(|ui| {
+                                    ui.label(egui::RichText::new(format!("{} video recordings in destination folder.", self.clips.len())).size(10.5).color(Color32::from_rgb(148, 163, 184)));
+                                    if ui.button(egui::RichText::new("Open Clip Gallery & Trimmer").size(10.5).strong().color(Color32::from_rgb(118, 185, 0))).clicked() {
+                                        self.switch_view(ShadowPlayView::Gallery, ctx);
+                                    }
+                                });
                             });
 
                             ui.add_space(10.0);
@@ -1018,6 +1212,7 @@ impl ScytheOverlayApp {
                                     3 => "muted".to_string(),
                                     _ => "system".to_string(),
                                 };
+                                self.config.audio_device = self.config.audio_device.clone();
                                 let _ = self.config.save();
                                 let _ = ipc::send_command(Command::ReloadConfig);
                                 self.status_msg = Some(("Settings Saved & Applied!".to_string(), Instant::now()));
@@ -1027,11 +1222,258 @@ impl ScytheOverlayApp {
                 });
         });
     }
+
+    fn render_gallery_view(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
+        ui.vertical_centered(|ui| {
+            egui::Frame::NONE
+                .fill(Color32::from_rgba_unmultiplied(15, 22, 32, 235))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 40)))
+                .corner_radius(CornerRadius::same(16_u8))
+                .inner_margin(Margin::symmetric(22_i8, 16_i8))
+                .show(ui, |ui| {
+                    ui.set_width(720.0);
+
+                    // Header with Back Button and Refresh
+                    ui.horizontal(|ui| {
+                        let back_btn = egui::Button::new(
+                            egui::RichText::new("< Back to Overlay")
+                                .size(11.5)
+                                .strong()
+                                .color(Color32::from_rgb(118, 185, 0)),
+                        )
+                        .fill(Color32::from_rgba_unmultiplied(118, 185, 0, 30))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(118, 185, 0, 115)))
+                        .corner_radius(CornerRadius::same(8_u8));
+
+                        if ui.add(back_btn).clicked() {
+                            self.switch_view(ShadowPlayView::MainHud, ctx);
+                            return;
+                        }
+
+                        ui.add_space(12.0);
+                        ui.label(
+                            egui::RichText::new("GALLERY & CLIP TRIMMER")
+                                .font(FontId::proportional(15.0))
+                                .strong()
+                                .color(Color32::WHITE),
+                        );
+
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.button(egui::RichText::new("Refresh").size(11.0)).clicked() {
+                                self.refresh_clips();
+                            }
+                            if ui.button(egui::RichText::new("Open Folder").size(11.0)).clicked() {
+                                open_folder(&ScytheConfig::expand_tilde(&self.output_dir));
+                            }
+                        });
+                    });
+
+                    ui.add_space(10.0);
+
+                    if let Some((msg, ts)) = &self.trim_status_msg {
+                        if ts.elapsed() < Duration::from_secs(4) {
+                            egui::Frame::NONE
+                                .fill(Color32::from_rgba_unmultiplied(118, 185, 0, 25))
+                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(118, 185, 0)))
+                                .corner_radius(CornerRadius::same(6_u8))
+                                .inner_margin(Margin::symmetric(10_i8, 6_i8))
+                                .show(ui, |ui| {
+                                    ui.label(
+                                        egui::RichText::new(msg)
+                                            .size(11.5)
+                                            .strong()
+                                            .color(Color32::from_rgb(140, 224, 0)),
+                                    );
+                                });
+                            ui.add_space(8.0);
+                        }
+                    }
+
+                    // Main two-column split
+                    ui.horizontal(|ui| {
+                        // Left Column: Clips List
+                        ui.vertical(|ui| {
+                            ui.set_width(280.0);
+                            ui.label(egui::RichText::new(format!("RECORDED CLIPS ({})", self.clips.len())).size(11.0).strong().color(Color32::from_rgb(148, 163, 184)));
+                            ui.add_space(4.0);
+
+                            egui::ScrollArea::vertical()
+                                .max_height(450.0)
+                                .id_salt("gallery_clips_scroll")
+                                .show(ui, |ui| {
+                                    if self.clips.is_empty() {
+                                        ui.label(egui::RichText::new("No recordings found yet.\nPress Alt+F9 or Save Replay to capture clips.").size(11.0).color(Color32::from_rgb(100, 116, 139)));
+                                    } else {
+                                        for (idx, clip) in self.clips.iter().enumerate() {
+                                            let is_sel = self.selected_clip_idx == Some(idx);
+                                            let card_bg = if is_sel {
+                                                Color32::from_rgba_unmultiplied(118, 185, 0, 35)
+                                            } else {
+                                                Color32::from_rgba_unmultiplied(255, 255, 255, 10)
+                                            };
+                                            let border = if is_sel {
+                                                Stroke::new(1.0_f32, Color32::from_rgb(118, 185, 0))
+                                            } else {
+                                                Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 20))
+                                            };
+
+                                            let resp = egui::Frame::NONE
+                                                .fill(card_bg)
+                                                .stroke(border)
+                                                .corner_radius(CornerRadius::same(6_u8))
+                                                .inner_margin(Margin::symmetric(8_i8, 6_i8))
+                                                .show(ui, |ui| {
+                                                    ui.set_width(260.0);
+                                                    ui.horizontal(|ui| {
+                                                        let badge_col = if clip.is_replay { Color32::from_rgb(118, 185, 0) } else { Color32::from_rgb(239, 68, 68) };
+                                                        let badge_txt = if clip.is_replay { "REPLAY" } else { "REC" };
+                                                        let (b_rect, _) = ui.allocate_exact_size(Vec2::new(44.0, 16.0), egui::Sense::hover());
+                                                        ui.painter().rect_filled(b_rect, CornerRadius::same(3_u8), badge_col);
+                                                        ui.painter().text(b_rect.center(), egui::Align2::CENTER_CENTER, badge_txt, FontId::monospace(8.5), Color32::from_rgb(11, 18, 4));
+
+                                                        ui.add_space(4.0);
+                                                        let size_mb = clip.size_bytes as f64 / (1024.0 * 1024.0);
+                                                        ui.label(egui::RichText::new(format!("{:.1} MB", size_mb)).size(10.0).color(Color32::from_rgb(148, 163, 184)));
+                                                    });
+                                                    ui.add_space(2.0);
+                                                    ui.label(egui::RichText::new(&clip.filename).size(10.5).strong().color(Color32::WHITE));
+                                                });
+
+                                            if resp.response.interact(egui::Sense::click()).clicked() {
+                                                self.selected_clip_idx = Some(idx);
+                                                let dur = probe_duration_sec(&clip.path);
+                                                self.clip_duration_sec = dur;
+                                                self.trim_start_sec = 0.0;
+                                                self.trim_end_sec = if dur > 0.0 { dur } else { 30.0 };
+                                            }
+                                            ui.add_space(4.0);
+                                        }
+                                    }
+                                });
+                        });
+
+                        ui.add_space(16.0);
+
+                        // Right Column: Preview, Details & Trimmer
+                        ui.vertical(|ui| {
+                            ui.set_width(400.0);
+                            if let Some(idx) = self.selected_clip_idx {
+                                if idx < self.clips.len() {
+                                    let clip = self.clips[idx].clone();
+                                    let size_mb = clip.size_bytes as f64 / (1024.0 * 1024.0);
+
+                                    render_section_card(ui, "CLIP DETAILS", |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.label(egui::RichText::new("File:").size(11.0).strong().color(Color32::WHITE));
+                                            ui.label(egui::RichText::new(&clip.filename).size(11.0).color(Color32::from_rgb(203, 213, 225)));
+                                        });
+                                        ui.horizontal(|ui| {
+                                            ui.label(egui::RichText::new("Size:").size(11.0).strong().color(Color32::WHITE));
+                                            ui.label(egui::RichText::new(format!("{:.2} MB ({} bytes)", size_mb, clip.size_bytes)).size(10.5).color(Color32::from_rgb(148, 163, 184)));
+                                        });
+                                        if self.clip_duration_sec > 0.0 {
+                                            ui.horizontal(|ui| {
+                                                ui.label(egui::RichText::new("Duration:").size(11.0).strong().color(Color32::WHITE));
+                                                let total_s = self.clip_duration_sec as u32;
+                                                ui.label(egui::RichText::new(format!("{:02}:{:02} ({:.1}s)", total_s / 60, total_s % 60, self.clip_duration_sec)).size(10.5).color(Color32::from_rgb(118, 185, 0)));
+                                            });
+                                        }
+
+                                        ui.add_space(6.0);
+                                        ui.horizontal(|ui| {
+                                            let play_btn = egui::Button::new(egui::RichText::new("▶ Play Video").size(11.5).strong().color(Color32::from_rgb(11, 18, 4)))
+                                                .fill(Color32::from_rgb(118, 185, 0))
+                                                .stroke(Stroke::NONE)
+                                                .corner_radius(CornerRadius::same(6_u8));
+                                            if ui.add(play_btn).clicked() {
+                                                play_clip(&clip.path);
+                                            }
+
+                                            if ui.button(egui::RichText::new("Show in Folder").size(11.0)).clicked() {
+                                                open_folder(&clip.path);
+                                            }
+
+                                            if ui.button(egui::RichText::new("Delete").size(11.0).color(Color32::from_rgb(239, 68, 68))).clicked() {
+                                                let _ = std::fs::remove_file(&clip.path);
+                                                self.trim_status_msg = Some((format!("Deleted {}", clip.filename), Instant::now()));
+                                                self.selected_clip_idx = None;
+                                                self.refresh_clips();
+                                            }
+                                        });
+                                    });
+
+                                    ui.add_space(10.0);
+
+                                    // LOSSLESS TRIMMER SECTION
+                                    render_section_card(ui, "LOSSLESS VIDEO TRIMMER", |ui| {
+                                        let max_dur = if self.clip_duration_sec > 0.0 { self.clip_duration_sec } else { 300.0 };
+
+                                        ui.horizontal(|ui| {
+                                            ui.label(egui::RichText::new("Start Trim:").size(11.0).strong().color(Color32::WHITE));
+                                            let mut s = self.trim_start_sec;
+                                            if ui.add(egui::Slider::new(&mut s, 0.0..=max_dur).suffix("s")).changed() {
+                                                self.trim_start_sec = s.min(self.trim_end_sec);
+                                            }
+                                        });
+
+                                        ui.add_space(4.0);
+
+                                        ui.horizontal(|ui| {
+                                            ui.label(egui::RichText::new("End Trim:").size(11.0).strong().color(Color32::WHITE));
+                                            let mut e = self.trim_end_sec;
+                                            if ui.add(egui::Slider::new(&mut e, 0.0..=max_dur).suffix("s")).changed() {
+                                                self.trim_end_sec = e.max(self.trim_start_sec);
+                                            }
+                                        });
+
+                                        let trimmed_dur = (self.trim_end_sec - self.trim_start_sec).max(0.0);
+                                        ui.add_space(4.0);
+                                        ui.label(egui::RichText::new(format!("Trimmed output length: {:.1} seconds (Instant stream-copy, lossless)", trimmed_dur)).size(10.5).color(Color32::from_rgb(148, 163, 184)));
+
+                                        ui.add_space(8.0);
+                                        let trim_btn = egui::Button::new(egui::RichText::new("Trim & Export Copy").size(12.0).strong().color(Color32::from_rgb(11, 18, 4)))
+                                            .fill(Color32::from_rgb(118, 185, 0))
+                                            .stroke(Stroke::NONE)
+                                            .corner_radius(CornerRadius::same(6_u8))
+                                            .min_size(Vec2::new(ui.available_width(), 32.0));
+
+                                        if ui.add(trim_btn).clicked() {
+                                            match trim_clip(&clip.path, self.trim_start_sec, self.trim_end_sec) {
+                                                Ok(out) => {
+                                                    let fname = out.file_name().unwrap_or_default().to_string_lossy().to_string();
+                                                    self.trim_status_msg = Some((format!("Exported trimmed clip: {}", fname), Instant::now()));
+                                                    self.refresh_clips();
+                                                }
+                                                Err(e) => {
+                                                    self.trim_status_msg = Some((format!("Trim failed: {}", e), Instant::now()));
+                                                }
+                                            }
+                                        }
+                                    });
+                                }
+                            } else {
+                                render_section_card(ui, "CLIP PREVIEW & TRIMMER", |ui| {
+                                    ui.add_space(40.0);
+                                    ui.vertical_centered(|ui| {
+                                        ui.label(egui::RichText::new("No clip selected").font(FontId::proportional(14.0)).strong().color(Color32::from_rgb(148, 163, 184)));
+                                        ui.add_space(6.0);
+                                        ui.label(egui::RichText::new("Select a recording or instant replay from the list on the left to inspect, play, or losslessly trim.").size(11.0).color(Color32::from_rgb(100, 116, 139)));
+                                    });
+                                    ui.add_space(40.0);
+                                });
+                            }
+                        });
+                    });
+                });
+        });
+    }
 }
 
 impl eframe::App for ScytheOverlayApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll_async_events();
+        self.mic_vu = (self.mic_vu * 0.94).max(0.0);
+        self.sys_vu = (self.sys_vu * 0.94).max(0.0);
         self.anim_time += 0.033;
         ctx.request_repaint_after(Duration::from_millis(50));
 
@@ -1070,6 +1512,7 @@ impl eframe::App for ScytheOverlayApp {
             .show(ctx, |ui| match self.current_view {
                 ShadowPlayView::MainHud => self.render_main_hud(ctx, ui),
                 ShadowPlayView::Settings => self.render_settings_view(ctx, ui),
+                ShadowPlayView::Gallery => self.render_gallery_view(ctx, ui),
             });
     }
 }

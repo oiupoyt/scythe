@@ -1,12 +1,64 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use crossbeam_channel::Sender;
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 use std::thread;
+
+#[derive(Debug, Default)]
+pub struct AudioLevels {
+    mic_peak: AtomicU32,
+    system_peak: AtomicU32,
+}
+
+impl AudioLevels {
+    pub fn new() -> Self {
+        Self {
+            mic_peak: AtomicU32::new(0),
+            system_peak: AtomicU32::new(0),
+        }
+    }
+
+    pub fn update_mic(&self, samples: &[f32]) {
+        let peak = samples.iter().fold(0.0f32, |m, &s| m.max(s.abs()));
+        self.update_val(&self.mic_peak, peak);
+    }
+
+    pub fn update_system(&self, samples: &[f32]) {
+        let peak = samples.iter().fold(0.0f32, |m, &s| m.max(s.abs()));
+        self.update_val(&self.system_peak, peak);
+    }
+
+    fn update_val(&self, atomic: &AtomicU32, peak: f32) {
+        let current = f32::from_bits(atomic.load(Ordering::Relaxed));
+        let next = if peak >= current {
+            peak.min(1.0)
+        } else {
+            (current * 0.82 + peak * 0.18).max(0.0)
+        };
+        atomic.store(next.to_bits(), Ordering::Relaxed);
+    }
+
+    pub fn get_mic_peak(&self) -> f32 {
+        let current = f32::from_bits(self.mic_peak.load(Ordering::Relaxed));
+        let decayed = (current * 0.90).max(0.0);
+        self.mic_peak.store(decayed.to_bits(), Ordering::Relaxed);
+        current
+    }
+
+    pub fn get_system_peak(&self) -> f32 {
+        let current = f32::from_bits(self.system_peak.load(Ordering::Relaxed));
+        let decayed = (current * 0.90).max(0.0);
+        self.system_peak.store(decayed.to_bits(), Ordering::Relaxed);
+        current
+    }
+}
 
 pub struct AudioCapture {
     #[cfg(unix)]
     _processes: Vec<std::process::Child>,
     _streams: Vec<cpal::Stream>,
+    pub levels: Arc<AudioLevels>,
 }
 
 impl Drop for AudioCapture {
@@ -54,6 +106,31 @@ pub fn list_input_devices() -> Vec<String> {
     names
 }
 
+pub fn list_application_audio() -> Vec<String> {
+    let mut apps = Vec::new();
+    #[cfg(unix)]
+    {
+        if let Ok(out) = std::process::Command::new("pactl").args(["list", "sink-inputs"]).output() {
+            let text = String::from_utf8_lossy(&out.stdout);
+            for line in text.lines() {
+                let trimmed = line.trim();
+                if let Some(rest) = trimmed.strip_prefix("application.name = ") {
+                    let name = rest.trim_matches('"').trim();
+                    if !name.is_empty() && !apps.iter().any(|a: &String| a.eq_ignore_ascii_case(name)) {
+                        apps.push(name.to_string());
+                    }
+                } else if let Some(rest) = trimmed.strip_prefix("media.name = ") {
+                    let name = rest.trim_matches('"').trim();
+                    if !name.is_empty() && !apps.iter().any(|a: &String| a.eq_ignore_ascii_case(name)) {
+                        apps.push(name.to_string());
+                    }
+                }
+            }
+        }
+    }
+    apps
+}
+
 #[inline]
 pub fn soft_limit(x: f32) -> f32 {
     if x.abs() <= 0.75 {
@@ -81,6 +158,8 @@ fn spawn_parec_stream(
     device: &str,
     sender: Sender<Vec<f32>>,
     gain: f32,
+    levels: Option<Arc<AudioLevels>>,
+    is_mic: bool,
 ) -> Result<std::process::Child, Box<dyn std::error::Error + Send + Sync>> {
     use std::io::Read;
 
@@ -132,6 +211,14 @@ fn spawn_parec_stream(
                     remainder.clear();
                     remainder.extend_from_slice(&combined[full_bytes..]);
 
+                    if let Some(ref l) = levels {
+                        if is_mic {
+                            l.update_mic(&floats);
+                        } else {
+                            l.update_system(&floats);
+                        }
+                    }
+
                     if sender.send(floats).is_err() {
                         break;
                     }
@@ -146,14 +233,14 @@ fn spawn_parec_stream(
 
 impl AudioCapture {
     pub fn new(sender: Sender<Vec<f32>>) -> Result<(Self, u32, u16), Box<dyn std::error::Error + Send + Sync>> {
-        Self::new_with_device_mode_and_volumes(sender, None, "system", 0.60, 1.0)
+        Self::new_with_device_mode_volumes_and_levels(sender, None, "system", 0.60, 1.0, None)
     }
 
     pub fn new_with_device(
         sender: Sender<Vec<f32>>,
         device_name: Option<&str>,
     ) -> Result<(Self, u32, u16), Box<dyn std::error::Error + Send + Sync>> {
-        Self::new_with_device_mode_and_volumes(sender, device_name, "system", 0.60, 1.0)
+        Self::new_with_device_mode_volumes_and_levels(sender, device_name, "system", 0.60, 1.0, None)
     }
 
     pub fn new_with_device_and_mode(
@@ -161,7 +248,7 @@ impl AudioCapture {
         device_name: Option<&str>,
         audio_mode: &str,
     ) -> Result<(Self, u32, u16), Box<dyn std::error::Error + Send + Sync>> {
-        Self::new_with_device_mode_and_volumes(sender, device_name, audio_mode, 0.60, 1.0)
+        Self::new_with_device_mode_volumes_and_levels(sender, device_name, audio_mode, 0.60, 1.0, None)
     }
 
     pub fn new_with_device_mode_and_volumes(
@@ -171,12 +258,26 @@ impl AudioCapture {
         mic_volume: f32,
         system_volume: f32,
     ) -> Result<(Self, u32, u16), Box<dyn std::error::Error + Send + Sync>> {
+        Self::new_with_device_mode_volumes_and_levels(sender, device_name, audio_mode, mic_volume, system_volume, None)
+    }
+
+    pub fn new_with_device_mode_volumes_and_levels(
+        sender: Sender<Vec<f32>>,
+        device_name: Option<&str>,
+        audio_mode: &str,
+        mic_volume: f32,
+        system_volume: f32,
+        levels: Option<Arc<AudioLevels>>,
+    ) -> Result<(Self, u32, u16), Box<dyn std::error::Error + Send + Sync>> {
+        let levels = levels.unwrap_or_else(|| Arc::new(AudioLevels::new()));
+
         if audio_mode == "muted" {
             println!("Audio capture mode: MUTED (No audio recorded)");
             return Ok((Self {
                 #[cfg(unix)]
                 _processes: Vec::new(),
                 _streams: Vec::new(),
+                levels,
             }, 48000, 2));
         }
 
@@ -188,22 +289,23 @@ impl AudioCapture {
                     let mic_target = device_name
                         .filter(|d| *d != "default" && !d.trim().is_empty())
                         .unwrap_or("@DEFAULT_SOURCE@");
-                    let child = spawn_parec_stream(mic_target, sender, mic_volume)?;
+                    let child = spawn_parec_stream(mic_target, sender, mic_volume, Some(Arc::clone(&levels)), true)?;
                     println!("Audio capture mode: MICROPHONE ONLY [{}] (vol: {:.0}%, 48000 Hz, 2 ch)", mic_target, mic_volume * 100.0);
                     return Ok((Self {
                         _processes: vec![child],
                         _streams: Vec::new(),
+                        levels,
                     }, 48000, 2));
                 }
                 "both" => {
                     let (sys_tx, sys_rx) = crossbeam_channel::bounded::<Vec<f32>>(100);
                     let (mic_tx, mic_rx) = crossbeam_channel::bounded::<Vec<f32>>(100);
 
-                    let sys_child = spawn_parec_stream("@DEFAULT_MONITOR@", sys_tx, system_volume)?;
+                    let sys_child = spawn_parec_stream("@DEFAULT_MONITOR@", sys_tx, system_volume, Some(Arc::clone(&levels)), false)?;
                     let mic_target = device_name
                         .filter(|d| *d != "default" && !d.trim().is_empty())
                         .unwrap_or("@DEFAULT_SOURCE@");
-                    let mic_child = spawn_parec_stream(mic_target, mic_tx, mic_volume)?;
+                    let mic_child = spawn_parec_stream(mic_target, mic_tx, mic_volume, Some(Arc::clone(&levels)), true)?;
 
                     let out_tx = sender;
                     thread::spawn(move || {
@@ -243,15 +345,17 @@ impl AudioCapture {
                     return Ok((Self {
                         _processes: vec![sys_child, mic_child],
                         _streams: Vec::new(),
+                        levels,
                     }, 48000, 2));
                 }
                 _ => {
                     // System audio only
-                    let child = spawn_parec_stream("@DEFAULT_MONITOR@", sender, system_volume)?;
+                    let child = spawn_parec_stream("@DEFAULT_MONITOR@", sender, system_volume, Some(Arc::clone(&levels)), false)?;
                     println!("Audio capture mode: SYSTEM AUDIO ONLY [@DEFAULT_MONITOR@] (vol: {:.0}%, 48000 Hz, 2 ch)", system_volume * 100.0);
                     return Ok((Self {
                         _processes: vec![child],
                         _streams: Vec::new(),
+                        levels,
                     }, 48000, 2));
                 }
             }
@@ -294,13 +398,16 @@ impl AudioCapture {
             host.default_input_device()
         };
 
-        let build_stream = |dev: &cpal::Device, tx: Sender<Vec<f32>>, gain: f32| -> Result<(cpal::Stream, u32, u16), Box<dyn std::error::Error + Send + Sync>> {
+        let levels_for_cpal = Arc::clone(&levels);
+        let build_stream = move |dev: &cpal::Device, tx: Sender<Vec<f32>>, gain: f32, is_mic: bool| -> Result<(cpal::Stream, u32, u16), Box<dyn std::error::Error + Send + Sync>> {
             let config = dev.default_input_config()?;
             let sample_rate = config.sample_rate();
             let channels = config.channels();
             let format = config.sample_format();
             let err_fn = |err| eprintln!("Audio stream error: {}", err);
             let stream_config: cpal::StreamConfig = config.into();
+            let lvl_f32 = Arc::clone(&levels_for_cpal);
+            let lvl_i16 = Arc::clone(&levels_for_cpal);
 
             let stream = match format {
                 cpal::SampleFormat::F32 => {
@@ -308,6 +415,11 @@ impl AudioCapture {
                         stream_config,
                         move |data: &[f32], _: &_| {
                             let f32_data: Vec<f32> = data.iter().map(|&s| soft_limit(s * gain)).collect();
+                            if is_mic {
+                                lvl_f32.update_mic(&f32_data);
+                            } else {
+                                lvl_f32.update_system(&f32_data);
+                            }
                             let _ = tx.try_send(f32_data);
                         },
                         err_fn,
@@ -319,6 +431,11 @@ impl AudioCapture {
                         stream_config,
                         move |data: &[i16], _: &_| {
                             let f32_data: Vec<f32> = data.iter().map(|&s| soft_limit((s as f32 / i16::MAX as f32) * gain)).collect();
+                            if is_mic {
+                                lvl_i16.update_mic(&f32_data);
+                            } else {
+                                lvl_i16.update_system(&f32_data);
+                            }
                             let _ = tx.try_send(f32_data);
                         },
                         err_fn,
@@ -335,12 +452,13 @@ impl AudioCapture {
             "mic" => {
                 let dev = find_mic_device().ok_or("No microphone device found")?;
                 let name = get_device_name(&dev);
-                let (stream, sr, ch) = build_stream(&dev, sender, mic_volume)?;
+                let (stream, sr, ch) = build_stream(&dev, sender, mic_volume, true)?;
                 println!("Audio capture mode: MICROPHONE ONLY [{}] ({} Hz, {} ch)", name, sr, ch);
                 Ok((Self {
                     #[cfg(unix)]
                     _processes: Vec::new(),
                     _streams: vec![stream],
+                    levels,
                 }, sr, ch))
             }
             "both" => {
@@ -353,8 +471,8 @@ impl AudioCapture {
                 let (sys_tx, sys_rx) = crossbeam_channel::bounded::<Vec<f32>>(100);
                 let (mic_tx, mic_rx) = crossbeam_channel::bounded::<Vec<f32>>(100);
 
-                let (sys_stream, sr, ch) = build_stream(&sys_dev, sys_tx, system_volume)?;
-                let (mic_stream, _, _) = build_stream(&mic_dev, mic_tx, mic_volume)?;
+                let (sys_stream, sr, ch) = build_stream(&sys_dev, sys_tx, system_volume, false)?;
+                let (mic_stream, _, _) = build_stream(&mic_dev, mic_tx, mic_volume, true)?;
 
                 let out_tx = sender;
                 thread::spawn(move || {
@@ -395,17 +513,19 @@ impl AudioCapture {
                     #[cfg(unix)]
                     _processes: Vec::new(),
                     _streams: vec![sys_stream, mic_stream],
+                    levels,
                 }, sr, ch))
             }
             _ => {
                 let dev = find_system_device().ok_or("No audio device available")?;
                 let name = get_device_name(&dev);
-                let (stream, sr, ch) = build_stream(&dev, sender, system_volume)?;
+                let (stream, sr, ch) = build_stream(&dev, sender, system_volume, false)?;
                 println!("Audio capture mode: SYSTEM SOUNDS ONLY [{}] ({} Hz, {} ch)", name, sr, ch);
                 Ok((Self {
                     #[cfg(unix)]
                     _processes: Vec::new(),
                     _streams: vec![stream],
+                    levels,
                 }, sr, ch))
             }
         }

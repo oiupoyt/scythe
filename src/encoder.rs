@@ -67,7 +67,11 @@ impl VaapiEncoder {
             (*codec_ctx).rc_buffer_size = (rate / 2) as i32;
             (*codec_ctx).qmin = 16;
             (*codec_ctx).qmax = 28; // Prevent compression blockiness
-            (*codec_ctx).profile = FF_PROFILE_H264_HIGH;
+            (*codec_ctx).profile = match codec_pref.to_lowercase().as_str() {
+                "hevc" | "h265" => FF_PROFILE_HEVC_MAIN,
+                "av1" => FF_PROFILE_UNKNOWN,
+                _ => FF_PROFILE_H264_HIGH,
+            };
             (*codec_ctx).flags |= AV_CODEC_FLAG_GLOBAL_HEADER as libc::c_int;
 
             let mut hw_device_ctx: *mut AVBufferRef = ptr::null_mut();
@@ -444,7 +448,11 @@ impl WindowsHwEncoder {
             (*codec_ctx).rc_buffer_size = (rate / 2) as i32;
             (*codec_ctx).qmin = 16;
             (*codec_ctx).qmax = 28;
-            (*codec_ctx).profile = FF_PROFILE_H264_HIGH;
+            (*codec_ctx).profile = match codec_pref.to_lowercase().as_str() {
+                "hevc" | "h265" => FF_PROFILE_HEVC_MAIN,
+                "av1" => FF_PROFILE_UNKNOWN,
+                _ => FF_PROFILE_H264_HIGH,
+            };
             (*codec_ctx).flags |= AV_CODEC_FLAG_GLOBAL_HEADER as libc::c_int;
 
             if selected_desc.contains("NVENC") {

@@ -29,6 +29,10 @@ pub struct DaemonStatus {
     pub mic_volume: f32,
     #[serde(default = "default_system_volume")]
     pub system_volume: f32,
+    #[serde(default)]
+    pub mic_level_peak: f32,
+    #[serde(default)]
+    pub system_level_peak: f32,
 }
 
 fn default_true() -> bool {

@@ -1,7 +1,7 @@
 use gtk::prelude::*;
 use gtk::{
     Application, ApplicationWindow, Box, Button, ComboBoxText, CssProvider,
-    DrawingArea, Entry, Label, Orientation, Revealer, RevealerTransitionType, Scale,
+    DrawingArea, Entry, Label, LevelBar, Orientation, Revealer, RevealerTransitionType, Scale,
     ScrolledWindow, SpinButton, Stack, StackTransitionType, StyleContext, Switch,
 };
 #[cfg(target_os = "linux")]
@@ -737,6 +737,9 @@ pub fn show_menu_overlay() {
         for dev in crate::capture::audio::list_input_devices() {
             audio_dev_combo.append(Some(&dev), &dev);
         }
+        for app in crate::capture::audio::list_application_audio() {
+            audio_dev_combo.append(Some(&format!("app:{}", app)), &format!("App: {}", app));
+        }
         audio_dev_combo.set_active_id(Some(&config.audio_device));
 
         let sys_vol_lbl = Label::new(Some("System Volume:"));
@@ -745,11 +748,21 @@ pub fn show_menu_overlay() {
         sys_vol_scale.set_value((config.system_volume * 100.0).round() as f64);
         sys_vol_scale.set_size_request(240, -1);
 
+        let sys_level_bar = LevelBar::new();
+        sys_level_bar.set_min_value(0.0);
+        sys_level_bar.set_max_value(1.0);
+        sys_level_bar.set_size_request(240, 6);
+
         let mic_vol_lbl = Label::new(Some("Mic Volume:"));
         mic_vol_lbl.set_halign(gtk::Align::Start);
         let mic_vol_scale = Scale::with_range(Orientation::Horizontal, 0.0, 150.0, 5.0);
         mic_vol_scale.set_value((config.mic_volume * 100.0).round() as f64);
         mic_vol_scale.set_size_request(240, -1);
+
+        let mic_level_bar = LevelBar::new();
+        mic_level_bar.set_min_value(0.0);
+        mic_level_bar.set_max_value(1.0);
+        mic_level_bar.set_size_request(240, 6);
 
         sec3_grid.attach(&audio_mode_lbl, 0, 0, 1, 1);
         sec3_grid.attach(&audio_mode_combo, 1, 0, 1, 1);
@@ -757,8 +770,10 @@ pub fn show_menu_overlay() {
         sec3_grid.attach(&audio_dev_combo, 1, 1, 1, 1);
         sec3_grid.attach(&sys_vol_lbl, 0, 2, 1, 1);
         sec3_grid.attach(&sys_vol_scale, 1, 2, 1, 1);
-        sec3_grid.attach(&mic_vol_lbl, 0, 3, 1, 1);
-        sec3_grid.attach(&mic_vol_scale, 1, 3, 1, 1);
+        sec3_grid.attach(&sys_level_bar, 1, 3, 1, 1);
+        sec3_grid.attach(&mic_vol_lbl, 0, 4, 1, 1);
+        sec3_grid.attach(&mic_vol_scale, 1, 4, 1, 1);
+        sec3_grid.attach(&mic_level_bar, 1, 5, 1, 1);
         sec3_card.pack_start(&sec3_grid, false, false, 2);
         settings_body.pack_start(&sec3_card, false, false, 0);
 
@@ -1341,11 +1356,13 @@ pub fn show_menu_overlay() {
         let r_toggle_item_sync2 = replay_toggle_item.clone();
         let r_state_sync2 = Arc::clone(&replay_active_state);
         let r_icon_sync2 = replay_icon_area.clone();
+        let sys_level_sync = sys_level_bar.clone();
+        let mic_level_sync = mic_level_bar.clone();
 
         let is_running = Arc::new(AtomicBool::new(true));
         let is_running_clone = Arc::clone(&is_running);
 
-        gtk::glib::timeout_add_local(Duration::from_millis(300), move || {
+        gtk::glib::timeout_add_local(Duration::from_millis(100), move || {
             if !is_running_clone.load(Ordering::Relaxed) {
                 return gtk::glib::ControlFlow::Break;
             }
@@ -1382,6 +1399,10 @@ pub fn show_menu_overlay() {
                 if prev_replay != st.is_replay_active {
                     r_icon_sync2.queue_draw();
                 }
+
+                // 3. Audio VU meter levels sync
+                sys_level_sync.set_value(st.system_level_peak as f64);
+                mic_level_sync.set_value(st.mic_level_peak as f64);
             }
             gtk::glib::ControlFlow::Continue
         });

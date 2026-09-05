@@ -89,6 +89,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let record_start_state = Arc::new(AtomicU64::new(0));
     let replay_enabled_state = Arc::new(AtomicBool::new(initial_config.replay_enabled));
     let audio_muted_state = Arc::new(AtomicBool::new(false));
+    let audio_levels = Arc::new(scythe::capture::audio::AudioLevels::new());
 
     #[cfg(unix)]
     let listener = {
@@ -122,6 +123,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let record_start_state_ipc = Arc::clone(&record_start_state);
     let replay_enabled_state_ipc = Arc::clone(&replay_enabled_state);
     let audio_muted_state_ipc = Arc::clone(&audio_muted_state);
+    let audio_levels_ipc = Arc::clone(&audio_levels);
 
     std::thread::spawn(move || {
         for stream in listener.incoming() {
@@ -132,6 +134,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     let record_start_state_ipc = Arc::clone(&record_start_state_ipc);
                     let replay_enabled_state_ipc = Arc::clone(&replay_enabled_state_ipc);
                     let audio_muted_state_ipc = Arc::clone(&audio_muted_state_ipc);
+                    let audio_levels_ipc = Arc::clone(&audio_levels_ipc);
 
                     std::thread::spawn(move || {
                         let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(1500)));
@@ -162,6 +165,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                                 show_cursor: cfg.show_cursor,
                                                 mic_volume: cfg.mic_volume,
                                                 system_volume: cfg.system_volume,
+                                                mic_level_peak: audio_levels_ipc.get_mic_peak(),
+                                                system_level_peak: audio_levels_ipc.get_system_peak(),
                                             };
                                             if let Ok(resp) = serde_json::to_vec(&status) {
                                                 let len_resp = (resp.len() as u32).to_le_bytes();
@@ -233,12 +238,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let session_type = env::var("XDG_SESSION_TYPE").unwrap_or_else(|_| "x11".to_string());
     println!("Detected session type: {}", session_type);
 
-    let audio_capture_initial = scythe::capture::audio::AudioCapture::new_with_device_mode_and_volumes(
+    let audio_capture_initial = scythe::capture::audio::AudioCapture::new_with_device_mode_volumes_and_levels(
         audio_tx.clone(),
         Some(&initial_config.audio_device),
         &initial_config.audio_mode,
         initial_config.mic_volume,
         initial_config.system_volume,
+        Some(Arc::clone(&audio_levels)),
     ).ok();
 
     let mut source: Box<dyn FrameSource> = if std::env::args().any(|a| a == "--mock") {
@@ -444,12 +450,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                     println!("Replay buffer resized to {} packets.", new_capacity);
                                 }
                                 scythe::hyprland_binds::register_hyprland_binds(&config);
-                                audio_capture = match scythe::capture::audio::AudioCapture::new_with_device_mode_and_volumes(
+                                audio_capture = match scythe::capture::audio::AudioCapture::new_with_device_mode_volumes_and_levels(
                                     audio_tx_clone.clone(),
                                     Some(&config.audio_device),
                                     &config.audio_mode,
                                     config.mic_volume,
                                     config.system_volume,
+                                    Some(Arc::clone(&audio_levels)),
                                 ) {
                                     Ok((c, _, _)) => {
                                         println!("Audio capture reloaded for mode: {} (mic: {:.0}%, sys: {:.0}%)", config.audio_mode, config.mic_volume * 100.0, config.system_volume * 100.0);
