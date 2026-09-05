@@ -69,13 +69,18 @@ pub fn register_hyprland_binds(config: &VrecConfig) {
         return;
     }
 
-    // Register overlay window rules so the UI floats and centers cleanly
+    // Register overlay window rules so the UI floats at the top cleanly
     let rules = [
         "float, class:^(vrec-overlay)$",
-        "center, class:^(vrec-overlay)$",
+        "move 50% 45, class:^(vrec-overlay)$",
         "pin, class:^(vrec-overlay)$",
         "stayfocused, class:^(vrec-overlay)$",
         "noborder, class:^(vrec-overlay)$",
+        "float, class:^(vrec-hud)$",
+        "move 50% 45, class:^(vrec-hud)$",
+        "pin, class:^(vrec-hud)$",
+        "stayfocused, class:^(vrec-hud)$",
+        "noborder, class:^(vrec-hud)$",
     ];
     for rule in rules {
         let _ = Command::new("hyprctl")

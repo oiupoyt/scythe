@@ -208,6 +208,9 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             "--menu" => {
                 ensure_daemon_running();
                 ensure_hotkeys_running();
+                #[cfg(not(target_os = "windows"))]
+                vrec::overlay::show_menu_overlay();
+                #[cfg(target_os = "windows")]
                 vrec::overlay_egui::run_egui_overlay();
                 return Ok(());
             }
@@ -271,6 +274,9 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     } else {
         ensure_daemon_running();
         ensure_hotkeys_running();
+        #[cfg(not(target_os = "windows"))]
+        vrec::overlay::show_menu_overlay();
+        #[cfg(target_os = "windows")]
         vrec::overlay_egui::run_egui_overlay();
         return Ok(());
     }
