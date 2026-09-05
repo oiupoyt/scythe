@@ -1,7 +1,7 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 use scythe::ipc::{Command, send_command, query_status};
-use scythe::overlay::show_notification;
+use scythe::overlay::{show_shadowplay_toast, ToastIcon};
 use std::env;
 use global_hotkey::{GlobalHotKeyManager, hotkey::{HotKey, Modifiers, Code}, GlobalHotKeyEvent};
 
@@ -241,15 +241,15 @@ fn ensure_hotkeys_running() {
     }
 }
 
-fn send_with_notification(cmd: Command, success_msg: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+fn send_with_notification(cmd: Command, title: &str, subtitle: &str, icon: ToastIcon) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     ensure_daemon_running();
     match send_command(cmd) {
         Ok(()) => {
-            show_notification(success_msg);
+            show_shadowplay_toast(title, subtitle, icon);
             Ok(())
         }
         Err(e) => {
-            show_notification("Error: failed to connect to scythe-daemon");
+            show_shadowplay_toast("SCYTHE", "Error: failed to connect to daemon", ToastIcon::Error);
             Err(e)
         }
     }
@@ -262,14 +262,14 @@ fn handle_toggle_recording() -> Result<(), Box<dyn std::error::Error + Send + Sy
     match send_command(Command::ToggleRecording) {
         Ok(()) => {
             if is_rec {
-                show_notification("Recording saved");
+                show_shadowplay_toast("RECORDING", "Recording saved", ToastIcon::Save);
             } else {
-                show_notification("Recording started");
+                show_shadowplay_toast("RECORDING", "Recording started", ToastIcon::Record);
             }
             Ok(())
         }
         Err(e) => {
-            show_notification("Error: failed to connect to scythe-daemon");
+            show_shadowplay_toast("SCYTHE", "Error: failed to connect to daemon", ToastIcon::Error);
             Err(e)
         }
     }
@@ -282,14 +282,14 @@ fn handle_toggle_cursor() -> Result<(), Box<dyn std::error::Error + Send + Sync>
     match send_command(Command::ToggleCursor) {
         Ok(()) => {
             if next_cursor {
-                show_notification("Cursor: Visible in recording");
+                show_shadowplay_toast("MOUSE CURSOR", "Visible in recording", ToastIcon::Cursor);
             } else {
-                show_notification("Cursor: Hidden from recording");
+                show_shadowplay_toast("MOUSE CURSOR", "Hidden from recording", ToastIcon::Cursor);
             }
             Ok(())
         }
         Err(e) => {
-            show_notification("Error: failed to connect to scythe-daemon");
+            show_shadowplay_toast("SCYTHE", "Error: failed to connect to daemon", ToastIcon::Error);
             Err(e)
         }
     }
@@ -302,7 +302,26 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if args.len() > 1 {
         match args[1].as_str() {
             "--save" => {
-                return send_with_notification(Command::SaveReplay, "Replay saved");
+                return send_with_notification(Command::SaveReplay, "INSTANT REPLAY", "Saved to Videos", ToastIcon::Replay);
+            }
+            "--notify-save" => {
+                show_shadowplay_toast("INSTANT REPLAY", "Saved to Videos", ToastIcon::Replay);
+                return Ok(());
+            }
+            "--notify-start" => {
+                show_shadowplay_toast("RECORDING", "Recording started", ToastIcon::Record);
+                return Ok(());
+            }
+            "--notify-stop" => {
+                show_shadowplay_toast("RECORDING", "Recording saved", ToastIcon::Save);
+                return Ok(());
+            }
+            "--toast" => {
+                let title = args.get(2).map(|s| s.as_str()).unwrap_or("SCYTHE");
+                let subtitle = args.get(3).map(|s| s.as_str()).unwrap_or("");
+                let icon_name = args.get(4).map(|s| s.as_str()).unwrap_or("info");
+                show_shadowplay_toast(title, subtitle, ToastIcon::from_name(icon_name));
+                return Ok(());
             }
             "--menu" => {
                 ensure_daemon_running_async();
@@ -341,10 +360,10 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 return handle_toggle_cursor();
             }
             "--start" => {
-                return send_with_notification(Command::StartRecording, "Recording started");
+                return send_with_notification(Command::StartRecording, "RECORDING", "Recording started", ToastIcon::Record);
             }
             "--stop" => {
-                return send_with_notification(Command::StopRecording, "Recording saved");
+                return send_with_notification(Command::StopRecording, "RECORDING", "Recording saved", ToastIcon::Save);
             }
             "--reload" => {
                 ensure_daemon_running();
@@ -381,6 +400,10 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 println!("  scythe-ui --hotkeys      Run global hotkey manager in background");
                 println!("  scythe-ui --status       Query current daemon status");
                 println!("  scythe-ui --save         Save instant replay and show notification");
+                println!("  scythe-ui --notify-save  Show instant replay saved notification toast");
+                println!("  scythe-ui --notify-start Show recording started notification toast");
+                println!("  scythe-ui --notify-stop  Show recording saved notification toast");
+                println!("  scythe-ui --toast <t> <s> Show custom ShadowPlay notification toast");
                 println!("  scythe-ui --record       Toggle normal recording on/off (with notification)");
                 println!("  scythe-ui --cursor       Toggle mouse cursor recording on/off (with notification)");
                 println!("  scythe-ui --start        Start normal recording");
@@ -464,7 +487,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 ensure_daemon_running();
                 let _ = get_ui_cmd().arg("--menu").spawn();
             } else if event.id == hotkey_save.id() {
-                let _ = send_with_notification(Command::SaveReplay, "Replay saved");
+                let _ = send_with_notification(Command::SaveReplay, "INSTANT REPLAY", "Saved to Videos", ToastIcon::Replay);
             } else if event.id == hotkey_record.id() {
                 let _ = handle_toggle_recording();
             } else if event.id == hotkey_cursor.id() {

@@ -13,53 +13,125 @@ use std::time::Duration;
 use crate::config::ScytheConfig;
 use crate::ipc::{self, Command};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToastIcon {
+    Replay,
+    Record,
+    Save,
+    Cursor,
+    Info,
+    Error,
+}
+
+impl ToastIcon {
+    pub fn from_name(name: &str) -> Self {
+        match name.to_lowercase().as_str() {
+            "replay" | "save_replay" => ToastIcon::Replay,
+            "record" | "recording" | "start" => ToastIcon::Record,
+            "save" | "saved" | "stop" => ToastIcon::Save,
+            "cursor" => ToastIcon::Cursor,
+            "error" => ToastIcon::Error,
+            _ => ToastIcon::Info,
+        }
+    }
+}
+
+pub fn spawn_toast(title: &str, subtitle: &str, icon: ToastIcon) {
+    let icon_str = match icon {
+        ToastIcon::Replay => "replay",
+        ToastIcon::Record => "record",
+        ToastIcon::Save => "save",
+        ToastIcon::Cursor => "cursor",
+        ToastIcon::Error => "error",
+        ToastIcon::Info => "info",
+    };
+
+    let title_owned = title.to_string();
+    let subtitle_owned = subtitle.to_string();
+    let icon_owned = icon_str.to_string();
+
+    std::thread::spawn(move || {
+        let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("scythe-ui"));
+        let _ = std::process::Command::new(exe)
+            .args(["--toast", &title_owned, &subtitle_owned, &icon_owned])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+    });
+}
+
 pub fn show_notification_overlay() {
-    show_notification("Replay saved");
+    show_shadowplay_toast("INSTANT REPLAY", "Saved to Videos", ToastIcon::Replay);
 }
 
 pub fn show_notification(message: &str) {
+    let lower = message.to_lowercase();
+    let (title, subtitle, icon) = if lower.contains("replay saved") || lower.contains("replay") {
+        ("INSTANT REPLAY", "Saved to Videos", ToastIcon::Replay)
+    } else if lower.contains("recording started") {
+        ("RECORDING", "Recording started", ToastIcon::Record)
+    } else if lower.contains("recording saved") || lower.contains("stopped") {
+        ("RECORDING", "Recording saved", ToastIcon::Save)
+    } else if lower.contains("cursor") {
+        ("MOUSE CURSOR", message, ToastIcon::Cursor)
+    } else if lower.contains("error") {
+        ("SCYTHE", message, ToastIcon::Error)
+    } else {
+        ("SCYTHE", message, ToastIcon::Info)
+    };
+    show_shadowplay_toast(title, subtitle, icon);
+}
+
+pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
     #[cfg(target_os = "windows")]
     {
-        let msg = message.to_string();
-        std::thread::spawn(move || {
-            use std::os::windows::process::CommandExt;
-            let script = format!(
-                "[reflection.assembly]::loadwithpartialname('System.Windows.Forms') | Out-Null; \
-                 $notify = new-object system.windows.forms.notifyicon; \
-                 $notify.icon = [System.Drawing.SystemIcons]::Information; \
-                 $notify.visible = $true; \
-                 $notify.showballoontip(2000, 'scythe', '{}', [system.windows.forms.tooltipicon]::Info); \
-                 Start-Sleep -Seconds 2; \
-                 $notify.dispose()",
-                msg.replace('\'', "''")
-            );
-            let _ = std::process::Command::new("powershell")
-                .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
-                .creation_flags(0x08000000)
-                .output();
-        });
+        crate::overlay_egui::run_egui_toast(title, subtitle, icon);
         return;
     }
 
     #[cfg(not(target_os = "windows"))]
     {
         if std::env::var("WAYLAND_DISPLAY").is_err() && std::env::var("DISPLAY").is_err() {
+            crate::overlay_egui::run_egui_toast(title, subtitle, icon);
             return;
         }
         if gtk::init().is_err() {
+            crate::overlay_egui::run_egui_toast(title, subtitle, icon);
             return;
         }
 
+        let app_id = format!("com.scythe.toast.{}", std::process::id());
         let app = Application::builder()
-            .application_id("com.scythe.notification")
+            .application_id(&app_id)
+            .flags(gtk::gio::ApplicationFlags::NON_UNIQUE)
             .build();
 
-        let msg_text = message.to_string();
+        let title_text = title.to_string();
+        let sub_text = subtitle.to_string();
+
+        let cfg = ScytheConfig::load();
+        let accent_name = cfg.accent_color.to_lowercase();
+        let (accent_hex, accent_rgb): (&str, (f64, f64, f64)) = match accent_name.as_str() {
+            "green" | "emerald" => ("#22c55e", (0.133, 0.773, 0.369)),
+            "cyan" | "ice" => ("#06b6d4", (0.024, 0.714, 0.831)),
+            "purple" | "violet" => ("#a855f7", (0.659, 0.333, 0.969)),
+            "amber" | "orange" => ("#f59e0b", (0.961, 0.620, 0.043)),
+            "red" | "crimson" => ("#ef4444", (0.937, 0.267, 0.267)),
+            "blue" | "sapphire" | _ => ("#38bdf8", (0.220, 0.741, 0.973)),
+        };
+
+        let active_accent_hex = if icon == ToastIcon::Record {
+            "#ef4444"
+        } else {
+            accent_hex
+        };
+
         app.connect_activate(move |app| {
             let window = ApplicationWindow::builder()
                 .application(app)
-                .default_width(320)
-                .default_height(54)
+                .default_width(330)
+                .default_height(58)
                 .build();
 
             #[cfg(target_os = "linux")]
@@ -71,17 +143,21 @@ pub fn show_notification(message: &str) {
                 window.init_layer_shell();
                 window.set_layer(Layer::Overlay);
                 window.set_namespace("scythe-notification");
-                window.set_layer_shell_margin(gtk_layer_shell::Edge::Top, 40);
                 window.set_anchor(gtk_layer_shell::Edge::Top, true);
+                window.set_anchor(gtk_layer_shell::Edge::Right, true);
+                window.set_layer_shell_margin(gtk_layer_shell::Edge::Top, 24);
+                window.set_layer_shell_margin(gtk_layer_shell::Edge::Right, 24);
+                window.set_keyboard_interactivity(false);
             } else {
                 window.set_decorated(false);
                 window.set_keep_above(true);
                 window.set_skip_taskbar_hint(true);
+                window.set_accept_focus(false);
                 if let Some(display) = gdk::Display::default()
                     && let Some(mon) = display.primary_monitor().or_else(|| display.monitor(0)) {
                         let geom = mon.geometry();
-                        let x = geom.x() + (geom.width() - 320) / 2;
-                        let y = geom.y() + 40;
+                        let x = geom.x() + geom.width() - 330 - 24;
+                        let y = geom.y() + 24;
                         window.move_(x, y);
                 }
             }
@@ -99,34 +175,36 @@ pub fn show_notification(message: &str) {
             });
 
             let css_provider = CssProvider::new();
-            let css = r#"
-                window, window.background, .background {
+            let css = format!(
+                r#"
+                window, window.background, .background {{
                     background-color: transparent !important;
                     background: transparent !important;
                     border: none !important;
                     box-shadow: none !important;
-                }
-                .notify-box {
-                    background-color: rgba(18, 24, 36, 0.78);
-                    border-radius: 12px;
-                    border: 1px solid rgba(118, 185, 0, 0.6);
-                    box-shadow: 0px 16px 40px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.2);
-                    padding: 8px 22px;
-                }
-                .notify-badge {
-                    background-color: #76b900;
-                    color: #0b1204;
-                    font-size: 10.5px;
-                    font-weight: 900;
-                    border-radius: 4px;
-                    padding: 2px 7px;
-                }
-                .notify-label {
+                }}
+                .shadowplay-toast {{
+                    background-color: rgba(11, 11, 13, 0.96);
+                    border: 1px solid rgba(255, 255, 255, 0.12);
+                    border-left: 3.5px solid {accent};
+                    border-radius: 0px !important;
+                    box-shadow: 0px 8px 24px rgba(0, 0, 0, 0.85);
+                    padding: 8px 14px;
+                }}
+                .toast-title {{
                     color: #ffffff;
-                    font-weight: 700;
-                    font-size: 13px;
-                }
-            "#;
+                    font-size: 12px;
+                    font-weight: 800;
+                    letter-spacing: 0.6px;
+                }}
+                .toast-subtitle {{
+                    color: #a1a1aa;
+                    font-size: 11px;
+                    font-weight: 500;
+                }}
+                "#,
+                accent = active_accent_hex
+            );
             let _ = css_provider.load_from_data(css.as_bytes());
             if let Some(screen) = gdk::Screen::default() {
                 StyleContext::add_provider_for_screen(
@@ -137,22 +215,117 @@ pub fn show_notification(message: &str) {
             }
             window.style_context().add_provider(&css_provider, gtk::STYLE_PROVIDER_PRIORITY_USER);
 
-            let hbox = Box::new(Orientation::Horizontal, 10);
-            hbox.style_context().add_class("notify-box");
-            hbox.set_halign(gtk::Align::Center);
+            let hbox = Box::new(Orientation::Horizontal, 12);
+            hbox.style_context().add_class("shadowplay-toast");
+            hbox.set_size_request(320, 54);
 
-            let badge = Label::new(Some("SCYTHE"));
-            badge.style_context().add_class("notify-badge");
-            let label = Label::new(Some(&msg_text));
-            label.style_context().add_class("notify-label");
+            // Left DrawingArea for vector icon
+            let icon_area = DrawingArea::new();
+            icon_area.set_size_request(32, 32);
+            icon_area.set_valign(gtk::Align::Center);
+            let icon_type = icon;
+            icon_area.connect_draw(move |_, cr| {
+                let cx = 16.0;
+                let cy = 16.0;
+                match icon_type {
+                    ToastIcon::Replay => {
+                        let r = 10.0;
+                        cr.set_source_rgb(accent_rgb.0, accent_rgb.1, accent_rgb.2);
+                        cr.set_line_width(2.2);
+                        cr.arc(cx, cy, r, 0.25 * PI, 1.80 * PI);
+                        let _ = cr.stroke();
 
-            hbox.pack_start(&badge, false, false, 0);
-            hbox.pack_start(&label, false, false, 0);
+                        let a_x = cx + r * (0.25 * PI).cos();
+                        let a_y = cy + r * (0.25 * PI).sin();
+                        cr.move_to(a_x, a_y);
+                        cr.line_to(a_x - 4.5, a_y + 0.5);
+                        cr.line_to(a_x - 0.5, a_y - 4.5);
+                        cr.close_path();
+                        let _ = cr.fill();
+
+                        let tri_r = 4.0;
+                        cr.move_to(cx + tri_r + 0.5, cy);
+                        cr.line_to(cx - tri_r * 0.6 + 0.5, cy - tri_r * 0.86);
+                        cr.line_to(cx - tri_r * 0.6 + 0.5, cy + tri_r * 0.86);
+                        cr.close_path();
+                        let _ = cr.fill();
+                    }
+                    ToastIcon::Record => {
+                        cr.set_source_rgba(0.937, 0.267, 0.267, 0.25);
+                        cr.arc(cx, cy, 13.0, 0.0, PI * 2.0);
+                        let _ = cr.fill();
+
+                        cr.set_source_rgb(0.937, 0.267, 0.267);
+                        cr.set_line_width(1.8);
+                        cr.arc(cx, cy, 10.0, 0.0, PI * 2.0);
+                        let _ = cr.stroke();
+
+                        cr.arc(cx, cy, 5.0, 0.0, PI * 2.0);
+                        let _ = cr.fill();
+                    }
+                    ToastIcon::Save => {
+                        cr.set_source_rgb(accent_rgb.0, accent_rgb.1, accent_rgb.2);
+                        cr.set_line_width(2.5);
+                        cr.set_line_cap(gtk::cairo::LineCap::Round);
+                        cr.set_line_join(gtk::cairo::LineJoin::Round);
+                        cr.move_to(cx - 7.0, cy);
+                        cr.line_to(cx - 2.0, cy + 5.0);
+                        cr.line_to(cx + 7.0, cy - 5.0);
+                        let _ = cr.stroke();
+                    }
+                    ToastIcon::Cursor => {
+                        cr.set_source_rgb(accent_rgb.0, accent_rgb.1, accent_rgb.2);
+                        cr.set_line_width(1.8);
+                        cr.move_to(cx - 6.0, cy - 8.0);
+                        cr.line_to(cx + 6.0, cy - 1.0);
+                        cr.line_to(cx, cy + 1.0);
+                        cr.line_to(cx + 2.0, cy + 7.0);
+                        cr.line_to(cx - 1.0, cy + 8.0);
+                        cr.line_to(cx - 3.0, cy + 2.0);
+                        cr.line_to(cx - 6.0, cy + 4.0);
+                        cr.close_path();
+                        let _ = cr.fill();
+                    }
+                    ToastIcon::Error => {
+                        cr.set_source_rgb(0.937, 0.267, 0.267);
+                        cr.set_line_width(2.2);
+                        cr.move_to(cx - 6.0, cy - 6.0);
+                        cr.line_to(cx + 6.0, cy + 6.0);
+                        cr.move_to(cx + 6.0, cy - 6.0);
+                        cr.line_to(cx - 6.0, cy + 6.0);
+                        let _ = cr.stroke();
+                    }
+                    ToastIcon::Info => {
+                        cr.set_source_rgb(accent_rgb.0, accent_rgb.1, accent_rgb.2);
+                        cr.arc(cx, cy, 6.0, 0.0, PI * 2.0);
+                        let _ = cr.fill();
+                    }
+                }
+                gtk::glib::Propagation::Proceed
+            });
+
+            // Right text column
+            let vbox = Box::new(Orientation::Vertical, 2);
+            vbox.set_valign(gtk::Align::Center);
+
+            let title_lbl = Label::new(Some(&title_text));
+            title_lbl.style_context().add_class("toast-title");
+            title_lbl.set_halign(gtk::Align::Start);
+
+            let sub_lbl = Label::new(Some(&sub_text));
+            sub_lbl.style_context().add_class("toast-subtitle");
+            sub_lbl.set_halign(gtk::Align::Start);
+
+            vbox.pack_start(&title_lbl, false, false, 0);
+            vbox.pack_start(&sub_lbl, false, false, 0);
+
+            hbox.pack_start(&icon_area, false, false, 0);
+            hbox.pack_start(&vbox, true, true, 0);
             window.add(&hbox);
             window.show_all();
 
             let window_clone = window.clone();
-            gtk::glib::timeout_add_local(Duration::from_millis(2200), move || {
+            gtk::glib::timeout_add_local(Duration::from_millis(2600), move || {
                 window_clone.close();
                 gtk::glib::ControlFlow::Break
             });

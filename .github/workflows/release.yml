@@ -46,11 +46,16 @@ jobs:
 
       - name: Build Debian Package (.deb)
         run: |
-          mkdir -p deb/scythe_0.1.0/DEBIAN deb/scythe_0.1.0/usr/bin deb/scythe_0.1.0/usr/share/applications
-          cat > deb/scythe_0.1.0/DEBIAN/control << 'EOF'
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "main" ]; then
+            VERSION=$(grep '^version' Cargo.toml | head -n1 | cut -d '"' -f2)
+          fi
+          echo "Packaging Debian version: ${VERSION}"
+          mkdir -p "deb/scythe_${VERSION}/DEBIAN" "deb/scythe_${VERSION}/usr/bin" "deb/scythe_${VERSION}/usr/share/applications"
+          cat > "deb/scythe_${VERSION}/DEBIAN/control" << EOF
           Package: scythe
           Provides: vrec
-          Version: 0.1.0
+          Version: ${VERSION}
           Section: video
           Priority: optional
           Architecture: amd64
@@ -58,18 +63,19 @@ jobs:
           Description: High-performance GPU hardware screen recorder and instant replay overlay
           Depends: libgtk-3-0, libgtk-layer-shell0, libpipewire-0.3-0, libva2, libasound2
           EOF
-          cp target/release/scythe-daemon deb/scythe_0.1.0/usr/bin/
-          cp target/release/scythe-ui deb/scythe_0.1.0/usr/bin/
-          ln -sf scythe-daemon deb/scythe_0.1.0/usr/bin/vrec-daemon
-          ln -sf scythe-ui deb/scythe_0.1.0/usr/bin/vrec-ui
-          ln -sf scythe-ui deb/scythe_0.1.0/usr/bin/scythe
-          ln -sf scythe-ui deb/scythe_0.1.0/usr/bin/vrec
-          cp packaging/scythe.desktop deb/scythe_0.1.0/usr/share/applications/
-          dpkg-deb --build deb/scythe_0.1.0 dist/scythe_0.1.0_amd64.deb
+          cp target/release/scythe-daemon "deb/scythe_${VERSION}/usr/bin/"
+          cp target/release/scythe-ui "deb/scythe_${VERSION}/usr/bin/"
+          ln -sf scythe-daemon "deb/scythe_${VERSION}/usr/bin/vrec-daemon"
+          ln -sf scythe-ui "deb/scythe_${VERSION}/usr/bin/vrec-ui"
+          ln -sf scythe-ui "deb/scythe_${VERSION}/usr/bin/scythe"
+          ln -sf scythe-ui "deb/scythe_${VERSION}/usr/bin/vrec"
+          cp packaging/scythe.desktop "deb/scythe_${VERSION}/usr/share/applications/"
+          dpkg-deb --build "deb/scythe_${VERSION}" "dist/scythe_${VERSION}_amd64.deb"
 
       - name: Build RPM Package (.rpm)
         run: |
-          alien --to-rpm --scripts dist/scythe_0.1.0_amd64.deb
+          DEB_FILE=$(ls dist/*.deb | head -n 1)
+          alien --to-rpm --scripts "$DEB_FILE"
           mv *.rpm dist/
 
       - name: Package Standalone AppImage
@@ -175,28 +181,27 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name != 'main' && github.ref_name || 'v0.1.0' }}
-          name: "Scythe ${{ github.ref_name != 'main' && github.ref_name || 'v0.1.0' }}"
+          tag_name: ${{ github.ref_name != 'main' && github.ref_name || 'v0.2.0' }}
+          name: "Scythe ${{ github.ref_name != 'main' && github.ref_name || 'v0.2.0' }}"
           body: |
             High-performance GPU hardware screen recorder and instant replay overlay for Linux and Windows.
 
-            ### Highlights
-            - Zero-copy GPU screen capture (PipeWire/DMA-BUF on Wayland, XCB on X11, D3D11 on Windows)
-            - Low-overhead rolling ring buffer for instant replays
-            - Hardware encoding via VAAPI (AMD/Intel) and NVENC (NVIDIA)
-            - Stealth floating HUD dock built in egui
-            - Dynamic Hyprland keybinding and window rule injection
-            - Multi-channel audio routing (System audio, Microphone, Combined, and Mute)
+            ### What's New in v0.2.0
+            - **Auto-Update System**: Integrated background release checker with voluntary update notifications in the HUD and dedicated settings manager.
+            - **Standardized Datetime Filenames**: Clips and replays now save with clear human-readable timestamps (`Replay-HH-MM-SS-DD-MM-YYYY.mp4` / `Recording-HH-MM-SS-DD-MM-YYYY.mp4`).
+            - **NVIDIA ShadowPlay Toast Overlay**: Sleek, non-intrusive floating toast notifications in the top-right corner for Replay Saved, Recording Started/Stopped, and Mouse Cursor toggle.
+            - **Obsidian Dark UI Refinement**: Pure pitch-black obsidian theme with smooth accent borders, squared geometry, and zero focus-stealing.
+            - **Interactive Keybind & Settings Manager**: Real-time hotkey listener, custom FPS input, replay buffer duration, and bitrate adjustment.
 
             ### Packages
             - Windows: `scythe-setup.exe` (Official installer with Start Menu & Desktop shortcuts)
             - Universal Linux: `scythe-x86_64.AppImage`
-            - Debian / Ubuntu / Mint: `scythe_0.1.0_amd64.deb`
-            - Fedora / RHEL / openSUSE: `scythe-0.1.0-2.x86_64.rpm`
+            - Debian / Ubuntu / Mint: `scythe_*_amd64.deb`
+            - Fedora / RHEL / openSUSE: `*.rpm`
             - Generic Linux: `scythe-linux-x86_64.tar.gz`
           files: |
             artifacts/linux-packages/*
             artifacts/windows-packages/*
           draft: false
           prerelease: false
-          generate_release_notes: false
+          generate_release_notes: true

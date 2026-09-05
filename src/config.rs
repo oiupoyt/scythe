@@ -66,6 +66,8 @@ pub struct ScytheConfig {
     pub record_hotkey: String,
     #[serde(default = "default_cursor_hotkey")]
     pub cursor_hotkey: String,
+    #[serde(default = "default_true")]
+    pub auto_check_updates: bool,
 }
 
 pub type VrecConfig = ScytheConfig;
@@ -96,6 +98,7 @@ impl Default for ScytheConfig {
             menu_hotkey: "Alt+Z".to_string(),
             record_hotkey: "Ctrl+Shift+F9".to_string(),
             cursor_hotkey: "Ctrl+Shift+F10".to_string(),
+            auto_check_updates: true,
         }
     }
 }
@@ -183,6 +186,27 @@ impl ScytheConfig {
     pub fn notify_daemon_reload() {
         let _ = crate::ipc::send_command(crate::ipc::Command::ReloadConfig);
     }
+
+    /// Formats video filenames with informative local timestamps, e.g. "Replay-18-30-00-05-09-2026.mp4"
+    pub fn format_video_filename(prefix: &str, ext: &str) -> String {
+        unsafe {
+            let t = libc::time(std::ptr::null_mut());
+            let mut tm = std::mem::zeroed::<libc::tm>();
+            #[cfg(unix)]
+            libc::localtime_r(&t, &mut tm);
+            #[cfg(windows)]
+            libc::localtime_s(&mut tm, &t);
+
+            let hour = tm.tm_hour;
+            let min = tm.tm_min;
+            let sec = tm.tm_sec;
+            let day = tm.tm_mday;
+            let month = tm.tm_mon + 1;
+            let year = tm.tm_year + 1900;
+
+            format!("{}-{:02}-{:02}-{:02}-{:02}-{:02}-{:04}.{}", prefix, hour, min, sec, day, month, year, ext)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -207,5 +231,21 @@ mod tests {
         assert!(parsed.show_cursor);
         assert!((parsed.mic_volume - 0.60).abs() < 1e-4);
         assert!((parsed.system_volume - 1.00).abs() < 1e-4);
+        assert!(parsed.auto_check_updates);
+    }
+
+    #[test]
+    fn test_format_video_filename() {
+        let name = ScytheConfig::format_video_filename("Replay", "mp4");
+        assert!(name.starts_with("Replay-"));
+        assert!(name.ends_with(".mp4"));
+        // Check pattern Replay-HH-MM-SS-DD-MM-YYYY.mp4 (7 parts separated by hyphen)
+        let without_ext = name.strip_suffix(".mp4").unwrap();
+        let parts: Vec<&str> = without_ext.split('-').collect();
+        assert_eq!(parts.len(), 7, "Filename parts mismatch: {}", name);
+        assert_eq!(parts[0], "Replay");
+        for part in &parts[1..] {
+            assert!(part.chars().all(|c| c.is_ascii_digit()));
+        }
     }
 }

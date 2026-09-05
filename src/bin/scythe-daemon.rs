@@ -392,8 +392,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
         thread::spawn(move || {
             while let Ok(drain) = mux_rx.recv() {
-                let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
-                let filename = format!("replay_{}.mp4", ts);
+                let filename = scythe::config::ScytheConfig::format_video_filename("Replay", "mp4");
                 let full_path = scythe::config::ScytheConfig::load().resolve_save_path(&filename);
                 println!("Saving replay to {}...", full_path);
 
@@ -689,8 +688,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                     rec_base_video_pts = pkt.pts();
                                     rec_base_audio_pts = -1;
                                     let codec_ctx = codec_ctx_ptr as *mut ffmpeg_next::ffi::AVCodecContext;
-                                    let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
-                                    let filename = format!("record_{}.mp4", ts);
+                                    let filename = scythe::config::ScytheConfig::format_video_filename("Recording", "mp4");
                                     let full_path = config.resolve_save_path(&filename);
                                     let audio_codec_ctx = audio_codec_ctx_ptr.map(|p| p as *mut ffmpeg_next::ffi::AVCodecContext);
                                     normal_muxer = unsafe { Muxer::new(&full_path, codec_ctx, audio_codec_ctx).ok() };
