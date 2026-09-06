@@ -535,7 +535,7 @@ impl WindowsHwEncoder {
                     }
                 }
                 #[cfg(target_os = "windows")]
-                Frame::D3D11Texture { handle: _ } => {
+                Frame::D3D11Texture { handle: _, .. } => {
                     // Zero-copy D3D11 frame submission
                     (*self.sw_frame).pts = pts;
 

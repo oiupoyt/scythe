@@ -61,8 +61,10 @@ impl WindowsCapture {
             let mut context: Option<ID3D11DeviceContext> = None;
             let mut feature_level = D3D_FEATURE_LEVEL_11_0;
 
+            let adapter_base = adapter.cast::<IDXGIAdapter>()?;
+
             D3D11CreateDevice(
-                Some(&adapter),
+                Some(&adapter_base),
                 D3D_DRIVER_TYPE_UNKNOWN,
                 HMODULE(std::ptr::null_mut()),
                 D3D11_CREATE_DEVICE_BGRA_SUPPORT,

@@ -107,6 +107,7 @@ pub fn list_input_devices() -> Vec<String> {
 }
 
 pub fn list_application_audio() -> Vec<String> {
+    #[allow(unused_mut)]
     let mut apps = Vec::new();
     #[cfg(unix)]
     {
