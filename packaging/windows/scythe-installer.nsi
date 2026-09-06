@@ -1,6 +1,9 @@
 !include "MUI2.nsh"
 !include "FileFunc.nsh"
 
+SetCompressor /SOLID lzma
+SetCompressorDictSize 64
+
 Name "Scythe"
 OutFile "..\..\dist\scythe-setup.exe"
 InstallDir "$LOCALAPPDATA\Programs\scythe"

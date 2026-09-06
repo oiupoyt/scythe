@@ -209,10 +209,10 @@ fn open_folder(path: &std::path::Path) {
     std::thread::spawn(move || {
         #[cfg(target_os = "windows")]
         {
-            use std::os::windows::process::CommandExt;
-            let _ = std::process::Command::new("explorer")
-                .arg(&p)
-                .creation_flags(0x08000000)
+            let p_str = p.to_string_lossy().replace('/', "\\");
+            let _ = std::fs::create_dir_all(&p_str);
+            let _ = std::process::Command::new("explorer.exe")
+                .arg(&p_str)
                 .spawn();
         }
         #[cfg(target_os = "macos")]
@@ -234,17 +234,22 @@ fn pick_folder(current_dir: &str, tx: Sender<String>, is_active: Arc<AtomicBool>
     std::thread::spawn(move || {
         #[cfg(target_os = "windows")]
         {
-            use std::os::windows::process::CommandExt;
+            let clean_cur = cur.replace('/', "\\").replace('\'', "''");
             let script = format!(
-                "[System.Reflection.Assembly]::LoadWithPartialName(\x27System.windows.forms\x27) | Out-Null; \
+                "Add-Type -AssemblyName System.Windows.Forms; \
                  $f = New-Object System.Windows.Forms.FolderBrowserDialog; \
-                 $f.SelectedPath = \x27{}\x27; \
-                 if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {{ Write-Host $f.SelectedPath }}",
-                cur.replace("\x27", "\x27\x27")
+                 $f.Description = 'Select Recordings Directory'; \
+                 $f.SelectedPath = '{}'; \
+                 $f.ShowNewFolderButton = $true; \
+                 $top = New-Object System.Windows.Forms.Form; \
+                 $top.TopMost = $true; \
+                 if ($f.ShowDialog($top) -eq [System.Windows.Forms.DialogResult]::OK) {{ \
+                     Write-Output $f.SelectedPath \
+                 }}",
+                clean_cur
             );
-            if let Ok(out) = std::process::Command::new("powershell")
-                .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
-                .creation_flags(0x08000000)
+            if let Ok(out) = std::process::Command::new("powershell.exe")
+                .args(["-NoProfile", "-STA", "-Command", &script])
                 .output()
             {
                 let sel = String::from_utf8_lossy(&out.stdout).trim().to_string();
@@ -252,6 +257,7 @@ fn pick_folder(current_dir: &str, tx: Sender<String>, is_active: Arc<AtomicBool>
                     let _ = tx.send(sel);
                 }
             }
+            flag.store(false, Ordering::SeqCst);
         }
 
         #[cfg(not(target_os = "windows"))]
@@ -292,6 +298,13 @@ fn pick_folder(current_dir: &str, tx: Sender<String>, is_active: Arc<AtomicBool>
         }
 
         flag.store(false, Ordering::SeqCst);
+    });
+}
+
+// Asynchronous daemon command dispatcher to avoid blocking the egui render loop
+fn async_send_command(cmd: Command) {
+    std::thread::spawn(move || {
+        let _ = ipc::send_command(cmd);
     });
 }
 
@@ -790,7 +803,7 @@ impl ScytheOverlayApp {
                 if let Ok(s) = ipc::query_status() {
                     let _ = status_tx.send(s);
                 }
-                std::thread::sleep(Duration::from_millis(50));
+                std::thread::sleep(Duration::from_millis(150));
             }
         });
 
@@ -1018,9 +1031,8 @@ impl ScytheOverlayApp {
                                     self.replay_dropdown_open = false;
                                 }
                                 if render_menu_item(ui, "Save Replay", accent, true) {
-                                    let _ = ipc::send_command(Command::SaveReplay);
+                                    async_send_command(Command::SaveReplay);
                                     self.show_hud_notification("INSTANT REPLAY", "Saved to Videos", crate::overlay::ToastIcon::Replay);
-                                    crate::overlay::spawn_toast("INSTANT REPLAY", "Saved to Videos", crate::overlay::ToastIcon::Replay);
                                     self.replay_dropdown_open = false;
                                 }
                             });
@@ -1067,13 +1079,11 @@ impl ScytheOverlayApp {
                             render_dropdown_menu(ui, card_w, accent, |ui| {
                                 let rec_toggle_text = if is_recording { "Stop Recording" } else { "Start Recording" };
                                 if render_menu_item(ui, rec_toggle_text, accent, true) {
-                                    let _ = ipc::send_command(Command::ToggleRecording);
+                                    async_send_command(Command::ToggleRecording);
                                     if is_recording {
                                         self.show_hud_notification("RECORDING", "Recording saved", crate::overlay::ToastIcon::Save);
-                                        crate::overlay::spawn_toast("RECORDING", "Recording saved", crate::overlay::ToastIcon::Save);
                                     } else {
                                         self.show_hud_notification("RECORDING", "Recording started", crate::overlay::ToastIcon::Record);
-                                        crate::overlay::spawn_toast("RECORDING", "Recording started", crate::overlay::ToastIcon::Record);
                                     }
                                     self.record_dropdown_open = false;
                                 }
@@ -1261,7 +1271,7 @@ impl ScytheOverlayApp {
                                             self.show_cursor = cur;
                                             self.config.show_cursor = cur;
                                             let _ = self.config.save();
-                                            let _ = ipc::send_command(Command::ToggleCursor);
+                                            async_send_command(Command::ToggleCursor);
                                             self.show_hud_notification(
                                                 "MOUSE CURSOR",
                                                 if cur { "Visible in recording" } else { "Hidden from recording" },
@@ -2108,12 +2118,20 @@ impl ScytheOverlayApp {
 }
 
 impl eframe::App for ScytheOverlayApp {
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        [0.0, 0.0, 0.0, 0.0]
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll_async_events();
         self.mic_vu = (self.mic_vu * 0.94).max(0.0);
         self.sys_vu = (self.sys_vu * 0.94).max(0.0);
         self.anim_time += 0.033;
-        ctx.request_repaint_after(Duration::from_millis(50));
+        if self.listening_keybind.is_some() || self.hud_notification.is_some() {
+            ctx.request_repaint();
+        } else {
+            ctx.request_repaint_after(Duration::from_millis(33));
+        }
 
         // Auto-position and size to monitor on launch
         if !self.initial_pos_set {
@@ -2242,14 +2260,24 @@ impl eframe::App for ScytheOverlayApp {
 }
 
 pub fn run_egui_overlay() {
+    #[cfg(target_os = "windows")]
+    let (screen_w, screen_h): (f32, f32) = unsafe {
+        use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
+        let w = GetSystemMetrics(SM_CXSCREEN) as f32;
+        let h = GetSystemMetrics(SM_CYSCREEN) as f32;
+        if w > 100.0 && h > 100.0 { (w, h) } else { (1920.0, 1080.0) }
+    };
+    #[cfg(not(target_os = "windows"))]
+    let (screen_w, screen_h): (f32, f32) = (1920.0, 1080.0);
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Scythe")
             .with_app_id("scythe-overlay")
             .with_position([0.0, 0.0])
-            .with_inner_size([1920.0, 1080.0])
-            .with_maximized(true)
-            .with_resizable(true)
+            .with_inner_size([screen_w, screen_h])
+            .with_maximized(false)
+            .with_resizable(false)
             .with_decorations(false)
             .with_transparent(true)
             .with_always_on_top(),
@@ -2275,6 +2303,10 @@ pub struct ShadowPlayToastApp {
 }
 
 impl eframe::App for ShadowPlayToastApp {
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        [0.0, 0.0, 0.0, 0.0]
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let elapsed = self.created_at.elapsed().as_secs_f32();
         let total_dur = self.duration.as_secs_f32();
@@ -2282,7 +2314,7 @@ impl eframe::App for ShadowPlayToastApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             std::process::exit(0);
         }
-        ctx.request_repaint();
+        ctx.request_repaint_after(Duration::from_millis(16));
 
         let slide_x = if elapsed < 0.35 {
             let t = (elapsed / 0.35).min(1.0);
@@ -2392,13 +2424,26 @@ pub fn run_egui_toast(title: &str, subtitle: &str, icon: crate::overlay::ToastIc
     let cfg = ScytheConfig::load();
     let accent = resolve_accent_color(&cfg.accent_color);
 
-    let toast_w = 340.0;
-    let toast_h = 64.0;
+    let toast_w: f32 = 340.0;
+    let toast_h: f32 = 64.0;
+
+    #[cfg(target_os = "windows")]
+    let screen_w: f32 = unsafe {
+        use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN};
+        let w = GetSystemMetrics(SM_CXSCREEN) as f32;
+        if w > 100.0 { w } else { 1920.0 }
+    };
+    #[cfg(not(target_os = "windows"))]
+    let screen_w: f32 = 1920.0;
+
+    let pos_x = (screen_w - toast_w - 24.0).max(10.0);
+    let pos_y = 24.0;
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Scythe Notification")
             .with_app_id("scythe-toast")
+            .with_position([pos_x, pos_y])
             .with_inner_size([toast_w, toast_h])
             .with_decorations(false)
             .with_transparent(true)
@@ -2415,6 +2460,12 @@ pub fn run_egui_toast(title: &str, subtitle: &str, icon: crate::overlay::ToastIc
         created_at: Instant::now(),
         duration: Duration::from_millis(2800),
     };
+
+    // Watchdog thread to guarantee exit after duration
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(3200));
+        std::process::exit(0);
+    });
 
     let _ = eframe::run_native(
         "scythe-toast",

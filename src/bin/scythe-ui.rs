@@ -218,15 +218,12 @@ fn ensure_hotkeys_running() {
     #[cfg(target_os = "windows")]
     {
         unsafe {
-            use windows::Win32::Foundation::{CloseHandle, GetLastError, WIN32_ERROR};
-            use windows::Win32::System::Threading::CreateMutexW;
+            use windows::Win32::Foundation::CloseHandle;
+            use windows::Win32::System::Threading::{OpenMutexW, SYNCHRONIZATION_ACCESS_RIGHTS};
 
-            if let Ok(handle) = CreateMutexW(None, false, windows::core::w!("Global\\scythe_hotkeys_single_instance")) {
-                if GetLastError() == WIN32_ERROR(183) { // ERROR_ALREADY_EXISTS
-                    let _ = CloseHandle(handle);
-                    return;
-                }
+            if let Ok(handle) = OpenMutexW(SYNCHRONIZATION_ACCESS_RIGHTS(0x00100000), false, windows::core::w!("Global\\scythe_hotkeys_single_instance")) {
                 let _ = CloseHandle(handle);
+                return;
             }
         }
 
@@ -318,7 +315,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 let title = args.get(2).map(|s| s.as_str()).unwrap_or("SCYTHE");
                 let subtitle = args.get(3).map(|s| s.as_str()).unwrap_or("");
                 let icon_name = args.get(4).map(|s| s.as_str()).unwrap_or("info");
-                show_shadowplay_toast(title, subtitle, ToastIcon::from_name(icon_name));
+                scythe::overlay_egui::run_egui_toast(title, subtitle, ToastIcon::from_name(icon_name));
                 return Ok(());
             }
             "--menu" => {
@@ -463,35 +460,108 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             return Ok(());
         }
     };
-    let hotkey_menu = HotKey::new(Some(Modifiers::ALT), Code::KeyZ);
-    let hotkey_save = HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyR);
-    let hotkey_record = HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::F9);
-    let hotkey_cursor = HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::F10);
 
-    let is_on_hyprland = scythe::hyprland_binds::is_hyprland();
-    if !is_on_hyprland {
-        let _ = manager.register(hotkey_menu);
-    }
-    let _ = manager.register(hotkey_save);
-    let _ = manager.register(hotkey_record);
-    let _ = manager.register(hotkey_cursor);
+    let mut current_config = scythe::config::ScytheConfig::load();
+    let mut registered_hotkeys: Vec<HotKey> = Vec::new();
 
-    println!("Listening for global hotkeys (Alt+Z for overlay, Ctrl+Shift+R for replay, Ctrl+Shift+F9 for recording, Ctrl+Shift+F10 for cursor)...");
+    let register_all = |mgr: &GlobalHotKeyManager, cfg: &scythe::config::ScytheConfig, reg: &mut Vec<HotKey>| -> (Option<u32>, Option<u32>, Option<u32>, Option<u32>) {
+        for hk in reg.drain(..) {
+            let _ = mgr.unregister(hk);
+        }
+        let is_on_hyprland = scythe::hyprland_binds::is_hyprland();
+        let m_menu = scythe::hotkey::parse_hotkey(&cfg.menu_hotkey).or_else(|| Some(HotKey::new(Some(Modifiers::ALT), Code::KeyZ)));
+        let m_save = scythe::hotkey::parse_hotkey(&cfg.save_hotkey).or_else(|| Some(HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyR)));
+        let m_rec = scythe::hotkey::parse_hotkey(&cfg.record_hotkey).or_else(|| Some(HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::F9)));
+        let m_cur = scythe::hotkey::parse_hotkey(&cfg.cursor_hotkey).or_else(|| Some(HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::F10)));
 
-    let receiver = GlobalHotKeyEvent::receiver();
-    loop {
-        if let Ok(event) = receiver.try_recv() {
-            if event.id == hotkey_menu.id() {
-                ensure_daemon_running();
-                let _ = get_ui_cmd().arg("--menu").spawn();
-            } else if event.id == hotkey_save.id() {
-                let _ = send_with_notification(Command::SaveReplay, "INSTANT REPLAY", "Saved to Videos", ToastIcon::Replay);
-            } else if event.id == hotkey_record.id() {
-                let _ = handle_toggle_recording();
-            } else if event.id == hotkey_cursor.id() {
-                let _ = handle_toggle_cursor();
+        let mut id_menu = None;
+        let mut id_save = None;
+        let mut id_rec = None;
+        let mut id_cur = None;
+
+        if !is_on_hyprland {
+            if let Some(hk) = m_menu {
+                id_menu = Some(hk.id());
+                let _ = mgr.register(hk);
+                reg.push(hk);
             }
         }
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        if let Some(hk) = m_save {
+            id_save = Some(hk.id());
+            let _ = mgr.register(hk);
+            reg.push(hk);
+        }
+        if let Some(hk) = m_rec {
+            id_rec = Some(hk.id());
+            let _ = mgr.register(hk);
+            reg.push(hk);
+        }
+        if let Some(hk) = m_cur {
+            id_cur = Some(hk.id());
+            let _ = mgr.register(hk);
+            reg.push(hk);
+        }
+        (id_menu, id_save, id_rec, id_cur)
+    };
+
+    let (mut id_menu, mut id_save, mut id_rec, mut id_cur) = register_all(&manager, &current_config, &mut registered_hotkeys);
+
+    println!("Listening for global hotkeys (Overlay: {}, Replay: {}, Record: {}, Cursor: {})...",
+        current_config.menu_hotkey, current_config.save_hotkey, current_config.record_hotkey, current_config.cursor_hotkey);
+
+    let receiver = GlobalHotKeyEvent::receiver();
+    let mut last_config_check = std::time::Instant::now();
+
+    loop {
+        #[cfg(target_os = "windows")]
+        unsafe {
+            use windows::Win32::UI::WindowsAndMessaging::{
+                PeekMessageW, TranslateMessage, DispatchMessageW, MSG, PM_REMOVE,
+            };
+            let mut msg = MSG::default();
+            while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                let _ = TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+        }
+
+        if last_config_check.elapsed() > std::time::Duration::from_millis(800) {
+            last_config_check = std::time::Instant::now();
+            let new_cfg = scythe::config::ScytheConfig::load();
+            if new_cfg.menu_hotkey != current_config.menu_hotkey
+                || new_cfg.save_hotkey != current_config.save_hotkey
+                || new_cfg.record_hotkey != current_config.record_hotkey
+                || new_cfg.cursor_hotkey != current_config.cursor_hotkey
+            {
+                current_config = new_cfg;
+                let (im, is, ir, ic) = register_all(&manager, &current_config, &mut registered_hotkeys);
+                id_menu = im;
+                id_save = is;
+                id_rec = ir;
+                id_cur = ic;
+            }
+        }
+
+        while let Ok(event) = receiver.try_recv() {
+            if Some(event.id) == id_menu {
+                std::thread::spawn(|| {
+                    ensure_daemon_running();
+                    let _ = get_ui_cmd().arg("--menu").spawn();
+                });
+            } else if Some(event.id) == id_save {
+                std::thread::spawn(|| {
+                    let _ = send_with_notification(Command::SaveReplay, "INSTANT REPLAY", "Saved to Videos", ToastIcon::Replay);
+                });
+            } else if Some(event.id) == id_rec {
+                std::thread::spawn(|| {
+                    let _ = handle_toggle_recording();
+                });
+            } else if Some(event.id) == id_cur {
+                std::thread::spawn(|| {
+                    let _ = handle_toggle_cursor();
+                });
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
     }
 }

@@ -143,6 +143,8 @@ jobs:
           cp target/release/scythe-daemon.exe dist/bundle/
           cp target/release/scythe-ui.exe dist/bundle/
           python3 packaging/windows/bundle_deps.py dist/bundle
+          strip dist/bundle/*.exe || true
+          strip --strip-unneeded dist/bundle/*.dll || true
 
       - name: Package Windows Standalone (.exe), Installer, and Zip
         shell: pwsh
@@ -181,19 +183,19 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name != 'main' && github.ref_name || 'v0.2.1' }}
-          name: "Scythe ${{ github.ref_name != 'main' && github.ref_name || 'v0.2.1' }}"
+          tag_name: ${{ github.ref_name != 'main' && github.ref_name || 'v0.2.2' }}
+          name: "Scythe ${{ github.ref_name != 'main' && github.ref_name || 'v0.2.2' }}"
           body: |
             High-performance GPU hardware screen recorder and instant replay overlay for Linux and Windows.
 
-            ### What's New in v0.2.1
-            - **Windows Setup Installer (`scythe-setup.exe`)**: Fixed DXGI adapter initialization and DirectX 11 hardware capture pipeline on Windows. Full Windows NSIS installer with desktop/start menu integration.
-            - **System Autostart Options**: Toggle automatic startup on system login for both the overlay HUD and background replay buffer.
-            - **Clean Sequential Trimmer Exports**: Cleaned export naming to `clip_trimmed.mp4`, `clip_trimmed_1.mp4` avoiding repetitive suffixes.
-            - **Settings UI Organization**: Dedicated grouped sections for System & Startup, Storage & File Naming with real-time pattern preview, and hotkey defaults reset.
-            - **Auto-Update System**: Integrated background release checker with voluntary update notifications in the HUD and dedicated settings manager.
-            - **Standardized Datetime Filenames**: Clips and replays now save with clear human-readable timestamps (`Replay-HH-MM-SS_DD-MM-YYYY.mp4` / `Recording-HH-MM-SS_DD-MM-YYYY.mp4`).
-            - **NVIDIA ShadowPlay Toast Overlay**: Sleek, non-intrusive floating toast notifications in the top-right corner for Replay Saved, Recording Started/Stopped, and Mouse Cursor toggle.
+            ### What's New in v0.2.2
+            - **Windows Overlay Transparency**: Fixed DWM opacity issue where the overlay showed an opaque black screen instead of a translucent frosted background.
+            - **Windows Global Hotkeys**: Added dedicated Win32 message pump so global hotkeys (`Alt+Z`, `Ctrl+Shift+R`, etc.) register and trigger reliably across all Windows applications and games.
+            - **Dynamic Hotkey Reloading**: Changes to hotkey bindings in Settings take effect immediately in the background without needing a restart.
+            - **Fixed Notification Duplication & Hang**: Eliminated duplicate in-HUD toast instances and fixed toast freeze issues by ensuring isolated processes with auto-closing watchdog timers.
+            - **Working Folder Options**: Fixed 'Open' and 'Change' folder dialogs on Windows with top-most STA PowerShell picker and visible Explorer launching.
+            - **Zero-Latency UI Buttons & Key Recording**: All daemon communication from UI buttons is now asynchronous, and key listening repaints with 0ms delay.
+            - **Reduced Windows Installer Size**: Enabled Solid LZMA compression in NSIS and stripped symbols from Windows binaries and DLLs.
 
             ### Packages
             - Windows: `scythe-setup.exe` (Official installer with Start Menu & Desktop shortcuts)

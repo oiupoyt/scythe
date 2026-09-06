@@ -291,7 +291,9 @@ X-GNOME-Autostart-enabled=true\n";
     }
 
     pub fn notify_daemon_reload() {
-        let _ = crate::ipc::send_command(crate::ipc::Command::ReloadConfig);
+        std::thread::spawn(|| {
+            let _ = crate::ipc::send_command(crate::ipc::Command::ReloadConfig);
+        });
     }
 
     /// Formats video filenames with informative local timestamps, e.g. "Replay-18-30-00_05-09-2026.mp4"

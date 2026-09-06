@@ -86,7 +86,7 @@ pub fn show_notification(message: &str) {
 pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
     #[cfg(target_os = "windows")]
     {
-        crate::overlay_egui::run_egui_toast(title, subtitle, icon);
+        spawn_toast(title, subtitle, icon);
         return;
     }
 
