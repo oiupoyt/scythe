@@ -2030,7 +2030,7 @@ impl ScytheOverlayApp {
                 let card_w = 320.0;
                 let card_h = 56.0;
                 let toast_rect = egui::Rect::from_min_size(
-                    egui::pos2(screen_w - card_w - 24.0 + slide_x, 24.0),
+                    egui::pos2(screen_w - card_w - 28.0 + slide_x, 28.0),
                     egui::vec2(card_w, card_h),
                 );
 
@@ -2287,22 +2287,79 @@ pub fn apply_windows_transparency(title: &str) {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
+pub fn query_focused_monitor_rect() -> (f32, f32, f32, f32) {
+    // 1. hyprctl monitors -j (Hyprland/Wayland)
+    if let Ok(out) = std::process::Command::new("hyprctl").args(["monitors", "-j"]).output() {
+        if let Ok(v) = serde_json::from_slice::<Vec<serde_json::Value>>(&out.stdout) {
+            let focused = v.iter().find(|m| m["focused"].as_bool().unwrap_or(false))
+                .or_else(|| v.first());
+            if let Some(m) = focused {
+                let x = m["x"].as_f64().unwrap_or(0.0) as f32;
+                let y = m["y"].as_f64().unwrap_or(0.0) as f32;
+                let w = m["width"].as_f64().unwrap_or(1920.0) as f32;
+                let h = m["height"].as_f64().unwrap_or(1080.0) as f32;
+                let scale = m["scale"].as_f64().unwrap_or(1.0) as f32;
+                let lw = if scale > 0.0 { w / scale } else { w };
+                let lh = if scale > 0.0 { h / scale } else { h };
+                let lx = if scale > 0.0 { x / scale } else { x };
+                let ly = if scale > 0.0 { y / scale } else { y };
+                if lw > 320.0 && lh > 200.0 {
+                    return (lx, ly, lw, lh);
+                }
+            }
+        }
+    }
+    // 2. xrandr fallback (X11 / XWayland)
+    if let Ok(out) = std::process::Command::new("xrandr").output() {
+        if let Ok(text) = std::str::from_utf8(&out.stdout) {
+            for line in text.lines() {
+                if line.contains(" connected") {
+                    for part in line.split_whitespace() {
+                        if part.contains('x') && part.contains('+') {
+                            let parts: Vec<&str> = part.split('+').collect();
+                            if parts.len() >= 3 {
+                                let dims: Vec<&str> = parts[0].split('x').collect();
+                                if dims.len() == 2 {
+                                    if let (Ok(w), Ok(h), Ok(x), Ok(y)) = (
+                                        dims[0].parse::<f32>(),
+                                        dims[1].parse::<f32>(),
+                                        parts[1].parse::<f32>(),
+                                        parts[2].parse::<f32>(),
+                                    ) {
+                                        if w > 320.0 && h > 200.0 {
+                                            return (x, y, w, h);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    (0.0, 0.0, 1920.0, 1080.0)
+}
+
 pub fn run_egui_overlay() {
     #[cfg(target_os = "windows")]
-    let (screen_w, screen_h): (f32, f32) = unsafe {
+    let (screen_x, screen_y, screen_w, screen_h): (f32, f32, f32, f32) = unsafe {
         use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
         let w = GetSystemMetrics(SM_CXSCREEN) as f32;
         let h = GetSystemMetrics(SM_CYSCREEN) as f32;
-        if w > 100.0 && h > 100.0 { (w, h) } else { (1920.0, 1080.0) }
+        let sw = if w > 100.0 { w } else { 1920.0 };
+        let sh = if h > 100.0 { h } else { 1080.0 };
+        (0.0, 0.0, sw, sh)
     };
     #[cfg(not(target_os = "windows"))]
-    let (screen_w, screen_h): (f32, f32) = (1920.0, 1080.0);
+    let (screen_x, screen_y, screen_w, screen_h) = query_focused_monitor_rect();
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Scythe")
             .with_app_id("scythe-overlay")
-            .with_position([0.0, 0.0])
+            .with_position([screen_x, screen_y])
             .with_inner_size([screen_w, screen_h])
             .with_maximized(false)
             .with_resizable(false)
@@ -2474,16 +2531,17 @@ pub fn run_egui_toast(title: &str, subtitle: &str, icon: crate::overlay::ToastIc
     }
 
     #[cfg(target_os = "windows")]
-    let screen_w: f32 = unsafe {
+    let (mon_x, screen_w): (f32, f32) = unsafe {
         use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN};
         let w = GetSystemMetrics(SM_CXSCREEN) as f32;
-        if w > 100.0 { w } else { 1920.0 }
+        let sw = if w > 100.0 { w } else { 1920.0 };
+        (0.0, sw)
     };
     #[cfg(not(target_os = "windows"))]
-    let screen_w: f32 = 1920.0;
+    let (mon_x, _mon_y, screen_w, _screen_h) = query_focused_monitor_rect();
 
-    let pos_x = (screen_w - toast_w - 24.0).max(10.0);
-    let pos_y = 24.0;
+    let pos_x = (mon_x + screen_w - toast_w - 28.0).max(10.0);
+    let pos_y = 28.0;
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()

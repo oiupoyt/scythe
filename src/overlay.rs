@@ -181,10 +181,32 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
             (accent_hex, accent_rgb)
         };
 
+        fn get_active_gdk_monitor(display: &gdk::Display) -> Option<gdk::Monitor> {
+            if let Ok(out) = std::process::Command::new("hyprctl").args(["monitors", "-j"]).output() {
+                if let Ok(v) = serde_json::from_slice::<Vec<serde_json::Value>>(&out.stdout) {
+                    let focused = v.iter().find(|m| m["focused"].as_bool().unwrap_or(false))
+                        .or_else(|| v.first());
+                    if let Some(m) = focused {
+                        let fx = m["x"].as_i64().unwrap_or(0) as i32;
+                        let fy = m["y"].as_i64().unwrap_or(0) as i32;
+                        for i in 0..display.n_monitors() {
+                            if let Some(mon) = display.monitor(i) {
+                                let geom = mon.geometry();
+                                if geom.x() == fx && geom.y() == fy {
+                                    return Some(mon);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            display.primary_monitor().or_else(|| display.monitor(0))
+        }
+
         app.connect_activate(move |app| {
             let window = ApplicationWindow::builder()
                 .application(app)
-                .default_width(340)
+                .default_width(360)
                 .default_height(64)
                 .build();
 
@@ -193,26 +215,31 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
             #[cfg(not(target_os = "linux"))]
             let layer_shell_ok = false;
 
+            let active_monitor = gdk::Display::default().and_then(|d| get_active_gdk_monitor(&d));
+
             if layer_shell_ok {
                 window.init_layer_shell();
                 window.set_layer(Layer::Overlay);
                 window.set_namespace("scythe-notification");
+                #[cfg(target_os = "linux")]
+                if let Some(ref mon) = active_monitor {
+                    gtk_layer_shell::LayerShell::set_monitor(&window, mon);
+                }
                 window.set_anchor(gtk_layer_shell::Edge::Top, true);
                 window.set_anchor(gtk_layer_shell::Edge::Right, true);
-                window.set_layer_shell_margin(gtk_layer_shell::Edge::Top, 24);
-                window.set_layer_shell_margin(gtk_layer_shell::Edge::Right, 24);
+                window.set_layer_shell_margin(gtk_layer_shell::Edge::Top, 28);
+                window.set_layer_shell_margin(gtk_layer_shell::Edge::Right, 28);
                 window.set_keyboard_interactivity(false);
             } else {
                 window.set_decorated(false);
                 window.set_keep_above(true);
                 window.set_skip_taskbar_hint(true);
                 window.set_accept_focus(false);
-                if let Some(display) = gdk::Display::default()
-                    && let Some(mon) = display.primary_monitor().or_else(|| display.monitor(0)) {
-                        let geom = mon.geometry();
-                        let x = geom.x() + geom.width() - 340 - 24;
-                        let y = geom.y() + 24;
-                        window.move_(x, y);
+                if let Some(ref mon) = active_monitor {
+                    let geom = mon.geometry();
+                    let x = geom.x() + geom.width() - 360 - 28;
+                    let y = geom.y() + 28;
+                    window.move_(x, y);
                 }
             }
 
@@ -406,8 +433,8 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
             hbox.pack_start(&vbox, true, true, 0);
 
             let fixed = Fixed::new();
-            fixed.set_size_request(340, 64);
-            fixed.put(&hbox, 340, 4);
+            fixed.set_size_request(360, 64);
+            fixed.put(&hbox, 360, 4);
             window.add(&fixed);
             window.show_all();
 
@@ -426,16 +453,16 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
                 let slide_x = if elapsed < 0.35 {
                     let t = (elapsed / 0.35).min(1.0);
                     let ease = 1.0 - (1.0 - t).powi(3);
-                    (1.0 - ease) * 340.0
+                    (1.0 - ease) * 360.0
                 } else if elapsed < 2.40 {
                     0.0
                 } else {
                     let t = ((elapsed - 2.40) / 0.40).min(1.0);
                     let ease = t.powi(3);
-                    ease * 340.0
+                    ease * 360.0
                 };
 
-                let target_x = (slide_x + 10.0).round() as i32;
+                let target_x = (slide_x + 14.0).round() as i32;
                 fixed_clone.move_(&hbox_clone, target_x, 4);
                 window_clone.queue_draw();
                 gtk::glib::ControlFlow::Continue
