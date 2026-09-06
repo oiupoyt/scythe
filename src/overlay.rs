@@ -83,6 +83,59 @@ pub fn show_notification(message: &str) {
     show_shadowplay_toast(title, subtitle, icon);
 }
 
+pub fn ensure_wayland_env() {
+    #[cfg(target_os = "linux")]
+    {
+        let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+            .unwrap_or_else(|_| format!("/run/user/{}", unsafe { libc::getuid() }));
+        unsafe {
+            if std::env::var("WAYLAND_DISPLAY").is_err()
+                && let Ok(entries) = std::fs::read_dir(&runtime_dir) {
+                    for entry in entries.flatten() {
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        if name.starts_with("wayland-") && !name.ends_with(".lock") {
+                            std::env::set_var("WAYLAND_DISPLAY", &name);
+                            break;
+                        }
+                    }
+            }
+            if std::env::var("DISPLAY").is_err() && std::path::Path::new("/tmp/.X11-unix/X0").exists() {
+                std::env::set_var("DISPLAY", ":0");
+            }
+            if std::env::var("DBUS_SESSION_BUS_ADDRESS").is_err() {
+                let bus_path = format!("{}/bus", runtime_dir);
+                if std::path::Path::new(&bus_path).exists() {
+                    std::env::set_var("DBUS_SESSION_BUS_ADDRESS", format!("unix:path={}", bus_path));
+                }
+            }
+            if std::env::var("HYPRLAND_INSTANCE_SIGNATURE").is_err() {
+                let hypr_dir = std::path::Path::new(&runtime_dir).join("hypr");
+                if let Ok(entries) = std::fs::read_dir(&hypr_dir) {
+                    for entry in entries.flatten() {
+                        if entry.path().is_dir() {
+                            let sig = entry.file_name().to_string_lossy().to_string();
+                            if !sig.is_empty() {
+                                std::env::set_var("HYPRLAND_INSTANCE_SIGNATURE", &sig);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            if std::env::var("XDG_CURRENT_DESKTOP").is_err() && std::env::var("WAYLAND_DISPLAY").is_ok() {
+                std::env::set_var("XDG_CURRENT_DESKTOP", "Hyprland");
+            }
+            if std::env::var("XDG_SESSION_TYPE").map(|s| s == "tty" || s.is_empty()).unwrap_or(true) {
+                if std::env::var("WAYLAND_DISPLAY").is_ok() {
+                    std::env::set_var("XDG_SESSION_TYPE", "wayland");
+                } else if std::env::var("DISPLAY").is_ok() {
+                    std::env::set_var("XDG_SESSION_TYPE", "x11");
+                }
+            }
+        }
+    }
+}
+
 pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
     #[cfg(target_os = "windows")]
     {
@@ -92,6 +145,7 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
 
     #[cfg(not(target_os = "windows"))]
     {
+        ensure_wayland_env();
         if std::env::var("WAYLAND_DISPLAY").is_err() && std::env::var("DISPLAY").is_err() {
             crate::overlay_egui::run_egui_toast(title, subtitle, icon);
             return;
@@ -112,7 +166,7 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
 
         let cfg = ScytheConfig::load();
         let accent_name = cfg.accent_color.to_lowercase();
-        let (accent_hex, accent_rgb): (&str, (f64, f64, f64)) = match accent_name.as_str() {
+        let (_accent_hex, accent_rgb): (&str, (f64, f64, f64)) = match accent_name.as_str() {
             "green" | "emerald" => ("#22c55e", (0.133, 0.773, 0.369)),
             "cyan" | "ice" => ("#06b6d4", (0.024, 0.714, 0.831)),
             "purple" | "violet" => ("#a855f7", (0.659, 0.333, 0.969)),
@@ -121,10 +175,10 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
             "blue" | "sapphire" | _ => ("#38bdf8", (0.220, 0.741, 0.973)),
         };
 
-        let active_accent_hex = if icon == ToastIcon::Record {
-            "#ef4444"
+        let active_accent = if icon == ToastIcon::Record {
+            (0.937, 0.267, 0.267)
         } else {
-            accent_hex
+            accent_rgb
         };
 
         app.connect_activate(move |app| {
@@ -171,57 +225,60 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
                 cr.set_source_rgba(0.0, 0.0, 0.0, 0.0);
                 cr.set_operator(gtk::cairo::Operator::Source);
                 let _ = cr.paint();
+                cr.set_operator(gtk::cairo::Operator::Over);
                 gtk::glib::Propagation::Proceed
             });
 
             let css_provider = CssProvider::new();
-            let css = format!(
-                r#"
-                window, window.background, .background {{
+            let css = r#"
+                window, window.background, .background {
                     background-color: transparent !important;
                     background: transparent !important;
                     border: none !important;
                     box-shadow: none !important;
-                }}
-                .shadowplay-toast {{
-                    background-color: rgba(12, 13, 17, 0.82);
-                    border: 1px solid rgba(255, 255, 255, 0.12);
-                    border-left: 3.5px solid {accent};
-                    border-radius: 0px !important;
-                    box-shadow: 0px 8px 24px rgba(0, 0, 0, 0.85);
-                    padding: 8px 14px;
-                }}
-                .toast-title {{
-                    color: #ffffff;
-                    font-size: 12px;
-                    font-weight: 800;
-                    letter-spacing: 0.6px;
-                }}
-                .toast-subtitle {{
-                    color: #a1a1aa;
-                    font-size: 11px;
-                    font-weight: 500;
-                }}
-                "#,
-                accent = active_accent_hex
-            );
+                }
+            "#;
             let _ = css_provider.load_from_data(css.as_bytes());
-            if let Some(screen) = gdk::Screen::default() {
-                StyleContext::add_provider_for_screen(
-                    &screen,
-                    &css_provider,
-                    gtk::STYLE_PROVIDER_PRIORITY_USER,
-                );
-            }
             window.style_context().add_provider(&css_provider, gtk::STYLE_PROVIDER_PRIORITY_USER);
 
-            let hbox = Box::new(Orientation::Horizontal, 12);
-            hbox.style_context().add_class("shadowplay-toast");
-            hbox.set_size_request(320, 54);
+            let hbox = Box::new(Orientation::Horizontal, 10);
+            hbox.set_size_request(320, 56);
+
+            hbox.connect_draw(move |widget, cr| {
+                let w = widget.allocated_width() as f64;
+                let h = widget.allocated_height() as f64;
+                let card_h = (h - 4.0).max(10.0);
+
+                cr.set_operator(gtk::cairo::Operator::Over);
+
+                // 1. Drop shadow (soft dark shadow offset down by 4px)
+                cr.set_source_rgba(0.0, 0.0, 0.0, 0.47);
+                cr.rectangle(0.0, 4.0, w, card_h);
+                let _ = cr.fill();
+
+                // 2. Translucent obsidian dark slate background (matching egui rgba(12, 13, 17, 0.88))
+                cr.set_source_rgba(12.0 / 255.0, 13.0 / 255.0, 17.0 / 255.0, 0.88);
+                cr.rectangle(0.0, 0.0, w, card_h);
+                let _ = cr.fill();
+
+                // 3. Subtle white border (1px inside)
+                cr.set_source_rgba(1.0, 1.0, 1.0, 0.11);
+                cr.set_line_width(1.0);
+                cr.rectangle(0.5, 0.5, w - 1.0, card_h - 1.0);
+                let _ = cr.stroke();
+
+                // 4. Left accent bar (3.5px width)
+                cr.set_source_rgb(active_accent.0, active_accent.1, active_accent.2);
+                cr.rectangle(0.0, 0.0, 3.5, card_h);
+                let _ = cr.fill();
+
+                gtk::glib::Propagation::Proceed
+            });
 
             // Left DrawingArea for vector icon
             let icon_area = DrawingArea::new();
             icon_area.set_size_request(32, 32);
+            icon_area.set_margin_start(14);
             icon_area.set_valign(gtk::Align::Center);
             let icon_type = icon;
             icon_area.connect_draw(move |_, cr| {
@@ -307,13 +364,20 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
             // Right text column
             let vbox = Box::new(Orientation::Vertical, 2);
             vbox.set_valign(gtk::Align::Center);
+            vbox.set_margin_end(16);
 
-            let title_lbl = Label::new(Some(&title_text));
-            title_lbl.style_context().add_class("toast-title");
+            let title_lbl = Label::new(None);
+            title_lbl.set_markup(&format!(
+                "<span font_desc='monospace bold 10.5' color='#ffffff'>{}</span>",
+                gtk::glib::markup_escape_text(&title_text)
+            ));
             title_lbl.set_halign(gtk::Align::Start);
 
-            let sub_lbl = Label::new(Some(&sub_text));
-            sub_lbl.style_context().add_class("toast-subtitle");
+            let sub_lbl = Label::new(None);
+            sub_lbl.set_markup(&format!(
+                "<span font_desc='sans 9' color='#a1a1aa'>{}</span>",
+                gtk::glib::markup_escape_text(&sub_text)
+            ));
             sub_lbl.set_halign(gtk::Align::Start);
 
             vbox.pack_start(&title_lbl, false, false, 0);
@@ -324,7 +388,7 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
 
             let fixed = Fixed::new();
             fixed.set_size_request(340, 64);
-            fixed.put(&hbox, 340, 5);
+            fixed.put(&hbox, 340, 4);
             window.add(&fixed);
             window.show_all();
 
@@ -353,7 +417,8 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
                 };
 
                 let target_x = (slide_x + 10.0).round() as i32;
-                fixed_clone.move_(&hbox_clone, target_x, 5);
+                fixed_clone.move_(&hbox_clone, target_x, 4);
+                window_clone.queue_draw();
                 gtk::glib::ControlFlow::Continue
             });
         });

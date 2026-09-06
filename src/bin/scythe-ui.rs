@@ -6,55 +6,7 @@ use std::env;
 use global_hotkey::{GlobalHotKeyManager, hotkey::{HotKey, Modifiers, Code}, GlobalHotKeyEvent};
 
 fn ensure_wayland_env() {
-    #[cfg(target_os = "linux")]
-    {
-        let runtime_dir = env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| format!("/run/user/{}", unsafe { libc::getuid() }));
-        unsafe {
-            if env::var("WAYLAND_DISPLAY").is_err()
-                && let Ok(entries) = std::fs::read_dir(&runtime_dir) {
-                    for entry in entries.flatten() {
-                        let name = entry.file_name().to_string_lossy().to_string();
-                        if name.starts_with("wayland-") && !name.ends_with(".lock") {
-                            env::set_var("WAYLAND_DISPLAY", &name);
-                            break;
-                        }
-                    }
-            }
-            if env::var("DISPLAY").is_err() && std::path::Path::new("/tmp/.X11-unix/X0").exists() {
-                env::set_var("DISPLAY", ":0");
-            }
-            if env::var("DBUS_SESSION_BUS_ADDRESS").is_err() {
-                let bus_path = format!("{}/bus", runtime_dir);
-                if std::path::Path::new(&bus_path).exists() {
-                    env::set_var("DBUS_SESSION_BUS_ADDRESS", format!("unix:path={}", bus_path));
-                }
-            }
-            if env::var("HYPRLAND_INSTANCE_SIGNATURE").is_err() {
-                let hypr_dir = std::path::Path::new(&runtime_dir).join("hypr");
-                if let Ok(entries) = std::fs::read_dir(&hypr_dir) {
-                    for entry in entries.flatten() {
-                        if entry.path().is_dir() {
-                            let sig = entry.file_name().to_string_lossy().to_string();
-                            if !sig.is_empty() {
-                                env::set_var("HYPRLAND_INSTANCE_SIGNATURE", &sig);
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-            if env::var("XDG_CURRENT_DESKTOP").is_err() && env::var("WAYLAND_DISPLAY").is_ok() {
-                env::set_var("XDG_CURRENT_DESKTOP", "Hyprland");
-            }
-            if env::var("XDG_SESSION_TYPE").map(|s| s == "tty" || s.is_empty()).unwrap_or(true) {
-                if env::var("WAYLAND_DISPLAY").is_ok() {
-                    env::set_var("XDG_SESSION_TYPE", "wayland");
-                } else if env::var("DISPLAY").is_ok() {
-                    env::set_var("XDG_SESSION_TYPE", "x11");
-                }
-            }
-        }
-    }
+    scythe::overlay::ensure_wayland_env();
 }
 
 fn get_daemon_cmd() -> std::process::Command {

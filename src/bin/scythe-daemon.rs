@@ -15,50 +15,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 fn ensure_wayland_env() {
-    #[cfg(target_os = "linux")]
-    {
-        let runtime_dir = env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| format!("/run/user/{}", unsafe { libc::getuid() }));
-        unsafe {
-            if env::var("WAYLAND_DISPLAY").is_err()
-                && let Ok(entries) = std::fs::read_dir(&runtime_dir) {
-                    for entry in entries.flatten() {
-                        let name = entry.file_name().to_string_lossy().to_string();
-                        if name.starts_with("wayland-") && !name.ends_with(".lock") {
-                            env::set_var("WAYLAND_DISPLAY", &name);
-                            println!("Auto-detected Wayland display: {}", name);
-                            break;
-                        }
-                    }
-            }
-            if env::var("DBUS_SESSION_BUS_ADDRESS").is_err() {
-                let bus_path = format!("{}/bus", runtime_dir);
-                if std::path::Path::new(&bus_path).exists() {
-                    env::set_var("DBUS_SESSION_BUS_ADDRESS", format!("unix:path={}", bus_path));
-                }
-            }
-            if env::var("HYPRLAND_INSTANCE_SIGNATURE").is_err() {
-                let hypr_dir = std::path::Path::new(&runtime_dir).join("hypr");
-                if let Ok(entries) = std::fs::read_dir(&hypr_dir) {
-                    for entry in entries.flatten() {
-                        if entry.path().is_dir() {
-                            let sig = entry.file_name().to_string_lossy().to_string();
-                            if !sig.is_empty() {
-                                env::set_var("HYPRLAND_INSTANCE_SIGNATURE", &sig);
-                                println!("Auto-detected Hyprland instance signature: {}", sig);
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-            if env::var("XDG_CURRENT_DESKTOP").is_err() {
-                env::set_var("XDG_CURRENT_DESKTOP", "Hyprland");
-            }
-            if env::var("XDG_SESSION_TYPE").map(|s| s == "tty" || s.is_empty()).unwrap_or(true) && env::var("WAYLAND_DISPLAY").is_ok() {
-                env::set_var("XDG_SESSION_TYPE", "wayland");
-            }
-        }
-    }
+    scythe::overlay::ensure_wayland_env();
 }
 
 #[tokio::main]
