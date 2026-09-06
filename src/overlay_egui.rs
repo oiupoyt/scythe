@@ -2043,12 +2043,12 @@ impl ScytheOverlayApp {
                     Color32::from_rgba_unmultiplied(0, 0, 0, 120),
                 );
 
-                // Translucent dark slate toast card
+                // Solid obsidian dark slate toast card
                 painter.rect(
                     toast_rect,
                     CornerRadius::ZERO,
-                    Color32::from_rgba_unmultiplied(12, 13, 17, 210),
-                    Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 28)),
+                    Color32::from_rgba_unmultiplied(14, 16, 21, 245),
+                    Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 36)),
                     egui::StrokeKind::Inside,
                 );
 
@@ -2386,12 +2386,12 @@ impl eframe::App for ShadowPlayToastApp {
                     Color32::from_rgba_unmultiplied(0, 0, 0, 120),
                 );
 
-                // Obsidian toast card
+                // Solid obsidian dark slate toast card
                 painter.rect(
                     rect,
                     CornerRadius::ZERO,
-                    Color32::from_rgba_unmultiplied(12, 13, 17, 210),
-                    Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 28)),
+                    Color32::from_rgba_unmultiplied(14, 16, 21, 245),
+                    Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 36)),
                     egui::StrokeKind::Inside,
                 );
 

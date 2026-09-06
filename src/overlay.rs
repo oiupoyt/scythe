@@ -166,7 +166,7 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
 
         let cfg = ScytheConfig::load();
         let accent_name = cfg.accent_color.to_lowercase();
-        let (_accent_hex, accent_rgb): (&str, (f64, f64, f64)) = match accent_name.as_str() {
+        let (accent_hex, accent_rgb): (&str, (f64, f64, f64)) = match accent_name.as_str() {
             "green" | "emerald" => ("#22c55e", (0.133, 0.773, 0.369)),
             "cyan" | "ice" => ("#06b6d4", (0.024, 0.714, 0.831)),
             "purple" | "violet" => ("#a855f7", (0.659, 0.333, 0.969)),
@@ -175,10 +175,10 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
             "blue" | "sapphire" | _ => ("#38bdf8", (0.220, 0.741, 0.973)),
         };
 
-        let active_accent = if icon == ToastIcon::Record {
-            (0.937, 0.267, 0.267)
+        let (active_accent_hex, active_accent) = if icon == ToastIcon::Record {
+            ("#ef4444", (0.937, 0.267, 0.267))
         } else {
-            accent_rgb
+            (accent_hex, accent_rgb)
         };
 
         app.connect_activate(move |app| {
@@ -230,19 +230,38 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
             });
 
             let css_provider = CssProvider::new();
-            let css = r#"
-                window, window.background, .background {
-                    background-color: transparent !important;
-                    background: transparent !important;
-                    border: none !important;
-                    box-shadow: none !important;
-                }
-            "#;
+            let css = format!(
+                r#"
+                window, window.background {{
+                    background-color: transparent;
+                    background: transparent;
+                    border: none;
+                    box-shadow: none;
+                }}
+                .toast-card {{
+                    background-color: rgba(14, 16, 21, 0.96);
+                    border: 1px solid rgba(255, 255, 255, 0.14);
+                    border-left: 4px solid {accent};
+                    border-radius: 0px;
+                    box-shadow: 0px 8px 24px rgba(0, 0, 0, 0.75);
+                }}
+                "#,
+                accent = active_accent_hex
+            );
             let _ = css_provider.load_from_data(css.as_bytes());
+            if let Some(screen) = gdk::Screen::default() {
+                StyleContext::add_provider_for_screen(
+                    &screen,
+                    &css_provider,
+                    gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+                );
+            }
             window.style_context().add_provider(&css_provider, gtk::STYLE_PROVIDER_PRIORITY_USER);
 
             let hbox = Box::new(Orientation::Horizontal, 10);
+            hbox.style_context().add_class("toast-card");
             hbox.set_size_request(320, 56);
+            hbox.set_app_paintable(true);
 
             hbox.connect_draw(move |widget, cr| {
                 let w = widget.allocated_width() as f64;
@@ -252,24 +271,24 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
                 cr.set_operator(gtk::cairo::Operator::Over);
 
                 // 1. Drop shadow (soft dark shadow offset down by 4px)
-                cr.set_source_rgba(0.0, 0.0, 0.0, 0.47);
+                cr.set_source_rgba(0.0, 0.0, 0.0, 0.60);
                 cr.rectangle(0.0, 4.0, w, card_h);
                 let _ = cr.fill();
 
-                // 2. Translucent obsidian dark slate background (matching egui rgba(12, 13, 17, 0.88))
-                cr.set_source_rgba(12.0 / 255.0, 13.0 / 255.0, 17.0 / 255.0, 0.88);
+                // 2. Solid obsidian dark slate background (matching egui rgba(14, 16, 21, 0.96))
+                cr.set_source_rgba(14.0 / 255.0, 16.0 / 255.0, 21.0 / 255.0, 0.96);
                 cr.rectangle(0.0, 0.0, w, card_h);
                 let _ = cr.fill();
 
                 // 3. Subtle white border (1px inside)
-                cr.set_source_rgba(1.0, 1.0, 1.0, 0.11);
+                cr.set_source_rgba(1.0, 1.0, 1.0, 0.14);
                 cr.set_line_width(1.0);
                 cr.rectangle(0.5, 0.5, w - 1.0, card_h - 1.0);
                 let _ = cr.stroke();
 
-                // 4. Left accent bar (3.5px width)
+                // 4. Left accent bar (4.0px width)
                 cr.set_source_rgb(active_accent.0, active_accent.1, active_accent.2);
-                cr.rectangle(0.0, 0.0, 3.5, card_h);
+                cr.rectangle(0.0, 0.0, 4.0, card_h);
                 let _ = cr.fill();
 
                 gtk::glib::Propagation::Proceed
