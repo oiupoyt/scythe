@@ -144,21 +144,19 @@ fn check_and_toggle_overlay() -> bool {
         }
 
         if let Ok(content) = std::fs::read_to_string(&pid_path) {
+            #[cfg(unix)]
             if let Ok(pid) = content.trim().parse::<i32>() {
-                #[cfg(unix)]
-                {
-                    let exists = unsafe { libc::kill(pid, 0) == 0 };
-                    if exists && pid != std::process::id() as i32 {
-                        let proc_cmd = format!("/proc/{}/cmdline", pid);
-                        let is_scythe = std::fs::read_to_string(&proc_cmd)
-                            .map(|cmd| cmd.contains("scythe") || cmd.contains("vrec"))
-                            .unwrap_or(false);
-                        if is_scythe {
-                            // Overlay already open: toggle it closed instantly!
-                            unsafe { libc::kill(pid, libc::SIGTERM) };
-                            let _ = std::fs::remove_file(&pid_path);
-                            return true;
-                        }
+                let exists = unsafe { libc::kill(pid, 0) == 0 };
+                if exists && pid != std::process::id() as i32 {
+                    let proc_cmd = format!("/proc/{}/cmdline", pid);
+                    let is_scythe = std::fs::read_to_string(&proc_cmd)
+                        .map(|cmd| cmd.contains("scythe") || cmd.contains("vrec"))
+                        .unwrap_or(false);
+                    if is_scythe {
+                        // Overlay already open: toggle it closed instantly!
+                        unsafe { libc::kill(pid, libc::SIGTERM) };
+                        let _ = std::fs::remove_file(&pid_path);
+                        return true;
                     }
                 }
             }

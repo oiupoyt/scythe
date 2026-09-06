@@ -122,7 +122,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 println!("Daemon listening on TCP IPC: 127.0.0.1:42069");
                 l
             }
-            Err(e) => {
+            Err(_e) => {
                 if scythe::ipc::query_status().is_ok() {
                     println!("Another instance of scythe-daemon is already running. Exiting cleanly.");
                     return Ok(());
