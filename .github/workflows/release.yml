@@ -183,26 +183,17 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name != 'main' && github.ref_name || 'v0.2.2' }}
-          name: "Scythe ${{ github.ref_name != 'main' && github.ref_name || 'v0.2.2' }}"
+          tag_name: ${{ github.ref_name }}
+          name: "Scythe ${{ github.ref_name }}"
           body: |
             High-performance GPU hardware screen recorder and instant replay overlay for Linux and Windows.
 
-            ### What's New in v0.2.2
-            - **Windows Overlay Transparency**: Fixed DWM opacity issue where the overlay showed an opaque black screen instead of a translucent frosted background.
-            - **Windows Global Hotkeys**: Added dedicated Win32 message pump so global hotkeys (`Alt+Z`, `Ctrl+Shift+R`, etc.) register and trigger reliably across all Windows applications and games.
-            - **Dynamic Hotkey Reloading**: Changes to hotkey bindings in Settings take effect immediately in the background without needing a restart.
-            - **Fixed Notification Duplication & Hang**: Eliminated duplicate in-HUD toast instances and fixed toast freeze issues by ensuring isolated processes with auto-closing watchdog timers.
-            - **Working Folder Options**: Fixed 'Open' and 'Change' folder dialogs on Windows with top-most STA PowerShell picker and visible Explorer launching.
-            - **Zero-Latency UI Buttons & Key Recording**: All daemon communication from UI buttons is now asynchronous, and key listening repaints with 0ms delay.
-            - **Reduced Windows Installer Size**: Enabled Solid LZMA compression in NSIS and stripped symbols from Windows binaries and DLLs.
-
             ### Packages
-            - Windows: `scythe-setup.exe` (Official installer with Start Menu & Desktop shortcuts)
-            - Universal Linux: `scythe-x86_64.AppImage`
-            - Debian / Ubuntu / Mint: `scythe_*_amd64.deb`
-            - Fedora / RHEL / openSUSE: `*.rpm`
-            - Generic Linux: `scythe-linux-x86_64.tar.gz`
+            - **Windows**: `scythe-setup.exe` (Official installer with Start Menu & Desktop shortcuts)
+            - **Universal Linux**: `scythe-x86_64.AppImage`
+            - **Debian / Ubuntu / Mint**: `scythe_*_amd64.deb`
+            - **Fedora / RHEL / openSUSE**: `*.rpm`
+            - **Generic Linux**: `scythe-linux-x86_64.tar.gz`
           files: |
             artifacts/linux-packages/*
             artifacts/windows-packages/*

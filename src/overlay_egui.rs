@@ -597,12 +597,6 @@ fn render_action_card(
     };
 
     let painter = ui.painter();
-    // Drop shadow
-    painter.rect_filled(
-        rect.translate(Vec2::new(0.0, 6.0)),
-        CornerRadius::ZERO,
-        Color32::from_rgba_unmultiplied(0, 0, 0, 110),
-    );
     // Card background - SQUARED
     painter.rect(rect, CornerRadius::ZERO, bg, Stroke::new(1.0_f32, border), egui::StrokeKind::Inside);
 
@@ -647,16 +641,17 @@ fn render_dropdown_menu(
     accent: Color32,
     add_contents: impl FnOnce(&mut egui::Ui),
 ) {
-    ui.add_space(4.0);
+    ui.add_space(6.0);
+    let inner_w = card_width - 2.0;
     egui::Frame::NONE
-        .fill(Color32::from_rgba_unmultiplied(12, 13, 17, 210))
+        .fill(Color32::from_rgba_unmultiplied(12, 13, 17, 225))
         .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 180)))
         .corner_radius(CornerRadius::ZERO)
         .inner_margin(Margin::ZERO)
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing = Vec2::ZERO;
-            ui.set_min_width(card_width);
-            ui.set_max_width(card_width);
+            ui.set_min_width(inner_w);
+            ui.set_max_width(inner_w);
             add_contents(ui);
         });
 }
@@ -991,12 +986,14 @@ impl ScytheOverlayApp {
                     }
                 }
 
-                ui.horizontal(|ui| {
+                ui.horizontal_top(|ui| {
                     // =========================================================================
                     // CARD 1: INSTANT REPLAY
                     // =========================================================================
                     ui.vertical(|ui| {
                         ui.set_width(card_w);
+                        ui.set_min_width(card_w);
+                        ui.set_max_width(card_w);
                         let card1_clicked = render_action_card(
                             ui,
                             card_w,
@@ -1046,6 +1043,8 @@ impl ScytheOverlayApp {
                     // =========================================================================
                     ui.vertical(|ui| {
                         ui.set_width(card_w);
+                        ui.set_min_width(card_w);
+                        ui.set_max_width(card_w);
                         let rec_status_str = if is_recording {
                             let mins = rec_dur / 60;
                             let secs = rec_dur % 60;
@@ -1098,6 +1097,8 @@ impl ScytheOverlayApp {
                     // =========================================================================
                     ui.vertical(|ui| {
                         ui.set_width(card_w);
+                        ui.set_min_width(card_w);
+                        ui.set_max_width(card_w);
                         let card3_clicked = render_action_card(
                             ui,
                             card_w,
