@@ -8,6 +8,12 @@ SilentInstall silent
 RequestExecutionLevel user
 
 Section
+  ; Terminate any running instances so locked executables and DLLs can be updated cleanly
+  nsExec::Exec 'cmd.exe /C taskkill /F /IM scythe-ui.exe /T >nul 2>&1'
+  nsExec::Exec 'cmd.exe /C taskkill /F /IM scythe-daemon.exe /T >nul 2>&1'
+  Sleep 500
+
+  SetOverwrite on
   ; Extract self-contained binaries and all runtime DLLs directly to user app data
   SetOutPath "$LOCALAPPDATA\scythe"
   File /r "..\..\dist\bundle\*.*"

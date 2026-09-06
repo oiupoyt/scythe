@@ -26,6 +26,12 @@ RequestExecutionLevel user
 !insertmacro MUI_LANGUAGE "English"
 
 Section "Scythe" SecMain
+  ; Terminate any running instances so locked executables and DLLs can be updated cleanly
+  nsExec::Exec 'cmd.exe /C taskkill /F /IM scythe-ui.exe /T >nul 2>&1'
+  nsExec::Exec 'cmd.exe /C taskkill /F /IM scythe-daemon.exe /T >nul 2>&1'
+  Sleep 500
+
+  SetOverwrite on
   SetOutPath "$INSTDIR"
   File /r "..\..\dist\bundle\*.*"
 
@@ -43,6 +49,10 @@ Section "Scythe" SecMain
 SectionEnd
 
 Section "Uninstall"
+  nsExec::Exec 'cmd.exe /C taskkill /F /IM scythe-ui.exe /T >nul 2>&1'
+  nsExec::Exec 'cmd.exe /C taskkill /F /IM scythe-daemon.exe /T >nul 2>&1'
+  Sleep 500
+
   Delete "$DESKTOP\scythe.lnk"
   RMDir /r "$SMPROGRAMS\scythe"
   RMDir /r "$INSTDIR"

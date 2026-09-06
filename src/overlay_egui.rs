@@ -912,7 +912,7 @@ impl ScytheOverlayApp {
                 self.output_dir = new_dir.clone();
                 self.config.output_directory = new_dir;
                 let _ = self.config.save();
-                let _ = ipc::send_command(Command::ReloadConfig);
+                async_send_command(Command::ReloadConfig);
                 self.refresh_clips();
             }
         }
@@ -2130,18 +2130,21 @@ impl eframe::App for ScytheOverlayApp {
         if self.listening_keybind.is_some() || self.hud_notification.is_some() {
             ctx.request_repaint();
         } else {
-            ctx.request_repaint_after(Duration::from_millis(33));
+            ctx.request_repaint_after(Duration::from_millis(16));
         }
 
-        // Auto-position and size to monitor on launch
+        // Auto-position, DWM transparency, and size to monitor on launch
         if !self.initial_pos_set {
             if let Some(monitor_size) = ctx.input(|i| i.viewport().monitor_size) {
                 if monitor_size.x > 100.0 && monitor_size.y > 100.0 {
                     ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(0.0, 0.0)));
                     ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(monitor_size));
-                    self.initial_pos_set = true;
                 }
             }
+            #[cfg(target_os = "windows")]
+            apply_windows_transparency("Scythe");
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            self.initial_pos_set = true;
         }
 
         // Handle interactive keybind recording mode
@@ -2155,6 +2158,10 @@ impl eframe::App for ScytheOverlayApp {
                             break;
                         }
                         if let Some(key_name) = format_egui_key(*key) {
+                            let k_lower = key_name.to_lowercase();
+                            if ["alt", "ctrl", "control", "shift", "super", "meta", "command"].contains(&k_lower.as_str()) {
+                                continue;
+                            }
                             let mut parts = Vec::new();
                             if modifiers.ctrl {
                                 parts.push("Ctrl");
@@ -2259,6 +2266,27 @@ impl eframe::App for ScytheOverlayApp {
     }
 }
 
+#[cfg(target_os = "windows")]
+pub fn apply_windows_transparency(title: &str) {
+    unsafe {
+        use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
+        use windows::Win32::Graphics::Dwm::DwmExtendFrameIntoClientArea;
+        use windows::Win32::UI::Controls::MARGINS;
+        use windows::core::HSTRING;
+
+        let htitle = HSTRING::from(title);
+        if let Ok(hwnd) = FindWindowW(None, &htitle) {
+            let margins = MARGINS {
+                cxLeftWidth: -1,
+                cxRightWidth: -1,
+                cyTopHeight: -1,
+                cyBottomHeight: -1,
+            };
+            let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
+        }
+    }
+}
+
 pub fn run_egui_overlay() {
     #[cfg(target_os = "windows")]
     let (screen_w, screen_h): (f32, f32) = unsafe {
@@ -2280,6 +2308,7 @@ pub fn run_egui_overlay() {
             .with_resizable(false)
             .with_decorations(false)
             .with_transparent(true)
+            .with_visible(false)
             .with_always_on_top(),
         ..Default::default()
     };
@@ -2300,6 +2329,7 @@ pub struct ShadowPlayToastApp {
     accent: Color32,
     created_at: Instant,
     duration: Duration,
+    initial_setup: bool,
 }
 
 impl eframe::App for ShadowPlayToastApp {
@@ -2308,6 +2338,13 @@ impl eframe::App for ShadowPlayToastApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if !self.initial_setup {
+            #[cfg(target_os = "windows")]
+            apply_windows_transparency("Scythe Notification");
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            self.initial_setup = true;
+        }
+
         let elapsed = self.created_at.elapsed().as_secs_f32();
         let total_dur = self.duration.as_secs_f32();
         if elapsed >= total_dur {
@@ -2428,6 +2465,15 @@ pub fn run_egui_toast(title: &str, subtitle: &str, icon: crate::overlay::ToastIc
     let toast_h: f32 = 64.0;
 
     #[cfg(target_os = "windows")]
+    unsafe {
+        use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, PostMessageW, WM_CLOSE};
+        if let Ok(prev) = FindWindowW(None, windows::core::w!("Scythe Notification")) {
+            let _ = PostMessageW(prev, WM_CLOSE, windows::Win32::Foundation::WPARAM(0), windows::Win32::Foundation::LPARAM(0));
+            std::thread::sleep(Duration::from_millis(30));
+        }
+    }
+
+    #[cfg(target_os = "windows")]
     let screen_w: f32 = unsafe {
         use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN};
         let w = GetSystemMetrics(SM_CXSCREEN) as f32;
@@ -2447,6 +2493,7 @@ pub fn run_egui_toast(title: &str, subtitle: &str, icon: crate::overlay::ToastIc
             .with_inner_size([toast_w, toast_h])
             .with_decorations(false)
             .with_transparent(true)
+            .with_visible(false)
             .with_always_on_top()
             .with_resizable(false),
         ..Default::default()
@@ -2459,6 +2506,7 @@ pub fn run_egui_toast(title: &str, subtitle: &str, icon: crate::overlay::ToastIc
         accent,
         created_at: Instant::now(),
         duration: Duration::from_millis(2800),
+        initial_setup: false,
     };
 
     // Watchdog thread to guarantee exit after duration

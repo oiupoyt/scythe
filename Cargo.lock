@@ -3700,7 +3700,7 @@ dependencies = [
 
 [[package]]
 name = "scythe"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "ashpd",
  "cpal",

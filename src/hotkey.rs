@@ -70,8 +70,8 @@ pub fn parse_hotkey(s: &str) -> Option<HotKey> {
                     "delete" | "del" => Some(Code::Delete),
                     "home" => Some(Code::Home),
                     "end" => Some(Code::End),
-                    "pageup" | "pgup" => Some(Code::PageUp),
-                    "pagedown" | "pgdn" => Some(Code::PageDown),
+                    "pageup" | "pgup" | "page_up" => Some(Code::PageUp),
+                    "pagedown" | "pgdn" | "page_down" => Some(Code::PageDown),
                     _ => None,
                 };
             }

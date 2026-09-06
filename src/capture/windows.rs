@@ -15,9 +15,10 @@ pub struct WindowsCapture {
     device: ID3D11Device,
     context: ID3D11DeviceContext,
     duplication: IDXGIOutputDuplication,
-    gpu_texture: ID3D11Texture2D,
+    staging_texture: ID3D11Texture2D,
     pub width: u32,
     pub height: u32,
+    last_frame: Vec<u8>,
 }
 
 #[cfg(target_os = "windows")]
@@ -85,33 +86,34 @@ impl WindowsCapture {
             // Initialize Desktop Duplication
             let duplication = output1.DuplicateOutput(&device)?;
 
-            // Allocate a dedicated VRAM-resident GPU texture for 100% zero-copy capture
-            let gpu_desc = D3D11_TEXTURE2D_DESC {
+            // Allocate a CPU-accessible staging texture for hardware frame reading
+            let staging_desc = D3D11_TEXTURE2D_DESC {
                 Width: width,
                 Height: height,
                 MipLevels: 1,
                 ArraySize: 1,
                 Format: DXGI_FORMAT_B8G8R8A8_UNORM,
                 SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-                Usage: D3D11_USAGE_DEFAULT,
-                BindFlags: (D3D11_BIND_RENDER_TARGET.0 | D3D11_BIND_SHADER_RESOURCE.0) as u32,
-                CPUAccessFlags: 0,
+                Usage: D3D11_USAGE_STAGING,
+                BindFlags: 0,
+                CPUAccessFlags: D3D11_CPU_ACCESS_READ.0 as u32,
                 MiscFlags: 0,
             };
 
-            let mut gpu_texture: Option<ID3D11Texture2D> = None;
-            device.CreateTexture2D(&gpu_desc, None, Some(&mut gpu_texture))?;
-            let gpu_texture = gpu_texture.ok_or("Failed to create GPU VRAM texture")?;
+            let mut staging_texture: Option<ID3D11Texture2D> = None;
+            device.CreateTexture2D(&staging_desc, None, Some(&mut staging_texture))?;
+            let staging_texture = staging_texture.ok_or("Failed to create D3D11 staging texture")?;
 
-            println!("Windows DXGI Hardware Capture active (Pure GPU Zero-Copy): {}x{}", width, height);
+            println!("Windows DXGI Hardware Desktop Duplication active: {}x{}", width, height);
 
             Ok(Self {
                 device,
                 context,
                 duplication,
-                gpu_texture,
+                staging_texture,
                 width,
                 height,
+                last_frame: Vec::new(),
             })
         }
     }
@@ -143,32 +145,51 @@ impl FrameSource for WindowsCapture {
             let mut desktop_resource: Option<IDXGIResource> = None;
 
             for _ in 0..5 {
-                match self.duplication.AcquireNextFrame(150, &mut frame_info, &mut desktop_resource) {
+                match self.duplication.AcquireNextFrame(100, &mut frame_info, &mut desktop_resource) {
                     Ok(()) => {
                         if let Some(resource) = desktop_resource {
                             let texture: ID3D11Texture2D = resource.cast()?;
                             
-                            // Copy directly on the GPU from desktop buffer to persistent VRAM texture
-                            self.context.CopyResource(&self.gpu_texture, &texture);
+                            // Copy GPU desktop texture to staging texture accessible by CPU
+                            self.context.CopyResource(&self.staging_texture, &texture);
                             
                             // Immediately release the desktop frame back to the DWM compositor
                             let _ = self.duplication.ReleaseFrame();
 
-                            return Ok(Frame::D3D11Texture {
-                                handle: self.gpu_texture.as_raw() as usize,
+                            let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+                            self.context.Map(&self.staging_texture, 0, D3D11_MAP_READ, 0, Some(&mut mapped))?;
+
+                            let stride = mapped.RowPitch as usize;
+                            let total_bytes = stride * self.height as usize;
+                            if self.last_frame.len() != total_bytes {
+                                self.last_frame.resize(total_bytes, 0);
+                            }
+                            std::ptr::copy_nonoverlapping(
+                                mapped.pData as *const u8,
+                                self.last_frame.as_mut_ptr(),
+                                total_bytes,
+                            );
+                            self.context.Unmap(&self.staging_texture, 0);
+
+                            return Ok(Frame::Raw {
                                 width: self.width,
                                 height: self.height,
+                                stride: stride as u32,
+                                data: self.last_frame.clone(),
                             });
                         }
                         let _ = self.duplication.ReleaseFrame();
                     }
                     Err(e) if e.code() == DXGI_ERROR_WAIT_TIMEOUT => {
+                        if !self.last_frame.is_empty() {
+                            return Ok(Frame::Raw {
+                                width: self.width,
+                                height: self.height,
+                                stride: self.width * 4,
+                                data: self.last_frame.clone(),
+                            });
+                        }
                         std::thread::sleep(std::time::Duration::from_millis(8));
-                        return Ok(Frame::D3D11Texture {
-                            handle: self.gpu_texture.as_raw() as usize,
-                            width: self.width,
-                            height: self.height,
-                        });
                     }
                     Err(e) if e.code() == DXGI_ERROR_ACCESS_LOST => {
                         println!("DXGI access lost (display mode or fullscreen switch), reacquiring...");
@@ -182,11 +203,21 @@ impl FrameSource for WindowsCapture {
                 }
             }
 
-            Ok(Frame::D3D11Texture {
-                handle: self.gpu_texture.as_raw() as usize,
-                width: self.width,
-                height: self.height,
-            })
+            if !self.last_frame.is_empty() {
+                Ok(Frame::Raw {
+                    width: self.width,
+                    height: self.height,
+                    stride: self.width * 4,
+                    data: self.last_frame.clone(),
+                })
+            } else {
+                Ok(Frame::Raw {
+                    width: self.width,
+                    height: self.height,
+                    stride: self.width * 4,
+                    data: vec![0u8; (self.width * self.height * 4) as usize],
+                })
+            }
         }
     }
 }
