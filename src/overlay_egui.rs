@@ -1027,9 +1027,13 @@ impl ScytheOverlayApp {
                                     self.status.is_replay_active = cfg.replay_enabled;
                                     self.replay_dropdown_open = false;
                                 }
-                                if render_menu_item(ui, "Save Replay", accent, true) {
-                                    async_send_command(Command::SaveReplay);
-                                    self.show_hud_notification("INSTANT REPLAY", "Saved to Videos", crate::overlay::ToastIcon::Replay);
+                                if render_menu_item(ui, "Save Replay", accent, is_replay_active) {
+                                    if is_replay_active {
+                                        async_send_command(Command::SaveReplay);
+                                        self.show_hud_notification("INSTANT REPLAY", "Saved to Videos", crate::overlay::ToastIcon::Replay);
+                                    } else {
+                                        self.show_hud_notification("INSTANT REPLAY", "Replay is turned off", crate::overlay::ToastIcon::Error);
+                                    }
                                     self.replay_dropdown_open = false;
                                 }
                             });

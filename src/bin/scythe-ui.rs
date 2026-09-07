@@ -249,6 +249,13 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if args.len() > 1 {
         match args[1].as_str() {
             "--save" => {
+                ensure_daemon_running();
+                if let Ok(st) = query_status() {
+                    if !st.is_replay_active {
+                        show_shadowplay_toast("INSTANT REPLAY", "Replay is turned off", ToastIcon::Error);
+                        return Ok(());
+                    }
+                }
                 return send_with_notification(Command::SaveReplay, "INSTANT REPLAY", "Saved to Videos", ToastIcon::Replay);
             }
             "--notify-save" => {

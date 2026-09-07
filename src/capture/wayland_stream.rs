@@ -139,4 +139,8 @@ impl PipeWireStream {
     pub fn next_frame(&mut self) -> Result<Frame, Box<dyn std::error::Error + Send + Sync>> {
         self.receiver.recv().map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
     }
+
+    pub fn next_frame_timeout(&mut self, timeout: std::time::Duration) -> Result<Frame, Box<dyn std::error::Error + Send + Sync>> {
+        self.receiver.recv_timeout(timeout).map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+    }
 }

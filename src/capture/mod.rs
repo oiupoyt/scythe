@@ -42,6 +42,9 @@ pub enum Frame {
 
 pub trait FrameSource: Send {
     fn next_frame(&mut self) -> Result<Frame, Box<dyn std::error::Error + Send + Sync>>;
+    fn next_frame_timeout(&mut self, _timeout: std::time::Duration) -> Result<Frame, Box<dyn std::error::Error + Send + Sync>> {
+        self.next_frame()
+    }
 }
 
 pub mod mock;

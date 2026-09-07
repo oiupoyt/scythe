@@ -13,6 +13,8 @@ pub struct VaapiEncoder {
     has_frame: bool,
     #[cfg(unix)]
     dma_mmap_cache: HashMap<i32, (*mut libc::c_void, usize)>,
+    #[cfg(unix)]
+    direct_drm_unsupported: bool,
 }
 
 impl VaapiEncoder {
@@ -149,6 +151,8 @@ impl VaapiEncoder {
                 has_frame: false,
                 #[cfg(unix)]
                 dma_mmap_cache: HashMap::new(),
+                #[cfg(unix)]
+                direct_drm_unsupported: false,
             })
         }
     }
@@ -207,63 +211,68 @@ impl VaapiEncoder {
                     self.send_staged_frame(&mut packets, pts)?;
                 }
                 Frame::DmaBuf { width: dma_width, height: dma_height, format, modifier, fd, stride, offset } => {
-                    let mmap_size = (*stride as usize) * (*dma_height as usize);
+                    let mmap_size = (*offset as usize) + (*stride as usize) * (*dma_height as usize);
                     let mut mapped_direct = false;
 
-                    let desc = av_malloc(std::mem::size_of::<AVDRMFrameDescriptor>()) as *mut AVDRMFrameDescriptor;
-                    if !desc.is_null() {
-                        *desc = AVDRMFrameDescriptor {
-                            nb_objects: 1,
-                            objects: [AVDRMObjectDescriptor {
-                                fd: *fd,
-                                size: mmap_size,
-                                format_modifier: *modifier,
-                            }, std::mem::zeroed(), std::mem::zeroed(), std::mem::zeroed()],
-                            nb_layers: 1,
-                            layers: [AVDRMLayerDescriptor {
-                                format: *format,
-                                nb_planes: 1,
-                                planes: [AVDRMPlaneDescriptor {
-                                    object_index: 0,
-                                    offset: *offset as isize,
-                                    pitch: *stride as isize,
+                    #[cfg(unix)]
+                    if !self.direct_drm_unsupported {
+                        let desc = av_malloc(std::mem::size_of::<AVDRMFrameDescriptor>()) as *mut AVDRMFrameDescriptor;
+                        if !desc.is_null() {
+                            *desc = AVDRMFrameDescriptor {
+                                nb_objects: 1,
+                                objects: [AVDRMObjectDescriptor {
+                                    fd: *fd,
+                                    size: mmap_size,
+                                    format_modifier: *modifier,
                                 }, std::mem::zeroed(), std::mem::zeroed(), std::mem::zeroed()],
-                            }, std::mem::zeroed(), std::mem::zeroed(), std::mem::zeroed()],
-                        };
+                                nb_layers: 1,
+                                layers: [AVDRMLayerDescriptor {
+                                    format: *format,
+                                    nb_planes: 1,
+                                    planes: [AVDRMPlaneDescriptor {
+                                        object_index: 0,
+                                        offset: *offset as isize,
+                                        pitch: *stride as isize,
+                                    }, std::mem::zeroed(), std::mem::zeroed(), std::mem::zeroed()],
+                                }, std::mem::zeroed(), std::mem::zeroed(), std::mem::zeroed()],
+                            };
 
-                        let mut drm_frame = av_frame_alloc();
-                        (*drm_frame).format = AVPixelFormat::AV_PIX_FMT_DRM_PRIME as i32;
-                        (*drm_frame).width = *dma_width as i32;
-                        (*drm_frame).height = *dma_height as i32;
-                        (*drm_frame).data[0] = desc as *mut u8;
-                        (*drm_frame).buf[0] = av_buffer_create(
-                            desc as *mut u8,
-                            std::mem::size_of::<AVDRMFrameDescriptor>(),
-                            None,
-                            ptr::null_mut(),
-                            0,
-                        );
+                            let mut drm_frame = av_frame_alloc();
+                            (*drm_frame).format = AVPixelFormat::AV_PIX_FMT_DRM_PRIME as i32;
+                            (*drm_frame).width = *dma_width as i32;
+                            (*drm_frame).height = *dma_height as i32;
+                            (*drm_frame).data[0] = desc as *mut u8;
+                            (*drm_frame).buf[0] = av_buffer_create(
+                                desc as *mut u8,
+                                std::mem::size_of::<AVDRMFrameDescriptor>(),
+                                None,
+                                ptr::null_mut(),
+                                0,
+                            );
 
-                        let mut direct_hw = av_frame_alloc();
-                        (*direct_hw).format = AVPixelFormat::AV_PIX_FMT_VAAPI as i32;
-                        (*direct_hw).hw_frames_ctx = av_buffer_ref(self.hw_frames_ctx);
+                            let mut direct_hw = av_frame_alloc();
+                            (*direct_hw).format = AVPixelFormat::AV_PIX_FMT_VAAPI as i32;
+                            (*direct_hw).hw_frames_ctx = av_buffer_ref(self.hw_frames_ctx);
 
-                        if av_hwframe_map(direct_hw, drm_frame, 0) >= 0 {
-                            (*direct_hw).pts = pts;
+                            if av_hwframe_map(direct_hw, drm_frame, 0) >= 0 {
+                                (*direct_hw).pts = pts;
 
-                            if avcodec_send_frame(self.codec_ctx, direct_hw) >= 0 {
-                                let mut pkt = av_packet_alloc();
-                                while avcodec_receive_packet(self.codec_ctx, pkt) >= 0 {
-                                    let new_pkt = av_packet_alloc();
-                                    av_packet_move_ref(new_pkt, pkt);
-                                    packets.push(crate::ring::Packet::new(new_pkt));
+                                if avcodec_send_frame(self.codec_ctx, direct_hw) >= 0 {
+                                    let mut pkt = av_packet_alloc();
+                                    while avcodec_receive_packet(self.codec_ctx, pkt) >= 0 {
+                                        let new_pkt = av_packet_alloc();
+                                        av_packet_move_ref(new_pkt, pkt);
+                                        packets.push(crate::ring::Packet::new(new_pkt));
+                                    }
+                                    av_packet_free(&mut pkt);
+                                    mapped_direct = true;
                                 }
-                                av_packet_free(&mut pkt);
-                                mapped_direct = true;
+                            } else {
+                                self.direct_drm_unsupported = true;
                             }
+                            av_frame_free(&mut direct_hw);
+                            av_frame_free(&mut drm_frame);
                         }
-                        av_frame_free(&mut direct_hw);
-                        av_frame_free(&mut drm_frame);
                     }
 
                     if !mapped_direct {
@@ -278,7 +287,7 @@ impl VaapiEncoder {
                                         libc::PROT_READ,
                                         libc::MAP_SHARED,
                                         *fd,
-                                        *offset as libc::off_t,
+                                        0,
                                     );
                                     if p != libc::MAP_FAILED {
                                         if self.dma_mmap_cache.len() >= 16 {
@@ -295,7 +304,8 @@ impl VaapiEncoder {
                             };
 
                             if ptr != libc::MAP_FAILED {
-                                let src_slices: [*const u8; 4] = [ptr as *const u8, ptr::null(), ptr::null(), ptr::null()];
+                                let frame_ptr = (ptr as *const u8).add(*offset as usize);
+                                let src_slices: [*const u8; 4] = [frame_ptr, ptr::null(), ptr::null(), ptr::null()];
                                 let src_strides: [i32; 4] = [*stride as i32, 0, 0, 0];
                                 sws_scale(
                                     self.sws_ctx,

@@ -54,7 +54,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let (frame_tx, frame_rx) = bounded::<Frame>(5);
     let (cmd_tx, cmd_rx) = bounded::<Command>(32);
-    let (mux_tx, mux_rx) = bounded::<Vec<Packet>>(1);
+    let (mux_tx, mux_rx) = bounded::<Vec<Packet>>(4);
     let (audio_tx, audio_rx) = bounded::<Vec<f32>>(500);
 
     let is_recording_state = Arc::new(AtomicBool::new(false));
@@ -182,7 +182,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                             std::process::exit(0);
                                         },
                                         other => {
-                                            let _ = cmd_tx_ipc.try_send(other);
+                                            let _ = cmd_tx_ipc.send(other);
                                         }
                                     }
                                 }
@@ -277,10 +277,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
     };
 
-    let first_frame = match source.next_frame() {
+    let first_frame = match source.next_frame_timeout(std::time::Duration::from_millis(600)) {
         Ok(f) => f,
-        Err(e) => {
-            eprintln!("Initial frame capture error: {}. Using default frame.", e);
+        Err(_) => {
             Frame::Raw {
                 data: vec![0u8; 1920 * 1080 * 4],
                 width: 1920,
@@ -295,6 +294,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         #[cfg(target_os = "windows")]
         Frame::D3D11Texture { width, height, .. } => (*width, *height),
     };
+    println!("Capture stream active: resolution {}x{}", width, height);
 
     let _ = frame_tx.send(first_frame);
 
@@ -329,6 +329,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut encoder = VideoEncoder::new_with_params(width, height, config.record_bitrate_kbps, config.fps, &config.video_codec)
             .expect("Failed to init encoder");
         let codec_ctx_ptr = encoder.codec_ctx() as usize;
+        println!("Background recorder engine active and ready ({} fps, replay: {}).", config.fps, config.replay_enabled);
         
         let mut audio_encoder = if let Some((sr, ch)) = audio_info {
             scythe::encoder::AudioEncoder::new(sr as i32, ch as i32).ok()
@@ -340,7 +341,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let video_time_base = unsafe { (*(codec_ctx_ptr as *mut ffmpeg_next::ffi::AVCodecContext)).time_base };
         let audio_time_base = audio_codec_ctx_ptr.map(|p| unsafe { (*(p as *mut ffmpeg_next::ffi::AVCodecContext)).time_base });
 
-        let mut ring = HeapRb::<Packet>::new((config.replay_duration_sec * 120).max(120) as usize);
+        let mut ring = HeapRb::<Packet>::new((config.replay_duration_sec as usize) * (config.fps as usize + 60) + 120);
         let mut normal_muxer: Option<Muxer> = None;
         let mut normal_recording = false;
         let mut normal_waiting_keyframe = false;
@@ -433,10 +434,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 match unsafe { Muxer::new(&full_path, codec_ctx, audio_codec_ctx) } {
                     Ok(mut muxer) => {
                         for (_, p) in prepared {
-                            let _ = muxer.write_packet(&p);
+                            if let Err(e) = muxer.write_packet(&p) {
+                                eprintln!("Error writing packet to replay muxer: {}", e);
+                                break;
+                            }
                         }
-                        let _ = muxer.finalize();
-                        println!("Replay saved to {}!", full_path);
+                        if let Err(e) = muxer.finalize() {
+                            eprintln!("Error finalizing replay muxer: {}", e);
+                        } else {
+                            println!("Replay saved to {}!", full_path);
+                        }
                     }
                     Err(e) => {
                         eprintln!("Failed to create muxer for {}: {}", full_path, e);
@@ -470,7 +477,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                 replay_state_clone.store(config.replay_enabled, Ordering::SeqCst);
                                 audio_muted_clone.store(config.audio_mode == "muted", Ordering::SeqCst);
                                 println!("Daemon config reloaded! Audio mode: {}", config.audio_mode);
-                                let new_capacity = (config.replay_duration_sec * 120).max(120) as usize;
+                                let new_capacity = (config.replay_duration_sec as usize) * (config.fps as usize + 60) + 120;
                                 if ring.capacity().get() != new_capacity {
                                     ring = HeapRb::<Packet>::new(new_capacity);
                                     println!("Replay buffer resized to {} packets.", new_capacity);
@@ -499,7 +506,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                 if config.replay_enabled {
                                     let drain = ring.iter().cloned().collect::<Vec<_>>();
                                     println!("SaveReplay triggered: {} packets in ring buffer", drain.len());
-                                    let _ = mux_tx.try_send(drain);
+                                    if drain.is_empty() {
+                                        eprintln!("Warning: Replay buffer is empty (no frames encoded yet).");
+                                    } else {
+                                        let _ = mux_tx.send(drain);
+                                    }
+                                } else {
+                                    println!("SaveReplay requested but replay is disabled in daemon config.");
                                 }
                             },
                             Command::StartRecording => {
@@ -663,7 +676,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                             }
                         }
                     }
-                }
+            }
     }
 }
     });

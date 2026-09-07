@@ -3,6 +3,8 @@ use ashpd::desktop::screencast::{CursorMode, Screencast, SourceType};
 use ashpd::desktop::PersistMode;
 
 pub struct WaylandCapture {
+    _proxy: Screencast,
+    _session: ashpd::desktop::Session<Screencast>,
     stream: crate::capture::wayland_stream::PipeWireStream,
 }
 
@@ -57,12 +59,16 @@ impl WaylandCapture {
         
         let stream = crate::capture::wayland_stream::PipeWireStream::new(node_id, fd)?;
         
-        Ok(Self { stream })
+        Ok(Self { _proxy: proxy, _session: session, stream })
     }
 }
 
 impl FrameSource for WaylandCapture {
     fn next_frame(&mut self) -> Result<Frame, Box<dyn std::error::Error + Send + Sync>> {
         self.stream.next_frame()
+    }
+
+    fn next_frame_timeout(&mut self, timeout: std::time::Duration) -> Result<Frame, Box<dyn std::error::Error + Send + Sync>> {
+        self.stream.next_frame_timeout(timeout)
     }
 }
