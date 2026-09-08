@@ -23,9 +23,13 @@ fn get_daemon_cmd() -> std::process::Command {
         let fallback = path.join("vrec-daemon");
 
         if primary.exists() {
-            std::process::Command::new(primary)
+            let mut c = std::process::Command::new(primary);
+            c.current_dir(&path);
+            c
         } else if fallback.exists() {
-            std::process::Command::new(fallback)
+            let mut c = std::process::Command::new(fallback);
+            c.current_dir(&path);
+            c
         } else {
             #[cfg(target_os = "windows")]
             {
@@ -59,7 +63,11 @@ fn get_daemon_cmd() -> std::process::Command {
 fn get_ui_cmd() -> std::process::Command {
     #[allow(unused_mut)]
     let mut cmd = if let Ok(path) = std::env::current_exe() {
-        std::process::Command::new(path)
+        let mut c = std::process::Command::new(&path);
+        if let Some(parent) = path.parent() {
+            c.current_dir(parent);
+        }
+        c
     } else {
         #[cfg(target_os = "windows")]
         {
@@ -112,6 +120,21 @@ fn check_and_toggle_overlay() -> bool {
                     }
                 }
             }
+            #[cfg(windows)]
+            if let Ok(pid) = content.trim().parse::<u32>() {
+                if pid != std::process::id() {
+                    unsafe {
+                        use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+                        use windows::Win32::Foundation::CloseHandle;
+                        if let Ok(h) = OpenProcess(PROCESS_TERMINATE, false, pid) {
+                            let _ = TerminateProcess(h, 0);
+                            let _ = CloseHandle(h);
+                            let _ = std::fs::remove_file(&pid_path);
+                            return true;
+                        }
+                    }
+                }
+            }
         }
         let _ = std::fs::remove_file(&pid_path);
     }
@@ -133,6 +156,12 @@ fn ensure_daemon_running_async() {
             let _ = std::process::Command::new("systemctl")
                 .args(["--user", "start", "xdg-desktop-portal-hyprland"])
                 .status();
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if scythe::ipc::is_daemon_running() {
+            return;
         }
     }
     let _ = get_daemon_cmd()
@@ -173,7 +202,7 @@ fn ensure_hotkeys_running() {
             use windows::Win32::Foundation::CloseHandle;
             use windows::Win32::System::Threading::{OpenMutexW, SYNCHRONIZATION_ACCESS_RIGHTS};
 
-            if let Ok(handle) = OpenMutexW(SYNCHRONIZATION_ACCESS_RIGHTS(0x00100000), false, windows::core::w!("Global\\scythe_hotkeys_single_instance")) {
+            if let Ok(handle) = OpenMutexW(SYNCHRONIZATION_ACCESS_RIGHTS(0x00100000), false, windows::core::w!("Local\\scythe_hotkeys_single_instance")) {
                 let _ = CloseHandle(handle);
                 return;
             }
@@ -387,7 +416,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         use windows::Win32::Foundation::{GetLastError, WIN32_ERROR};
         use windows::Win32::System::Threading::CreateMutexW;
 
-        let handle = CreateMutexW(None, true, windows::core::w!("Global\\scythe_hotkeys_single_instance"));
+        let handle = CreateMutexW(None, true, windows::core::w!("Local\\scythe_hotkeys_single_instance"));
         if GetLastError() == WIN32_ERROR(183) {
             return Ok(());
         }

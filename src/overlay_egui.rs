@@ -221,7 +221,7 @@ fn open_folder(path: &std::path::Path) {
             if is_file {
                 let p_str = p.to_string_lossy().replace('/', "\\");
                 let _ = std::process::Command::new("explorer.exe")
-                    .arg(format!("/select,\"{}\"", p_str))
+                    .arg(format!("/select,{}", p_str))
                     .creation_flags(0x08000000)
                     .spawn();
             } else {
@@ -254,9 +254,13 @@ fn pick_folder(current_dir: &str, tx: Sender<String>, is_active: Arc<AtomicBool>
             use std::os::windows::process::CommandExt;
             let clean_cur = cur.replace('/', "\\").replace('\'', "''");
             let script = format!(
-                "$s = (New-Object -ComObject Shell.Application).BrowseForFolder(0, 'Select Recordings Directory', 0, '{}'); \
-                 if ($s) {{ Write-Output $s.Self.Path }}",
-                clean_cur
+                "[System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms') | Out-Null; \
+                 $f = New-Object System.Windows.Forms.FolderBrowserDialog; \
+                 $f.Description = 'Select Recordings Directory'; \
+                 $f.UseDescriptionForTitle = $true; \
+                 if (Test-Path '{}') {{ $f.SelectedPath = '{}' }}; \
+                 if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {{ Write-Output $f.SelectedPath }}",
+                clean_cur, clean_cur
             );
             let mut cmd = std::process::Command::new("powershell.exe");
             cmd.args(["-NoProfile", "-STA", "-Command", &script]);
@@ -587,7 +591,11 @@ fn render_action_card(
     sub_text: &str,
     accent: Color32,
 ) -> bool {
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), egui::Sense::click());
+    let (raw_rect, response) = ui.allocate_exact_size(Vec2::new(width, height), egui::Sense::click());
+    let rect = egui::Rect::from_min_size(
+        egui::pos2(raw_rect.left().round(), raw_rect.top().round()),
+        Vec2::new(width.round(), height.round()),
+    );
     let hovered = response.hovered();
 
     let bg = if dropdown_open {
@@ -652,23 +660,27 @@ fn render_dropdown_menu(
     add_contents: impl FnOnce(&mut egui::Ui),
 ) {
     ui.add_space(6.0);
-    let inner_w = card_width - 2.0;
     egui::Frame::NONE
-        .fill(Color32::from_rgba_unmultiplied(12, 13, 17, 225))
+        .fill(Color32::from_rgba_unmultiplied(12, 13, 17, 235))
         .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 180)))
         .corner_radius(CornerRadius::ZERO)
         .inner_margin(Margin::ZERO)
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing = Vec2::ZERO;
-            ui.set_min_width(inner_w);
-            ui.set_max_width(inner_w);
+            ui.set_width(card_width);
+            ui.set_min_width(card_width);
+            ui.set_max_width(card_width);
             add_contents(ui);
         });
 }
 
 // Sleek Squared Dropdown Action Menu Item (Completely fills container, zero bottom dead space)
 fn render_menu_item(ui: &mut egui::Ui, label: &str, accent: Color32, is_last: bool) -> bool {
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 35.0), egui::Sense::click());
+    let (raw_rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 35.0), egui::Sense::click());
+    let rect = egui::Rect::from_min_size(
+        egui::pos2(raw_rect.left().round(), raw_rect.top().round()),
+        Vec2::new(raw_rect.width().round(), 35.0),
+    );
     let hovered = response.hovered();
 
     let bg = if hovered {
@@ -759,6 +771,7 @@ pub struct ScytheOverlayApp {
     bitrate_input_str: String,
     replay_sec_input_str: String,
     panel_rect: egui::Rect,
+    frame_count: u32,
     update_status: Arc<std::sync::Mutex<crate::updater::UpdateStatus>>,
     update_dismissed: bool,
     auto_check_updates: bool,
@@ -862,6 +875,7 @@ impl ScytheOverlayApp {
             bitrate_input_str,
             replay_sec_input_str,
             panel_rect: egui::Rect::NOTHING,
+            frame_count: 0,
             update_status,
             update_dismissed: false,
             auto_check_updates,
@@ -997,6 +1011,8 @@ impl ScytheOverlayApp {
                 }
 
                 ui.horizontal_top(|ui| {
+                    ui.spacing_mut().item_spacing = Vec2::new(card_gap, 0.0);
+
                     // =========================================================================
                     // CARD 1: INSTANT REPLAY
                     // =========================================================================
@@ -1037,7 +1053,7 @@ impl ScytheOverlayApp {
                                     self.status.is_replay_active = cfg.replay_enabled;
                                     self.replay_dropdown_open = false;
                                 }
-                                if render_menu_item(ui, "Save Replay", accent, is_replay_active) {
+                                if render_menu_item(ui, "Save Replay", accent, true) {
                                     if is_replay_active {
                                         async_send_command(Command::SaveReplay);
                                         self.show_hud_notification("INSTANT REPLAY", "Saved to Videos", crate::overlay::ToastIcon::Replay);
@@ -1049,8 +1065,6 @@ impl ScytheOverlayApp {
                             });
                         }
                     });
-
-                    ui.add_space(card_gap);
 
                     // =========================================================================
                     // CARD 2: RECORD
@@ -1103,8 +1117,6 @@ impl ScytheOverlayApp {
                             });
                         }
                     });
-
-                    ui.add_space(card_gap);
 
                     // =========================================================================
                     // CARD 3: SETTINGS
@@ -2148,8 +2160,9 @@ impl eframe::App for ScytheOverlayApp {
             ctx.request_repaint_after(Duration::from_millis(16));
         }
 
+        self.frame_count += 1;
         // Auto-position, DWM transparency, and size to monitor on launch
-        if !self.initial_pos_set {
+        if !self.initial_pos_set && self.frame_count >= 2 {
             if let Some(monitor_size) = ctx.input(|i| i.viewport().monitor_size) {
                 if monitor_size.x > 100.0 && monitor_size.y > 100.0 {
                     ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(0.0, 0.0)));
@@ -2282,31 +2295,97 @@ impl eframe::App for ScytheOverlayApp {
 }
 
 #[cfg(target_os = "windows")]
-pub fn apply_windows_transparency(_title: &str) {
+pub fn apply_windows_transparency(title: &str) {
     unsafe {
-        use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetWindowThreadProcessId};
+        use windows::Win32::UI::WindowsAndMessaging::{
+            EnumWindows, GetWindowThreadProcessId, SetClassLongPtrW, GCLP_HBRBACKGROUND,
+        };
         use windows::Win32::System::Threading::GetCurrentProcessId;
         use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
         use windows::Win32::Graphics::Dwm::DwmExtendFrameIntoClientArea;
         use windows::Win32::UI::Controls::MARGINS;
+        use windows::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
 
         let my_pid = GetCurrentProcessId();
+        let is_overlay = title == "Scythe";
+
         unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
-            let my_pid = lparam.0 as u32;
-            let mut proc_id = 0u32;
-            GetWindowThreadProcessId(hwnd, Some(&mut proc_id));
-            if proc_id == my_pid {
-                let margins = MARGINS {
-                    cxLeftWidth: -1,
-                    cxRightWidth: -1,
-                    cyTopHeight: -1,
-                    cyBottomHeight: -1,
+            unsafe {
+                let (my_pid, is_overlay) = {
+                    let ptr = lparam.0 as *const (u32, bool);
+                    *ptr
                 };
-                let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
+                let mut proc_id = 0u32;
+                GetWindowThreadProcessId(hwnd, Some(&mut proc_id));
+                if proc_id == my_pid {
+                    // 1. Set window class background brush to 0 (NULL) to prevent GDI white flash
+                    #[cfg(target_pointer_width = "64")]
+                    let _ = SetClassLongPtrW(hwnd, GCLP_HBRBACKGROUND, 0);
+
+                    // 2. Extend DWM frame margins into the client area
+                    let margins = MARGINS {
+                        cxLeftWidth: -1,
+                        cxRightWidth: -1,
+                        cyTopHeight: -1,
+                        cyBottomHeight: -1,
+                    };
+                    let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
+
+                    // 3. Set AccentPolicy via SetWindowCompositionAttribute for true transparency/blur
+                    #[repr(C)]
+                    struct AccentPolicy {
+                        accent_state: u32,
+                        accent_flags: u32,
+                        gradient_color: u32,
+                        animation_id: u32,
+                    }
+
+                    #[repr(C)]
+                    struct WindowCompositionAttributeData {
+                        attribute: u32, // WCA_ACCENT_POLICY = 19
+                        data: *mut AccentPolicy,
+                        size_of_data: usize,
+                    }
+
+                    type SetWindowCompositionAttributeFn =
+                        unsafe extern "system" fn(HWND, *mut WindowCompositionAttributeData) -> BOOL;
+
+                    if let Ok(user32) = GetModuleHandleA(windows::core::s!("user32.dll")) {
+                        if let Some(proc) = GetProcAddress(user32, windows::core::s!("SetWindowCompositionAttribute")) {
+                            let set_wca: SetWindowCompositionAttributeFn = std::mem::transmute(proc);
+                            
+                            let mut policy = if is_overlay {
+                                AccentPolicy {
+                                    accent_state: 3, // ACCENT_ENABLE_BLURBEHIND
+                                    accent_flags: 2,
+                                    gradient_color: 0x99101014, // Translucent dark obsidian tint
+                                    animation_id: 0,
+                                }
+                            } else {
+                                AccentPolicy {
+                                    accent_state: 2, // ACCENT_ENABLE_TRANSPARENTGRADIENT
+                                    accent_flags: 2,
+                                    gradient_color: 0x00000000, // Fully transparent
+                                    animation_id: 0,
+                                }
+                            };
+
+                            let mut data = WindowCompositionAttributeData {
+                                attribute: 19,
+                                data: &mut policy,
+                                size_of_data: std::mem::size_of::<AccentPolicy>(),
+                            };
+
+                            let _ = set_wca(hwnd, &mut data);
+                        }
+                    }
+                }
+                BOOL(1)
             }
-            BOOL(1)
         }
-        let _ = EnumWindows(Some(enum_proc), LPARAM(my_pid as isize));
+
+        let ctx_data = (my_pid, is_overlay);
+        let _ = EnumWindows(Some(enum_proc), LPARAM(&ctx_data as *const _ as isize));
     }
 }
 
@@ -2419,6 +2498,13 @@ impl eframe::App for ShadowPlayToastApp {
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if !self.initial_setup {
+            if let Some(mon_size) = ctx.input(|i| i.viewport().monitor_size) {
+                let toast_w = 340.0;
+                let target_x = (mon_size.x - toast_w - 28.0).max(10.0);
+                let target_y = 28.0;
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(toast_w, 64.0)));
+                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(target_x, target_y)));
+            }
             #[cfg(target_os = "windows")]
             apply_windows_transparency("Scythe Notification");
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
@@ -2430,7 +2516,7 @@ impl eframe::App for ShadowPlayToastApp {
         if elapsed >= total_dur {
             crate::ipc::clean_toast_pid();
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            std::process::exit(0);
+            return;
         }
         ctx.request_repaint_after(Duration::from_millis(16));
 
@@ -2605,7 +2691,7 @@ pub fn run_egui_toast(title: &str, subtitle: &str, icon: crate::overlay::ToastIc
     // Watchdog thread to guarantee exit after duration
     let watchdog_pid_path = toast_pid_path.clone();
     std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(3200));
+        std::thread::sleep(Duration::from_millis(5000));
         let _ = std::fs::remove_file(watchdog_pid_path);
         std::process::exit(0);
     });

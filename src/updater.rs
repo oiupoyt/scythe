@@ -46,16 +46,20 @@ pub fn check_for_updates() -> Option<ReleaseInfo> {
     let url = format!("https://api.github.com/repos/{}/releases/latest", GITHUB_REPO);
 
     // Run curl with a 4-second timeout to avoid blocking
-    let output = std::process::Command::new("curl")
-        .args([
-            "-s",
-            "-H", "User-Agent: scythe-updater",
-            "-H", "Accept: application/vnd.github.v3+json",
-            "--max-time", "4",
-            &url,
-        ])
-        .output()
-        .ok()?;
+    let mut cmd = std::process::Command::new("curl");
+    cmd.args([
+        "-s",
+        "-H", "User-Agent: scythe-updater",
+        "-H", "Accept: application/vnd.github.v3+json",
+        "--max-time", "4",
+        &url,
+    ]);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    let output = cmd.output().ok()?;
 
     if !output.status.success() {
         return None;

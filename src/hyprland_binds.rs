@@ -208,6 +208,7 @@ pub fn register_hyprland_binds(config: &ScytheConfig) {
     }
 }
 
+#[cfg(unix)]
 pub fn register_hyprland_binds_async(config: &ScytheConfig) {
     let cfg = config.clone();
     std::thread::spawn(move || {
@@ -215,6 +216,7 @@ pub fn register_hyprland_binds_async(config: &ScytheConfig) {
     });
 }
 
+#[cfg(unix)]
 pub fn unbind_hotkey_async(hotkey: &str) {
     let hk = hotkey.to_string();
     std::thread::spawn(move || {

@@ -65,6 +65,31 @@ pub fn get_legacy_socket_path() -> String {
     format!("{}/vrec.sock", runtime_dir)
 }
 
+#[cfg(windows)]
+pub fn get_ipc_port_path() -> std::path::PathBuf {
+    std::env::temp_dir().join("scythe-ipc.port")
+}
+
+#[cfg(windows)]
+pub fn read_active_ipc_port() -> u16 {
+    if let Ok(content) = std::fs::read_to_string(get_ipc_port_path()) {
+        if let Ok(port) = content.trim().parse::<u16>() {
+            return port;
+        }
+    }
+    let legacy = std::env::temp_dir().join("vrec-ipc.port");
+    if let Ok(content) = std::fs::read_to_string(legacy) {
+        if let Ok(port) = content.trim().parse::<u16>() {
+            return port;
+        }
+    }
+    42069
+}
+
+pub fn is_daemon_running() -> bool {
+    query_status().is_ok()
+}
+
 pub fn send_command(cmd: Command) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     use std::io::Write;
     use std::time::Duration;
@@ -101,23 +126,50 @@ pub fn send_command(cmd: Command) -> Result<(), Box<dyn std::error::Error + Send
         #[cfg(windows)]
         {
             use std::net::{SocketAddr, TcpStream};
-            let addr: SocketAddr = "127.0.0.1:42069".parse().unwrap();
-            match TcpStream::connect_timeout(&addr, Duration::from_millis(300)) {
-                Ok(mut stream) => {
-                    let _ = stream.set_write_timeout(Some(Duration::from_millis(600)));
-                    let _ = stream.set_read_timeout(Some(Duration::from_millis(600)));
-                    if stream.write_all(&len_buf).is_ok() && stream.write_all(&payload).is_ok() {
-                        return Ok(());
+            let active_port = read_active_ipc_port();
+            let candidate_ports = [active_port, 42069, 42070, 42071, 42072];
+            for &port in &candidate_ports {
+                if let Ok(addr) = format!("127.0.0.1:{}", port).parse::<SocketAddr>() {
+                    if let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(150)) {
+                        let _ = stream.set_write_timeout(Some(Duration::from_millis(600)));
+                        let _ = stream.set_read_timeout(Some(Duration::from_millis(600)));
+                        if stream.write_all(&len_buf).is_ok() && stream.write_all(&payload).is_ok() {
+                            return Ok(());
+                        }
                     }
                 }
-                Err(e) => {
-                    last_err = Some(Box::new(e) as Box<dyn std::error::Error + Send + Sync>);
-                }
             }
+            last_err = Some("Could not connect to daemon on any TCP IPC port".into());
         }
     }
 
     Err(last_err.unwrap_or_else(|| "Failed to communicate with scythe-daemon".into()))
+}
+
+#[cfg(windows)]
+pub fn query_status_port(port: u16) -> Result<DaemonStatus, Box<dyn std::error::Error + Send + Sync>> {
+    use std::io::{Read, Write};
+    use std::time::Duration;
+    use std::net::{SocketAddr, TcpStream};
+
+    let payload = serde_json::to_vec(&Command::GetStatus)?;
+    let len_buf = (payload.len() as u32).to_le_bytes();
+
+    let addr: SocketAddr = format!("127.0.0.1:{}", port).parse()?;
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(200))?;
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+
+    stream.write_all(&len_buf)?;
+    stream.write_all(&payload)?;
+
+    let mut resp_len_buf = [0u8; 4];
+    stream.read_exact(&mut resp_len_buf)?;
+    let resp_len = u32::from_le_bytes(resp_len_buf) as usize;
+    let mut resp_payload = vec![0u8; resp_len];
+    stream.read_exact(&mut resp_payload)?;
+    let status = serde_json::from_slice::<DaemonStatus>(&resp_payload)?;
+    Ok(status)
 }
 
 pub fn query_status() -> Result<DaemonStatus, Box<dyn std::error::Error + Send + Sync>> {
@@ -144,8 +196,18 @@ pub fn query_status() -> Result<DaemonStatus, Box<dyn std::error::Error + Send +
         #[cfg(windows)]
         let stream_res = {
             use std::net::{SocketAddr, TcpStream};
-            let addr: SocketAddr = "127.0.0.1:42069".parse().unwrap();
-            TcpStream::connect_timeout(&addr, Duration::from_millis(300))
+            let active_port = read_active_ipc_port();
+            let candidate_ports = [active_port, 42069, 42070, 42071, 42072];
+            let mut conn = None;
+            for &port in &candidate_ports {
+                if let Ok(addr) = format!("127.0.0.1:{}", port).parse::<SocketAddr>() {
+                    if let Ok(stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(150)) {
+                        conn = Some(stream);
+                        break;
+                    }
+                }
+            }
+            conn.ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotConnected, "No active daemon port reachable"))
         };
 
         match stream_res {

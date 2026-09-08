@@ -11,9 +11,12 @@ Section
   ; Terminate any running instances so locked executables and DLLs can be updated cleanly
   nsExec::Exec 'cmd.exe /C taskkill /F /IM scythe-ui.exe /T >nul 2>&1'
   nsExec::Exec 'cmd.exe /C taskkill /F /IM scythe-daemon.exe /T >nul 2>&1'
-  Sleep 500
+  nsExec::Exec 'cmd.exe /C taskkill /F /IM vrec-ui.exe /T >nul 2>&1'
+  nsExec::Exec 'cmd.exe /C taskkill /F /IM vrec-daemon.exe /T >nul 2>&1'
+  nsExec::Exec 'powershell -NoProfile -NonInteractive -Command "Get-Process -Name scythe-ui, scythe-daemon, vrec-ui, vrec-daemon -ErrorAction SilentlyContinue | Stop-Process -Force"'
+  Sleep 1500
 
-  SetOverwrite on
+  SetOverwrite try
   ; Extract self-contained binaries and all runtime DLLs directly to user app data
   SetOutPath "$LOCALAPPDATA\scythe"
   File /r "..\..\dist\bundle\*.*"

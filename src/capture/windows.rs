@@ -18,6 +18,7 @@ pub struct WindowsCapture {
     staging_texture: ID3D11Texture2D,
     pub width: u32,
     pub height: u32,
+    pub last_stride: u32,
     last_frame: Vec<u8>,
 }
 
@@ -69,7 +70,12 @@ impl WindowsCapture {
                 D3D_DRIVER_TYPE_UNKNOWN,
                 HMODULE(std::ptr::null_mut()),
                 D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-                Some(&[D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0]),
+                Some(&[
+                    D3D_FEATURE_LEVEL_11_1,
+                    D3D_FEATURE_LEVEL_11_0,
+                    D3D_FEATURE_LEVEL_10_1,
+                    D3D_FEATURE_LEVEL_10_0,
+                ]),
                 D3D11_SDK_VERSION,
                 Some(&mut device),
                 Some(&mut feature_level),
@@ -113,6 +119,7 @@ impl WindowsCapture {
                 staging_texture,
                 width,
                 height,
+                last_stride: width * 4,
                 last_frame: Vec::new(),
             })
         }
@@ -127,6 +134,32 @@ impl WindowsCapture {
                 if let Ok(output1) = output.cast::<IDXGIOutput1>() {
                     if let Ok(dup) = output1.DuplicateOutput(&self.device) {
                         self.duplication = dup;
+                        if let Ok(desc) = output1.GetDesc() {
+                            let new_w = (desc.DesktopCoordinates.right - desc.DesktopCoordinates.left).unsigned_abs();
+                            let new_h = (desc.DesktopCoordinates.bottom - desc.DesktopCoordinates.top).unsigned_abs();
+                            if new_w != self.width || new_h != self.height {
+                                self.width = new_w;
+                                self.height = new_h;
+                                self.last_stride = new_w * 4;
+                                let staging_desc = D3D11_TEXTURE2D_DESC {
+                                    Width: new_w,
+                                    Height: new_h,
+                                    MipLevels: 1,
+                                    ArraySize: 1,
+                                    Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                                    SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                                    Usage: D3D11_USAGE_STAGING,
+                                    BindFlags: 0,
+                                    CPUAccessFlags: D3D11_CPU_ACCESS_READ.0 as u32,
+                                    MiscFlags: 0,
+                                };
+                                let mut new_staging: Option<ID3D11Texture2D> = None;
+                                if self.device.CreateTexture2D(&staging_desc, None, Some(&mut new_staging)).is_ok()
+                                    && let Some(st) = new_staging {
+                                        self.staging_texture = st;
+                                }
+                            }
+                        }
                         return Ok(());
                     }
                 }
@@ -145,7 +178,7 @@ impl FrameSource for WindowsCapture {
             let mut desktop_resource: Option<IDXGIResource> = None;
 
             for _ in 0..5 {
-                match self.duplication.AcquireNextFrame(100, &mut frame_info, &mut desktop_resource) {
+                match self.duplication.AcquireNextFrame(16, &mut frame_info, &mut desktop_resource) {
                     Ok(()) => {
                         if let Some(resource) = desktop_resource {
                             let texture: ID3D11Texture2D = resource.cast()?;
@@ -160,6 +193,7 @@ impl FrameSource for WindowsCapture {
                             self.context.Map(&self.staging_texture, 0, D3D11_MAP_READ, 0, Some(&mut mapped))?;
 
                             let stride = mapped.RowPitch as usize;
+                            self.last_stride = mapped.RowPitch;
                             let total_bytes = stride * self.height as usize;
                             if self.last_frame.len() != total_bytes {
                                 self.last_frame.resize(total_bytes, 0);
@@ -185,19 +219,40 @@ impl FrameSource for WindowsCapture {
                             return Ok(Frame::Raw {
                                 width: self.width,
                                 height: self.height,
-                                stride: self.width * 4,
+                                stride: self.last_stride,
                                 data: self.last_frame.clone(),
                             });
                         }
                         std::thread::sleep(std::time::Duration::from_millis(8));
                     }
-                    Err(e) if e.code() == DXGI_ERROR_ACCESS_LOST => {
-                        println!("DXGI access lost (display mode or fullscreen switch), reacquiring...");
+                    Err(e) if e.code() == DXGI_ERROR_ACCESS_LOST
+                        || e.code() == DXGI_ERROR_ACCESS_DENIED
+                        || e.code() == DXGI_ERROR_INVALID_CALL => {
+                        let _ = self.duplication.ReleaseFrame();
                         let _ = self.reinit_duplication();
-                        std::thread::sleep(std::time::Duration::from_millis(50));
+                        if !self.last_frame.is_empty() {
+                            return Ok(Frame::Raw {
+                                width: self.width,
+                                height: self.height,
+                                stride: self.last_stride,
+                                data: self.last_frame.clone(),
+                            });
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(30));
                         continue;
                     }
                     Err(e) => {
+                        let _ = self.duplication.ReleaseFrame();
+                        let _ = self.reinit_duplication();
+                        if !self.last_frame.is_empty() {
+                            return Ok(Frame::Raw {
+                                width: self.width,
+                                height: self.height,
+                                stride: self.last_stride,
+                                data: self.last_frame.clone(),
+                            });
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(16));
                         return Err(Box::new(e));
                     }
                 }
@@ -207,15 +262,15 @@ impl FrameSource for WindowsCapture {
                 Ok(Frame::Raw {
                     width: self.width,
                     height: self.height,
-                    stride: self.width * 4,
+                    stride: self.last_stride,
                     data: self.last_frame.clone(),
                 })
             } else {
                 Ok(Frame::Raw {
                     width: self.width,
                     height: self.height,
-                    stride: self.width * 4,
-                    data: vec![0u8; (self.width * self.height * 4) as usize],
+                    stride: self.last_stride,
+                    data: vec![0u8; (self.last_stride * self.height) as usize],
                 })
             }
         }

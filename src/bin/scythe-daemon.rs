@@ -74,18 +74,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     #[cfg(windows)]
     let listener = {
-        match std::net::TcpListener::bind("127.0.0.1:42069") {
-            Ok(l) => {
-                println!("Daemon listening on TCP IPC: 127.0.0.1:42069");
+        let ports = [42069, 42070, 42071, 42072];
+        let mut bound = None;
+        for &port in &ports {
+            match std::net::TcpListener::bind(format!("127.0.0.1:{}", port)) {
+                Ok(l) => {
+                    bound = Some((l, port));
+                    break;
+                }
+                Err(_) => {
+                    if scythe::ipc::query_status_port(port).is_ok() {
+                        println!("Another instance of scythe-daemon is already running on port {}. Exiting cleanly.", port);
+                        return Ok(());
+                    }
+                }
+            }
+        }
+        match bound {
+            Some((l, p)) => {
+                println!("Daemon listening on TCP IPC: 127.0.0.1:{}", p);
+                let _ = std::fs::write(scythe::ipc::get_ipc_port_path(), p.to_string());
+                let _ = std::fs::write(std::env::temp_dir().join("vrec-ipc.port"), p.to_string());
                 l
             }
-            Err(_e) => {
-                if scythe::ipc::query_status().is_ok() {
-                    println!("Another instance of scythe-daemon is already running. Exiting cleanly.");
-                    return Ok(());
-                }
-                std::thread::sleep(std::time::Duration::from_millis(500));
-                std::net::TcpListener::bind("127.0.0.1:42069")?
+            None => {
+                return Err("Failed to bind any TCP IPC port (all ports 42069-42072 in use)".into());
             }
         }
     };
@@ -307,14 +320,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let capture_tx = frame_tx.clone();
     thread::spawn(move || {
+        let mut err_count = 0;
         loop {
             match source.next_frame() {
                 Ok(frame) => {
+                    err_count = 0;
                     let _ = capture_tx.try_send(frame);
                 }
                 Err(e) => {
-                    eprintln!("Capture error: {}", e);
-                    break;
+                    err_count += 1;
+                    if err_count % 60 == 1 {
+                        eprintln!("Capture transient error: {}", e);
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(16));
                 }
             }
         }
@@ -707,5 +725,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     });
 
     let _ = recorder_handle.join();
+    #[cfg(windows)]
+    let _ = std::fs::remove_file(scythe::ipc::get_ipc_port_path());
     Ok(())
 }

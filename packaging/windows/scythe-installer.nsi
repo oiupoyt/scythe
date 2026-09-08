@@ -31,9 +31,10 @@ Section "Scythe" SecMain
   nsExec::Exec 'cmd.exe /C taskkill /F /IM scythe-daemon.exe /T >nul 2>&1'
   nsExec::Exec 'cmd.exe /C taskkill /F /IM vrec-ui.exe /T >nul 2>&1'
   nsExec::Exec 'cmd.exe /C taskkill /F /IM vrec-daemon.exe /T >nul 2>&1'
-  Sleep 800
+  nsExec::Exec 'powershell -NoProfile -NonInteractive -Command "Get-Process -Name scythe-ui, scythe-daemon, vrec-ui, vrec-daemon -ErrorAction SilentlyContinue | Stop-Process -Force"'
+  Sleep 1500
 
-  SetOverwrite on
+  SetOverwrite try
   SetOutPath "$INSTDIR"
   File /r "..\..\dist\bundle\*.*"
 
@@ -55,7 +56,8 @@ Section "Uninstall"
   nsExec::Exec 'cmd.exe /C taskkill /F /IM scythe-daemon.exe /T >nul 2>&1'
   nsExec::Exec 'cmd.exe /C taskkill /F /IM vrec-ui.exe /T >nul 2>&1'
   nsExec::Exec 'cmd.exe /C taskkill /F /IM vrec-daemon.exe /T >nul 2>&1'
-  Sleep 800
+  nsExec::Exec 'powershell -NoProfile -NonInteractive -Command "Get-Process -Name scythe-ui, scythe-daemon, vrec-ui, vrec-daemon -ErrorAction SilentlyContinue | Stop-Process -Force"'
+  Sleep 1500
 
   Delete "$DESKTOP\scythe.lnk"
   RMDir /r "$SMPROGRAMS\scythe"

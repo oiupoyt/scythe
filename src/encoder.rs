@@ -211,6 +211,7 @@ impl VaapiEncoder {
                     self.send_staged_frame(&mut packets, pts)?;
                 }
                 Frame::DmaBuf { width: dma_width, height: dma_height, format, modifier, fd, stride, offset } => {
+                    #[allow(unused_variables)]
                     let mmap_size = (*offset as usize) + (*stride as usize) * (*dma_height as usize);
                     let mut mapped_direct = false;
 
@@ -382,6 +383,7 @@ pub struct WindowsHwEncoder {
     encoder_name: String,
     sws_ctx: *mut SwsContext,
     sw_frame: *mut AVFrame,
+    pub has_frame: bool,
 }
 
 #[cfg(target_os = "windows")]
@@ -418,75 +420,90 @@ impl WindowsHwEncoder {
                 ],
             };
 
-            let mut selected_codec: *const AVCodec = ptr::null();
+            let mut opened_codec_ctx: *mut AVCodecContext = ptr::null_mut();
             let mut selected_desc = String::new();
 
             for (name, desc) in candidates {
                 let c = avcodec_find_encoder_by_name(name.as_ptr());
-                if !c.is_null() {
-                    selected_codec = c;
+                if c.is_null() {
+                    continue;
+                }
+
+                let ctx = avcodec_alloc_context3(c);
+                if ctx.is_null() {
+                    continue;
+                }
+
+                (*ctx).width = width as i32;
+                (*ctx).height = height as i32;
+                (*ctx).time_base = AVRational { num: 1, den: fps };
+                (*ctx).framerate = AVRational { num: fps, den: 1 };
+                (*ctx).gop_size = fps;
+                (*ctx).max_b_frames = 0;
+
+                let rate = (bitrate_kbps as i64) * 1000;
+                (*ctx).bit_rate = rate;
+                (*ctx).rc_max_rate = rate * 3 / 2;
+                (*ctx).rc_buffer_size = (rate / 2) as i32;
+                (*ctx).qmin = 16;
+                (*ctx).qmax = 28;
+                let codec_id = (*c).id;
+                (*ctx).profile = if codec_id == AVCodecID::AV_CODEC_ID_HEVC {
+                    FF_PROFILE_HEVC_MAIN
+                } else if codec_id == AVCodecID::AV_CODEC_ID_AV1 {
+                    FF_PROFILE_UNKNOWN
+                } else {
+                    FF_PROFILE_H264_HIGH
+                };
+                (*ctx).flags |= AV_CODEC_FLAG_GLOBAL_HEADER as libc::c_int;
+
+                if desc.contains("NVENC") {
+                    (*ctx).pix_fmt = AVPixelFormat::AV_PIX_FMT_NV12;
+                    let _ = av_opt_set((*ctx).priv_data, c"preset".as_ptr(), c"p1".as_ptr(), 0);
+                    let _ = av_opt_set((*ctx).priv_data, c"tune".as_ptr(), c"ull".as_ptr(), 0);
+                    let _ = av_opt_set((*ctx).priv_data, c"forced-idr".as_ptr(), c"1".as_ptr(), 0);
+                } else if desc.contains("AMF") {
+                    (*ctx).pix_fmt = AVPixelFormat::AV_PIX_FMT_NV12;
+                    let _ = av_opt_set((*ctx).priv_data, c"usage".as_ptr(), c"ultralowlatency".as_ptr(), 0);
+                } else if desc.contains("QuickSync") {
+                    (*ctx).pix_fmt = AVPixelFormat::AV_PIX_FMT_NV12;
+                    let _ = av_opt_set((*ctx).priv_data, c"preset".as_ptr(), c"veryfast".as_ptr(), 0);
+                } else {
+                    (*ctx).pix_fmt = AVPixelFormat::AV_PIX_FMT_YUV420P;
+                    let _ = av_opt_set((*ctx).priv_data, c"preset".as_ptr(), c"ultrafast".as_ptr(), 0);
+                    let _ = av_opt_set((*ctx).priv_data, c"tune".as_ptr(), c"zerolatency".as_ptr(), 0);
+                }
+
+                let ret = avcodec_open2(ctx, c, ptr::null_mut());
+                if ret >= 0 {
+                    println!("Successfully initialized Windows video encoder: {}", desc);
+                    opened_codec_ctx = ctx;
                     selected_desc = desc.to_string();
-                    println!("Auto-detected Windows encoder: {}", desc);
                     break;
+                } else {
+                    let mut tmp = ctx;
+                    avcodec_free_context(&mut tmp);
                 }
             }
 
-            if selected_codec.is_null() {
-                return Err("No compatible H.264 video encoder found on this system".into());
+            if opened_codec_ctx.is_null() {
+                return Err("Failed to open any compatible video encoder on this system".into());
             }
 
-            let codec_ctx = avcodec_alloc_context3(selected_codec);
-            if codec_ctx.is_null() {
-                return Err("Failed to allocate codec context".into());
+            let codec_ctx = opened_codec_ctx;
+            let mut sw_frame = av_frame_alloc();
+            if sw_frame.is_null() {
+                avcodec_free_context(&mut opened_codec_ctx);
+                return Err("Failed to allocate frame for encoder".into());
             }
-
-            (*codec_ctx).width = width as i32;
-            (*codec_ctx).height = height as i32;
-            (*codec_ctx).time_base = AVRational { num: 1, den: fps };
-            (*codec_ctx).framerate = AVRational { num: fps, den: 1 };
-            (*codec_ctx).gop_size = fps;
-            (*codec_ctx).max_b_frames = 0;
-
-            let rate = (bitrate_kbps as i64) * 1000;
-            (*codec_ctx).bit_rate = rate;
-            (*codec_ctx).rc_max_rate = rate * 3 / 2;
-            (*codec_ctx).rc_buffer_size = (rate / 2) as i32;
-            (*codec_ctx).qmin = 16;
-            (*codec_ctx).qmax = 28;
-            (*codec_ctx).profile = match codec_pref.to_lowercase().as_str() {
-                "hevc" | "h265" => FF_PROFILE_HEVC_MAIN,
-                "av1" => FF_PROFILE_UNKNOWN,
-                _ => FF_PROFILE_H264_HIGH,
-            };
-            (*codec_ctx).flags |= AV_CODEC_FLAG_GLOBAL_HEADER as libc::c_int;
-
-            if selected_desc.contains("NVENC") {
-                (*codec_ctx).pix_fmt = AVPixelFormat::AV_PIX_FMT_NV12;
-                let _ = av_opt_set((*codec_ctx).priv_data, c"preset".as_ptr(), c"p1".as_ptr(), 0);
-                let _ = av_opt_set((*codec_ctx).priv_data, c"tune".as_ptr(), c"ull".as_ptr(), 0);
-            } else if selected_desc.contains("AMF") {
-                (*codec_ctx).pix_fmt = AVPixelFormat::AV_PIX_FMT_NV12;
-                let _ = av_opt_set((*codec_ctx).priv_data, c"usage".as_ptr(), c"ultralowlatency".as_ptr(), 0);
-            } else if selected_desc.contains("QuickSync") {
-                (*codec_ctx).pix_fmt = AVPixelFormat::AV_PIX_FMT_NV12;
-                let _ = av_opt_set((*codec_ctx).priv_data, c"preset".as_ptr(), c"veryfast".as_ptr(), 0);
-            } else {
-                (*codec_ctx).pix_fmt = AVPixelFormat::AV_PIX_FMT_YUV420P;
-                let _ = av_opt_set((*codec_ctx).priv_data, c"preset".as_ptr(), c"ultrafast".as_ptr(), 0);
-                let _ = av_opt_set((*codec_ctx).priv_data, c"tune".as_ptr(), c"zerolatency".as_ptr(), 0);
-            }
-
-            let ret = avcodec_open2(codec_ctx, selected_codec, ptr::null_mut());
-            if ret < 0 {
-                avcodec_free_context(&mut (codec_ctx as *mut _));
-                return Err(format!("Failed to open Windows encoder: {}", ret));
-            }
-
-            let sw_frame = av_frame_alloc();
             (*sw_frame).format = (*codec_ctx).pix_fmt as i32;
             (*sw_frame).width = width as i32;
             (*sw_frame).height = height as i32;
-            av_frame_get_buffer(sw_frame, 32);
+            if av_frame_get_buffer(sw_frame, 32) < 0 {
+                av_frame_free(&mut sw_frame);
+                avcodec_free_context(&mut opened_codec_ctx);
+                return Err("Failed to allocate frame buffer for encoder".into());
+            }
 
             let sws_ctx = sws_getContext(
                 width as i32,
@@ -506,6 +523,7 @@ impl WindowsHwEncoder {
                 encoder_name: selected_desc,
                 sws_ctx,
                 sw_frame,
+                has_frame: false,
             })
         }
     }
@@ -521,6 +539,10 @@ impl WindowsHwEncoder {
                 Frame::Raw { width: _, height, stride, data } => {
                     let src_data = [data.as_ptr(), ptr::null(), ptr::null(), ptr::null()];
                     let src_linesize = [*stride as i32, 0, 0, 0];
+
+                    if av_frame_make_writable(self.sw_frame) < 0 {
+                        let _ = av_frame_get_buffer(self.sw_frame, 32);
+                    }
 
                     sws_scale(
                         self.sws_ctx,
@@ -542,6 +564,7 @@ impl WindowsHwEncoder {
                             packets.push(crate::ring::Packet::new(new_pkt));
                         }
                         av_packet_free(&mut pkt);
+                        self.has_frame = true;
                     }
                 }
                 #[cfg(target_os = "windows")]
@@ -557,6 +580,7 @@ impl WindowsHwEncoder {
                             packets.push(crate::ring::Packet::new(new_pkt));
                         }
                         av_packet_free(&mut pkt);
+                        self.has_frame = true;
                     }
                 }
                 _ => {}
@@ -568,6 +592,9 @@ impl WindowsHwEncoder {
     #[cfg(target_os = "windows")]
     pub fn encode_cached_frame(&mut self, pts: i64) -> Result<Vec<crate::ring::Packet>, String> {
         let mut packets = Vec::new();
+        if !self.has_frame {
+            return Ok(packets);
+        }
         unsafe {
             if self.sw_frame.is_null() {
                 return Ok(packets);

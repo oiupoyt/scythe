@@ -158,12 +158,17 @@ jobs:
               }
           }
           makensis packaging/windows/scythe-installer.nsi
+          makensis packaging/windows/scythe-standalone.nsi
+          Compress-Archive -Path dist/bundle/* -DestinationPath dist/scythe-windows-x86_64.zip -Force
 
       - name: Upload Windows Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: windows-packages
-          path: dist/scythe-setup.exe
+          path: |
+            dist/scythe-setup.exe
+            dist/scythe.exe
+            dist/scythe-windows-x86_64.zip
 
   publish-release:
     name: Publish GitHub Release
@@ -190,6 +195,8 @@ jobs:
 
             ### Packages
             - **Windows**: `scythe-setup.exe` (Official installer with Start Menu & Desktop shortcuts)
+            - **Windows Portable**: `scythe.exe` (Standalone portable launcher)
+            - **Windows Archive**: `scythe-windows-x86_64.zip` (Portable zip archive)
             - **Universal Linux**: `scythe-x86_64.AppImage`
             - **Debian / Ubuntu / Mint**: `scythe_*_amd64.deb`
             - **Fedora / RHEL / openSUSE**: `*.rpm`
