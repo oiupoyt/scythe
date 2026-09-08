@@ -307,7 +307,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Ok(f) => f,
         Err(_) => {
             Frame::Raw {
-                data: vec![0u8; 1920 * 1080 * 4],
+                data: std::sync::Arc::new(vec![0u8; 1920 * 1080 * 4]),
                 width: 1920,
                 height: 1080,
                 stride: 1920 * 4,
@@ -685,10 +685,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                             Ok(Vec::new())
                         }
                     } else {
-                        let cached = encoder.encode_cached_frame(pts);
-                        match cached {
-                            Ok(pkts) if !pkts.is_empty() => Ok(pkts),
-                            _ => {
+                        match encoder.encode_cached_frame(pts) {
+                            Ok(pkts) => Ok(pkts),
+                            Err(_) => {
                                 if let Some(ref f) = latest_frame {
                                     encoder.encode_frame(f, pts)
                                 } else {

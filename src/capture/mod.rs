@@ -12,7 +12,7 @@ pub mod x11;
 #[cfg(target_os = "windows")]
 pub mod windows;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Frame {
     /// Zero-copy DMA-BUF file descriptor. Used by Wayland/PipeWire on Linux.
     DmaBuf {
@@ -29,7 +29,7 @@ pub enum Frame {
         width: u32,
         height: u32,
         stride: u32,
-        data: Vec<u8>,
+        data: std::sync::Arc<Vec<u8>>,
     },
     /// Zero-copy DirectX 11 Texture handle. Used by Windows DXGI capture.
     #[cfg(target_os = "windows")]

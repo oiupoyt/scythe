@@ -103,7 +103,7 @@ impl FrameSource for X11Capture {
                 width: self.width as u32,
                 height: self.height as u32,
                 stride,
-                data,
+                data: std::sync::Arc::new(data),
             });
         }
 
@@ -125,7 +125,7 @@ impl FrameSource for X11Capture {
             width: self.width as u32,
             height: self.height as u32,
             stride,
-            data,
+            data: std::sync::Arc::new(data),
         })
     }
 }

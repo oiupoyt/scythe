@@ -9,17 +9,21 @@ use windows::{
     Win32::System::Com::*,
 };
 use crate::capture::{Frame, FrameSource};
+use std::sync::Arc;
 
 #[cfg(target_os = "windows")]
 pub struct WindowsCapture {
     device: ID3D11Device,
     context: ID3D11DeviceContext,
     duplication: IDXGIOutputDuplication,
-    staging_texture: ID3D11Texture2D,
+    staging_textures: [ID3D11Texture2D; 2],
+    staging_idx: usize,
+    has_staged_frame: bool,
     pub width: u32,
     pub height: u32,
     pub last_stride: u32,
-    last_frame: Vec<u8>,
+    buffer_pool: Vec<Option<Arc<Vec<u8>>>>,
+    last_frame: Option<Arc<Vec<u8>>>,
 }
 
 #[cfg(target_os = "windows")]
@@ -92,7 +96,7 @@ impl WindowsCapture {
             // Initialize Desktop Duplication
             let duplication = output1.DuplicateOutput(&device)?;
 
-            // Allocate a CPU-accessible staging texture for hardware frame reading
+            // Allocate double-buffered CPU-accessible staging textures for asynchronous zero-stall GPU readback
             let staging_desc = D3D11_TEXTURE2D_DESC {
                 Width: width,
                 Height: height,
@@ -106,21 +110,29 @@ impl WindowsCapture {
                 MiscFlags: 0,
             };
 
-            let mut staging_texture: Option<ID3D11Texture2D> = None;
-            device.CreateTexture2D(&staging_desc, None, Some(&mut staging_texture))?;
-            let staging_texture = staging_texture.ok_or("Failed to create D3D11 staging texture")?;
+            let mut tex0: Option<ID3D11Texture2D> = None;
+            let mut tex1: Option<ID3D11Texture2D> = None;
+            device.CreateTexture2D(&staging_desc, None, Some(&mut tex0))?;
+            device.CreateTexture2D(&staging_desc, None, Some(&mut tex1))?;
+            let staging_textures = [
+                tex0.ok_or("Failed to create D3D11 staging texture 0")?,
+                tex1.ok_or("Failed to create D3D11 staging texture 1")?,
+            ];
 
-            println!("Windows DXGI Hardware Desktop Duplication active: {}x{}", width, height);
+            println!("Windows DXGI Hardware Desktop Duplication active (asynchronous double-buffered): {}x{}", width, height);
 
             Ok(Self {
                 device,
                 context,
                 duplication,
-                staging_texture,
+                staging_textures,
+                staging_idx: 0,
+                has_staged_frame: false,
                 width,
                 height,
                 last_stride: width * 4,
-                last_frame: Vec::new(),
+                buffer_pool: Vec::with_capacity(4),
+                last_frame: None,
             })
         }
     }
@@ -134,6 +146,8 @@ impl WindowsCapture {
                 if let Ok(output1) = output.cast::<IDXGIOutput1>() {
                     if let Ok(dup) = output1.DuplicateOutput(&self.device) {
                         self.duplication = dup;
+                        self.has_staged_frame = false;
+                        self.staging_idx = 0;
                         if let Ok(desc) = output1.GetDesc() {
                             let new_w = (desc.DesktopCoordinates.right - desc.DesktopCoordinates.left).unsigned_abs();
                             let new_h = (desc.DesktopCoordinates.bottom - desc.DesktopCoordinates.top).unsigned_abs();
@@ -141,6 +155,8 @@ impl WindowsCapture {
                                 self.width = new_w;
                                 self.height = new_h;
                                 self.last_stride = new_w * 4;
+                                self.buffer_pool.clear();
+                                self.last_frame = None;
                                 let staging_desc = D3D11_TEXTURE2D_DESC {
                                     Width: new_w,
                                     Height: new_h,
@@ -153,10 +169,14 @@ impl WindowsCapture {
                                     CPUAccessFlags: D3D11_CPU_ACCESS_READ.0 as u32,
                                     MiscFlags: 0,
                                 };
-                                let mut new_staging: Option<ID3D11Texture2D> = None;
-                                if self.device.CreateTexture2D(&staging_desc, None, Some(&mut new_staging)).is_ok()
-                                    && let Some(st) = new_staging {
-                                        self.staging_texture = st;
+                                let mut tex0: Option<ID3D11Texture2D> = None;
+                                let mut tex1: Option<ID3D11Texture2D> = None;
+                                let ok0 = self.device.CreateTexture2D(&staging_desc, None, Some(&mut tex0)).is_ok();
+                                let ok1 = self.device.CreateTexture2D(&staging_desc, None, Some(&mut tex1)).is_ok();
+                                if ok0 && ok1 {
+                                    if let (Some(t0), Some(t1)) = (tex0, tex1) {
+                                        self.staging_textures = [t0, t1];
+                                    }
                                 }
                             }
                         }
@@ -177,100 +197,118 @@ impl FrameSource for WindowsCapture {
             let mut frame_info = DXGI_OUTDUPL_FRAME_INFO::default();
             let mut desktop_resource: Option<IDXGIResource> = None;
 
-            for _ in 0..5 {
-                match self.duplication.AcquireNextFrame(16, &mut frame_info, &mut desktop_resource) {
+            for _ in 0..10 {
+                match self.duplication.AcquireNextFrame(25, &mut frame_info, &mut desktop_resource) {
                     Ok(()) => {
                         if let Some(resource) = desktop_resource {
                             let texture: ID3D11Texture2D = resource.cast()?;
                             
-                            // Copy GPU desktop texture to staging texture accessible by CPU
-                            self.context.CopyResource(&self.staging_texture, &texture);
+                            let write_idx = self.staging_idx;
+                            let read_idx = 1 - self.staging_idx;
+
+                            // Asynchronously copy GPU desktop texture into staging texture[write_idx]
+                            self.context.CopyResource(&self.staging_textures[write_idx], &texture);
                             
                             // Immediately release the desktop frame back to the DWM compositor
                             let _ = self.duplication.ReleaseFrame();
 
+                            // Use ping-pong texture:
+                            // On first frame, read write_idx directly.
+                            // On subsequent frames, read read_idx (queued 1 frame ago, DMA already finished!)
+                            let target_read = if !self.has_staged_frame {
+                                self.has_staged_frame = true;
+                                write_idx
+                            } else {
+                                read_idx
+                            };
+                            self.staging_idx = 1 - self.staging_idx;
+
                             let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
-                            self.context.Map(&self.staging_texture, 0, D3D11_MAP_READ, 0, Some(&mut mapped))?;
+                            self.context.Map(&self.staging_textures[target_read], 0, D3D11_MAP_READ, 0, Some(&mut mapped))?;
 
                             let stride = mapped.RowPitch as usize;
                             self.last_stride = mapped.RowPitch;
                             let total_bytes = stride * self.height as usize;
-                            if self.last_frame.len() != total_bytes {
-                                self.last_frame.resize(total_bytes, 0);
+
+                            // Reusable zero-allocation buffer acquisition from pool
+                            let mut arc_buf = None;
+                            for slot in &mut self.buffer_pool {
+                                if let Some(buf) = slot {
+                                    if Arc::strong_count(buf) == 1 {
+                                        arc_buf = slot.take();
+                                        break;
+                                    }
+                                }
                             }
-                            std::ptr::copy_nonoverlapping(
-                                mapped.pData as *const u8,
-                                self.last_frame.as_mut_ptr(),
-                                total_bytes,
-                            );
-                            self.context.Unmap(&self.staging_texture, 0);
+                            let mut arc_buf = arc_buf.unwrap_or_else(|| Arc::new(vec![0u8; total_bytes]));
+                            {
+                                let vec_ref = Arc::get_mut(&mut arc_buf).unwrap();
+                                if vec_ref.len() != total_bytes {
+                                    vec_ref.resize(total_bytes, 0);
+                                }
+                                std::ptr::copy_nonoverlapping(
+                                    mapped.pData as *const u8,
+                                    vec_ref.as_mut_ptr(),
+                                    total_bytes,
+                                );
+                            }
+                            self.context.Unmap(&self.staging_textures[target_read], 0);
+
+                            let to_send = Arc::clone(&arc_buf);
+                            self.last_frame = Some(Arc::clone(&arc_buf));
+
+                            // Return to buffer pool
+                            if self.buffer_pool.len() < 4 {
+                                self.buffer_pool.push(Some(arc_buf));
+                            }
 
                             return Ok(Frame::Raw {
                                 width: self.width,
                                 height: self.height,
                                 stride: stride as u32,
-                                data: self.last_frame.clone(),
+                                data: to_send,
                             });
                         }
                         let _ = self.duplication.ReleaseFrame();
                     }
                     Err(e) if e.code() == DXGI_ERROR_WAIT_TIMEOUT => {
-                        if !self.last_frame.is_empty() {
-                            return Ok(Frame::Raw {
-                                width: self.width,
-                                height: self.height,
-                                stride: self.last_stride,
-                                data: self.last_frame.clone(),
-                            });
-                        }
-                        std::thread::sleep(std::time::Duration::from_millis(8));
+                        // Desktop static / no new frame presented. Sleep briefly and wait.
+                        // Do NOT allocate duplicate frames!
+                        std::thread::sleep(std::time::Duration::from_millis(3));
+                        continue;
                     }
                     Err(e) if e.code() == DXGI_ERROR_ACCESS_LOST
                         || e.code() == DXGI_ERROR_ACCESS_DENIED
                         || e.code() == DXGI_ERROR_INVALID_CALL => {
                         let _ = self.duplication.ReleaseFrame();
                         let _ = self.reinit_duplication();
-                        if !self.last_frame.is_empty() {
-                            return Ok(Frame::Raw {
-                                width: self.width,
-                                height: self.height,
-                                stride: self.last_stride,
-                                data: self.last_frame.clone(),
-                            });
-                        }
-                        std::thread::sleep(std::time::Duration::from_millis(30));
+                        std::thread::sleep(std::time::Duration::from_millis(20));
                         continue;
                     }
                     Err(e) => {
                         let _ = self.duplication.ReleaseFrame();
                         let _ = self.reinit_duplication();
-                        if !self.last_frame.is_empty() {
-                            return Ok(Frame::Raw {
-                                width: self.width,
-                                height: self.height,
-                                stride: self.last_stride,
-                                data: self.last_frame.clone(),
-                            });
-                        }
                         std::thread::sleep(std::time::Duration::from_millis(16));
                         return Err(Box::new(e));
                     }
                 }
             }
 
-            if !self.last_frame.is_empty() {
+            // If desktop was completely idle across multiple iterations,
+            // return zero-copy reference to last frame so stream stays active without heap thrashing
+            if let Some(ref last) = self.last_frame {
                 Ok(Frame::Raw {
                     width: self.width,
                     height: self.height,
                     stride: self.last_stride,
-                    data: self.last_frame.clone(),
+                    data: Arc::clone(last),
                 })
             } else {
                 Ok(Frame::Raw {
                     width: self.width,
                     height: self.height,
                     stride: self.last_stride,
-                    data: vec![0u8; (self.last_stride * self.height) as usize],
+                    data: Arc::new(vec![0u8; (self.last_stride * self.height) as usize]),
                 })
             }
         }

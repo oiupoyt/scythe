@@ -91,7 +91,7 @@ impl PipeWireStream {
                                     width: user_data.format.size().width,
                                     height: user_data.format.size().height,
                                     stride,
-                                    data: slice.to_vec(),
+                                    data: std::sync::Arc::new(slice.to_vec()),
                                 }
                             } else {
                                 return;

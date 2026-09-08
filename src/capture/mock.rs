@@ -39,7 +39,7 @@ impl FrameSource for MockCapture {
             width: self.width,
             height: self.height,
             stride: self.width * 4,
-            data,
+            data: std::sync::Arc::new(data),
         })
     }
 }
