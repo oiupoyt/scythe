@@ -179,38 +179,27 @@ fn spawn_parec_stream(
 
     let mut stdout = child.stdout.take().ok_or("Failed to open parec stdout")?;
     std::thread::spawn(move || {
-        let mut remainder = Vec::with_capacity(4);
+        let mut remainder = Vec::with_capacity(4096);
         let mut read_buf = [0u8; 4096];
         loop {
             match stdout.read(&mut read_buf) {
                 Ok(0) => break,
                 Ok(n) => {
-                    let total_len = remainder.len() + n;
-                    let full_bytes = total_len - (total_len % 4);
+                    remainder.extend_from_slice(&read_buf[..n]);
+                    // 2 channels * 4 bytes/sample = 8 bytes per stereo frame
+                    let full_bytes = remainder.len() - (remainder.len() % 8);
                     if full_bytes == 0 {
-                        remainder.extend_from_slice(&read_buf[..n]);
                         continue;
                     }
 
-                    let mut combined = Vec::with_capacity(total_len);
-                    combined.extend_from_slice(&remainder);
-                    combined.extend_from_slice(&read_buf[..n]);
-
                     let floats_count = full_bytes / 4;
                     let mut floats = Vec::with_capacity(floats_count);
-                    for i in 0..floats_count {
-                        let b = [
-                            combined[i * 4],
-                            combined[i * 4 + 1],
-                            combined[i * 4 + 2],
-                            combined[i * 4 + 3],
-                        ];
-                        let raw = f32::from_le_bytes(b);
+                    for chunk in remainder[..full_bytes].chunks_exact(4) {
+                        let raw = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
                         floats.push(soft_limit(raw * gain));
                     }
 
-                    remainder.clear();
-                    remainder.extend_from_slice(&combined[full_bytes..]);
+                    remainder.drain(..full_bytes);
 
                     if let Some(ref l) = levels {
                         if is_mic {
@@ -312,30 +301,57 @@ impl AudioCapture {
                     thread::spawn(move || {
                         let mut sys_q: VecDeque<f32> = VecDeque::with_capacity(16384);
                         let mut mic_q: VecDeque<f32> = VecDeque::with_capacity(16384);
+                        let mut sys_closed = false;
+                        let mut mic_closed = false;
 
                         loop {
-                            while let Ok(chunk) = sys_rx.try_recv() {
-                                sys_q.extend(chunk);
+                            loop {
+                                match sys_rx.try_recv() {
+                                    Ok(chunk) => sys_q.extend(chunk),
+                                    Err(crossbeam_channel::TryRecvError::Empty) => break,
+                                    Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                                        sys_closed = true;
+                                        break;
+                                    }
+                                }
                             }
-                            while let Ok(chunk) = mic_rx.try_recv() {
-                                mic_q.extend(chunk);
+                            loop {
+                                match mic_rx.try_recv() {
+                                    Ok(chunk) => mic_q.extend(chunk),
+                                    Err(crossbeam_channel::TryRecvError::Empty) => break,
+                                    Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                                        mic_closed = true;
+                                        break;
+                                    }
+                                }
                             }
 
-                            let avail = sys_q.len().min(mic_q.len());
+                            // 2 channels stereo alignment
+                            let avail = ((sys_q.len().min(mic_q.len())) / 2) * 2;
                             if avail >= 480 {
                                 let mut mixed = Vec::with_capacity(avail);
-                                for _ in 0..avail {
-                                    let s = sys_q.pop_front().unwrap_or(0.0);
-                                    let m = mic_q.pop_front().unwrap_or(0.0);
+                                for (s, m) in sys_q.drain(..avail).zip(mic_q.drain(..avail)) {
                                     mixed.push(soft_limit(s + m));
                                 }
-                                let _ = out_tx.try_send(mixed);
+                                if out_tx.try_send(mixed).is_err() && !out_tx.is_full() {
+                                    break;
+                                }
                             } else if sys_q.len() > 4800 {
-                                let chunk: Vec<f32> = sys_q.drain(..960.min(sys_q.len())).collect();
-                                let _ = out_tx.try_send(chunk);
+                                let drain_len = (960.min(sys_q.len()) / 2) * 2;
+                                let chunk: Vec<f32> = sys_q.drain(..drain_len).collect();
+                                if out_tx.try_send(chunk).is_err() && !out_tx.is_full() {
+                                    break;
+                                }
                             } else if mic_q.len() > 4800 {
-                                let chunk: Vec<f32> = mic_q.drain(..960.min(mic_q.len())).collect();
-                                let _ = out_tx.try_send(chunk);
+                                let drain_len = (960.min(mic_q.len()) / 2) * 2;
+                                let chunk: Vec<f32> = mic_q.drain(..drain_len).collect();
+                                if out_tx.try_send(chunk).is_err() && !out_tx.is_full() {
+                                    break;
+                                }
+                            }
+
+                            if sys_closed && mic_closed && sys_q.is_empty() && mic_q.is_empty() {
+                                break;
                             }
 
                             thread::sleep(std::time::Duration::from_millis(4));
@@ -479,30 +495,57 @@ impl AudioCapture {
                 thread::spawn(move || {
                     let mut sys_q: VecDeque<f32> = VecDeque::with_capacity(16384);
                     let mut mic_q: VecDeque<f32> = VecDeque::with_capacity(16384);
+                    let mut sys_closed = false;
+                    let mut mic_closed = false;
 
                     loop {
-                        while let Ok(chunk) = sys_rx.try_recv() {
-                            sys_q.extend(chunk);
+                        loop {
+                            match sys_rx.try_recv() {
+                                Ok(chunk) => sys_q.extend(chunk),
+                                Err(crossbeam_channel::TryRecvError::Empty) => break,
+                                Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                                    sys_closed = true;
+                                    break;
+                                }
+                            }
                         }
-                        while let Ok(chunk) = mic_rx.try_recv() {
-                            mic_q.extend(chunk);
+                        loop {
+                            match mic_rx.try_recv() {
+                                Ok(chunk) => mic_q.extend(chunk),
+                                Err(crossbeam_channel::TryRecvError::Empty) => break,
+                                Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                                    mic_closed = true;
+                                    break;
+                                }
+                            }
                         }
 
-                        let avail = sys_q.len().min(mic_q.len());
+                        // 2 channels stereo alignment
+                        let avail = ((sys_q.len().min(mic_q.len())) / 2) * 2;
                         if avail >= 480 {
                             let mut mixed = Vec::with_capacity(avail);
-                            for _ in 0..avail {
-                                let s = sys_q.pop_front().unwrap_or(0.0);
-                                let m = mic_q.pop_front().unwrap_or(0.0);
+                            for (s, m) in sys_q.drain(..avail).zip(mic_q.drain(..avail)) {
                                 mixed.push(soft_limit(s + m));
                             }
-                            let _ = out_tx.try_send(mixed);
+                            if out_tx.try_send(mixed).is_err() && !out_tx.is_full() {
+                                break;
+                            }
                         } else if sys_q.len() > 4800 {
-                            let chunk: Vec<f32> = sys_q.drain(..960.min(sys_q.len())).collect();
-                            let _ = out_tx.try_send(chunk);
+                            let drain_len = (960.min(sys_q.len()) / 2) * 2;
+                            let chunk: Vec<f32> = sys_q.drain(..drain_len).collect();
+                            if out_tx.try_send(chunk).is_err() && !out_tx.is_full() {
+                                break;
+                            }
                         } else if mic_q.len() > 4800 {
-                            let chunk: Vec<f32> = mic_q.drain(..960.min(mic_q.len())).collect();
-                            let _ = out_tx.try_send(chunk);
+                            let drain_len = (960.min(mic_q.len()) / 2) * 2;
+                            let chunk: Vec<f32> = mic_q.drain(..drain_len).collect();
+                            if out_tx.try_send(chunk).is_err() && !out_tx.is_full() {
+                                break;
+                            }
+                        }
+
+                        if sys_closed && mic_closed && sys_q.is_empty() && mic_q.is_empty() {
+                            break;
                         }
 
                         thread::sleep(std::time::Duration::from_millis(4));

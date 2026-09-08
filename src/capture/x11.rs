@@ -10,6 +10,7 @@ pub struct X11Capture {
     shm_addr: *mut u8,
     shm_size: usize,
     shmid: i32,
+    last_frame_instant: std::time::Instant,
 }
 
 unsafe impl Send for X11Capture {}
@@ -63,12 +64,20 @@ impl X11Capture {
             shm_addr,
             shm_size: size,
             shmid,
+            last_frame_instant: std::time::Instant::now(),
         })
     }
 }
 
 impl FrameSource for X11Capture {
     fn next_frame(&mut self) -> Result<Frame, Box<dyn std::error::Error + Send + Sync>> {
+        let target_frame_time = std::time::Duration::from_millis(16);
+        let elapsed = self.last_frame_instant.elapsed();
+        if elapsed < target_frame_time {
+            std::thread::sleep(target_frame_time - elapsed);
+        }
+        self.last_frame_instant = std::time::Instant::now();
+
         let stride = (self.width as u32) * 4;
 
         if let Some(seg) = self.shm_seg && !self.shm_addr.is_null() {

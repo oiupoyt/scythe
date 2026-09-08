@@ -195,3 +195,20 @@ pub fn get_overlay_pid_path() -> std::path::PathBuf {
 pub fn clean_overlay_pid() {
     let _ = std::fs::remove_file(get_overlay_pid_path());
 }
+
+pub fn get_toast_pid_path() -> std::path::PathBuf {
+    #[cfg(unix)]
+    {
+        let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+            .unwrap_or_else(|_| format!("/run/user/{}", unsafe { libc::getuid() }));
+        std::path::PathBuf::from(runtime_dir).join("scythe-toast.pid")
+    }
+    #[cfg(not(unix))]
+    {
+        std::env::temp_dir().join("scythe-toast.pid")
+    }
+}
+
+pub fn clean_toast_pid() {
+    let _ = std::fs::remove_file(get_toast_pid_path());
+}

@@ -132,7 +132,7 @@ impl ScytheConfig {
 
     pub fn expand_tilde(path: &str) -> PathBuf {
         let trimmed = path.trim();
-        if let Some(sub) = trimmed.strip_prefix("~/") {
+        if let Some(sub) = trimmed.strip_prefix("~/").or_else(|| trimmed.strip_prefix("~\\")) {
             if let Some(home) = dirs::home_dir() {
                 return home.join(sub);
             }

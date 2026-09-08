@@ -156,6 +156,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                                 if session_type.to_lowercase() == "wayland" {
                                                     println!("Cursor display toggled to: {}. Restarting Wayland session...", cfg.show_cursor);
                                                     let _ = cmd_tx_ipc.send(Command::StopRecording);
+                                                    if let Ok(exe) = std::env::current_exe() {
+                                                        let _ = std::process::Command::new(exe)
+                                                            .stdin(std::process::Stdio::null())
+                                                            .stdout(std::process::Stdio::null())
+                                                            .stderr(std::process::Stdio::null())
+                                                            .spawn();
+                                                    }
                                                     std::thread::sleep(std::time::Duration::from_millis(150));
                                                     std::process::exit(0);
                                                 }
@@ -470,6 +477,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                     if let Some(mut m) = normal_muxer.take() {
                                         let _ = m.finalize();
                                     }
+                                    if let Ok(exe) = std::env::current_exe() {
+                                        let _ = std::process::Command::new(exe)
+                                            .stdin(std::process::Stdio::null())
+                                            .stdout(std::process::Stdio::null())
+                                            .stderr(std::process::Stdio::null())
+                                            .spawn();
+                                    }
                                     std::thread::sleep(std::time::Duration::from_millis(150));
                                     std::process::exit(0);
                                 }
@@ -620,60 +634,71 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         latest_frame = Some(f);
                         has_new_frame = true;
                     }
+                    while let Ok(f) = frame_rx.try_recv() {
+                        latest_frame = Some(f);
+                        has_new_frame = true;
+                    }
                 },
                 recv(ticker) -> _ => {
+                    while ticker.try_recv().is_ok() {}
+
                     let now = std::time::Instant::now();
                     let elapsed = now.duration_since(stream_start);
                     let raw_pts = (elapsed.as_secs_f64() * config.fps as f64).round() as i64;
                     let pts = if raw_pts > last_video_pts { raw_pts } else { last_video_pts + 1 };
+                    last_video_pts = pts;
 
                     let packets_res = if has_new_frame {
                         has_new_frame = false;
-                        last_video_pts = pts;
                         if let Some(ref f) = latest_frame {
                             encoder.encode_frame(f, pts)
                         } else {
                             Ok(Vec::new())
                         }
                     } else {
-                        // Heartbeat / keepalive: if no new frame for 500ms, emit cached frame to keep video track flowing smoothly
-                        if pts - last_video_pts >= (config.fps as i64 / 2).max(1) {
-                            last_video_pts = pts;
-                            if let Some(ref f) = latest_frame {
-                                encoder.encode_frame(f, pts)
-                            } else {
-                                encoder.encode_cached_frame(pts)
+                        let cached = encoder.encode_cached_frame(pts);
+                        match cached {
+                            Ok(pkts) if !pkts.is_empty() => Ok(pkts),
+                            _ => {
+                                if let Some(ref f) = latest_frame {
+                                    encoder.encode_frame(f, pts)
+                                } else {
+                                    Ok(Vec::new())
+                                }
                             }
-                        } else {
-                            Ok(Vec::new())
                         }
                     };
 
-                    if let Ok(packets) = packets_res {
-                        for mut pkt in packets {
-                            pkt.set_stream_index(0);
-                            if normal_recording {
-                                if normal_waiting_keyframe && pkt.is_keyframe() {
-                                    normal_waiting_keyframe = false;
-                                    rec_base_video_pts = pkt.pts();
-                                    rec_base_audio_pts = -1;
-                                    let codec_ctx = codec_ctx_ptr as *mut ffmpeg_next::ffi::AVCodecContext;
-                                    let filename = scythe::config::ScytheConfig::format_video_filename("Recording", "mp4");
-                                    let full_path = config.resolve_save_path(&filename);
-                                    let audio_codec_ctx = audio_codec_ctx_ptr.map(|p| p as *mut ffmpeg_next::ffi::AVCodecContext);
-                                    normal_muxer = unsafe { Muxer::new(&full_path, codec_ctx, audio_codec_ctx).ok() };
-                                    println!("Started normal recording to {}", full_path);
+                    match packets_res {
+                        Ok(packets) => {
+                            for mut pkt in packets {
+                                pkt.set_stream_index(0);
+                                if normal_recording {
+                                    if normal_waiting_keyframe && pkt.is_keyframe() {
+                                        normal_waiting_keyframe = false;
+                                        rec_base_video_pts = pkt.pts();
+                                        rec_base_audio_pts = -1;
+                                        let codec_ctx = codec_ctx_ptr as *mut ffmpeg_next::ffi::AVCodecContext;
+                                        let filename = scythe::config::ScytheConfig::format_video_filename("Recording", "mp4");
+                                        let full_path = config.resolve_save_path(&filename);
+                                        let audio_codec_ctx = audio_codec_ctx_ptr.map(|p| p as *mut ffmpeg_next::ffi::AVCodecContext);
+                                        normal_muxer = unsafe { Muxer::new(&full_path, codec_ctx, audio_codec_ctx).ok() };
+                                        println!("Started normal recording to {}", full_path);
+                                    }
+                                    
+                                    if !normal_waiting_keyframe
+                                        && let Some(muxer) = normal_muxer.as_mut() {
+                                            let rebased = pkt.rebased(rec_base_video_pts);
+                                            let _ = muxer.write_packet(&rebased);
+                                    }
                                 }
-                                
-                                if !normal_waiting_keyframe
-                                    && let Some(muxer) = normal_muxer.as_mut() {
-                                        let rebased = pkt.rebased(rec_base_video_pts);
-                                        let _ = muxer.write_packet(&rebased);
+                                if config.replay_enabled {
+                                    ring.push_overwrite(pkt);
                                 }
                             }
-                            if config.replay_enabled {
-                                ring.push_overwrite(pkt);
-                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Video encoding error: {}", e);
                         }
                     }
             }

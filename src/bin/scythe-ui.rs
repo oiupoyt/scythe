@@ -242,6 +242,17 @@ fn handle_toggle_cursor() -> Result<(), Box<dyn std::error::Error + Send + Sync>
     }
 }
 
+fn handle_save_replay() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ensure_daemon_running();
+    if let Ok(st) = query_status() {
+        if !st.is_replay_active {
+            show_shadowplay_toast("INSTANT REPLAY", "Replay is turned off", ToastIcon::Error);
+            return Ok(());
+        }
+    }
+    send_with_notification(Command::SaveReplay, "INSTANT REPLAY", "Saved to Videos", ToastIcon::Replay)
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     ensure_wayland_env();
 
@@ -249,14 +260,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if args.len() > 1 {
         match args[1].as_str() {
             "--save" => {
-                ensure_daemon_running();
-                if let Ok(st) = query_status() {
-                    if !st.is_replay_active {
-                        show_shadowplay_toast("INSTANT REPLAY", "Replay is turned off", ToastIcon::Error);
-                        return Ok(());
-                    }
-                }
-                return send_with_notification(Command::SaveReplay, "INSTANT REPLAY", "Saved to Videos", ToastIcon::Replay);
+                return handle_save_replay();
             }
             "--notify-save" => {
                 show_shadowplay_toast("INSTANT REPLAY", "Saved to Videos", ToastIcon::Replay);
@@ -509,7 +513,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 });
             } else if Some(event.id) == id_save {
                 std::thread::spawn(|| {
-                    let _ = send_with_notification(Command::SaveReplay, "INSTANT REPLAY", "Saved to Videos", ToastIcon::Replay);
+                    let _ = handle_save_replay();
                 });
             } else if Some(event.id) == id_rec {
                 std::thread::spawn(|| {

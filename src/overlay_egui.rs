@@ -207,21 +207,38 @@ fn scan_recordings(dir_str: &str) -> Vec<VideoClipInfo> {
 fn open_folder(path: &std::path::Path) {
     let p = path.to_path_buf();
     std::thread::spawn(move || {
+        let is_file = p.is_file();
+        let folder = if is_file {
+            p.parent().unwrap_or(&p).to_path_buf()
+        } else {
+            p.clone()
+        };
+        let _ = std::fs::create_dir_all(&folder);
+
         #[cfg(target_os = "windows")]
         {
-            let p_str = p.to_string_lossy().replace('/', "\\");
-            let _ = std::fs::create_dir_all(&p_str);
-            let _ = std::process::Command::new("explorer.exe")
-                .arg(&p_str)
-                .spawn();
+            use std::os::windows::process::CommandExt;
+            if is_file {
+                let p_str = p.to_string_lossy().replace('/', "\\");
+                let _ = std::process::Command::new("explorer.exe")
+                    .arg(format!("/select,\"{}\"", p_str))
+                    .creation_flags(0x08000000)
+                    .spawn();
+            } else {
+                let f_str = folder.to_string_lossy().replace('/', "\\");
+                let _ = std::process::Command::new("explorer.exe")
+                    .arg(&f_str)
+                    .creation_flags(0x08000000)
+                    .spawn();
+            }
         }
         #[cfg(target_os = "macos")]
         {
-            let _ = std::process::Command::new("open").arg(&p).spawn();
+            let _ = std::process::Command::new("open").arg(&folder).spawn();
         }
         #[cfg(not(any(target_os = "windows", target_os = "macos")))]
         {
-            let _ = std::process::Command::new("xdg-open").arg(&p).spawn();
+            let _ = std::process::Command::new("xdg-open").arg(&folder).spawn();
         }
     });
 }
@@ -234,24 +251,17 @@ fn pick_folder(current_dir: &str, tx: Sender<String>, is_active: Arc<AtomicBool>
     std::thread::spawn(move || {
         #[cfg(target_os = "windows")]
         {
+            use std::os::windows::process::CommandExt;
             let clean_cur = cur.replace('/', "\\").replace('\'', "''");
             let script = format!(
-                "Add-Type -AssemblyName System.Windows.Forms; \
-                 $f = New-Object System.Windows.Forms.FolderBrowserDialog; \
-                 $f.Description = 'Select Recordings Directory'; \
-                 $f.SelectedPath = '{}'; \
-                 $f.ShowNewFolderButton = $true; \
-                 $top = New-Object System.Windows.Forms.Form; \
-                 $top.TopMost = $true; \
-                 if ($f.ShowDialog($top) -eq [System.Windows.Forms.DialogResult]::OK) {{ \
-                     Write-Output $f.SelectedPath \
-                 }}",
+                "$s = (New-Object -ComObject Shell.Application).BrowseForFolder(0, 'Select Recordings Directory', 0, '{}'); \
+                 if ($s) {{ Write-Output $s.Self.Path }}",
                 clean_cur
             );
-            if let Ok(out) = std::process::Command::new("powershell.exe")
-                .args(["-NoProfile", "-STA", "-Command", &script])
-                .output()
-            {
+            let mut cmd = std::process::Command::new("powershell.exe");
+            cmd.args(["-NoProfile", "-STA", "-Command", &script]);
+            cmd.creation_flags(0x08000000);
+            if let Ok(out) = cmd.output() {
                 let sel = String::from_utf8_lossy(&out.stdout).trim().to_string();
                 if !sel.is_empty() {
                     let _ = tx.send(sel);
@@ -1494,16 +1504,16 @@ impl ScytheOverlayApp {
                                         let old_save = self.config.save_hotkey.clone();
                                         let old_rec = self.config.record_hotkey.clone();
                                         let old_cur = self.config.cursor_hotkey.clone();
-                                        crate::hyprland_binds::unbind_hotkey(&old_menu);
-                                        crate::hyprland_binds::unbind_hotkey(&old_save);
-                                        crate::hyprland_binds::unbind_hotkey(&old_rec);
-                                        crate::hyprland_binds::unbind_hotkey(&old_cur);
+                                        crate::hyprland_binds::unbind_hotkey_async(&old_menu);
+                                        crate::hyprland_binds::unbind_hotkey_async(&old_save);
+                                        crate::hyprland_binds::unbind_hotkey_async(&old_rec);
+                                        crate::hyprland_binds::unbind_hotkey_async(&old_cur);
                                         self.config.menu_hotkey = "Alt+Z".to_string();
                                         self.config.save_hotkey = "Ctrl+Shift+R".to_string();
                                         self.config.record_hotkey = "Ctrl+Shift+F9".to_string();
                                         self.config.cursor_hotkey = "Ctrl+Shift+F10".to_string();
                                         let _ = self.config.save();
-                                        crate::hyprland_binds::register_hyprland_binds(&self.config);
+                                        crate::hyprland_binds::register_hyprland_binds_async(&self.config);
                                         crate::config::ScytheConfig::notify_daemon_reload();
                                         self.show_hud_notification("KEYBINDS", "Restored default hotkeys", crate::overlay::ToastIcon::Info);
                                     }
@@ -2214,9 +2224,9 @@ impl eframe::App for ScytheOverlayApp {
                             ("Cursor Toggle", old)
                         }
                     };
-                    crate::hyprland_binds::unbind_hotkey(&old_key);
+                    crate::hyprland_binds::unbind_hotkey_async(&old_key);
                     let _ = self.config.save();
-                    crate::hyprland_binds::register_hyprland_binds(&self.config);
+                    crate::hyprland_binds::register_hyprland_binds_async(&self.config);
                     crate::config::ScytheConfig::notify_daemon_reload();
                     self.show_hud_notification("KEYBIND", &format!("Bound {}: {}", action_name, combo), crate::overlay::ToastIcon::Info);
                     self.listening_keybind = None;
@@ -2272,23 +2282,31 @@ impl eframe::App for ScytheOverlayApp {
 }
 
 #[cfg(target_os = "windows")]
-pub fn apply_windows_transparency(title: &str) {
+pub fn apply_windows_transparency(_title: &str) {
     unsafe {
-        use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
+        use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetWindowThreadProcessId};
+        use windows::Win32::System::Threading::GetCurrentProcessId;
+        use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
         use windows::Win32::Graphics::Dwm::DwmExtendFrameIntoClientArea;
         use windows::Win32::UI::Controls::MARGINS;
-        use windows::core::HSTRING;
 
-        let htitle = HSTRING::from(title);
-        if let Ok(hwnd) = FindWindowW(None, &htitle) {
-            let margins = MARGINS {
-                cxLeftWidth: -1,
-                cxRightWidth: -1,
-                cyTopHeight: -1,
-                cyBottomHeight: -1,
-            };
-            let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
+        let my_pid = GetCurrentProcessId();
+        unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+            let my_pid = lparam.0 as u32;
+            let mut proc_id = 0u32;
+            GetWindowThreadProcessId(hwnd, Some(&mut proc_id));
+            if proc_id == my_pid {
+                let margins = MARGINS {
+                    cxLeftWidth: -1,
+                    cxRightWidth: -1,
+                    cyTopHeight: -1,
+                    cyBottomHeight: -1,
+                };
+                let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
+            }
+            BOOL(1)
         }
+        let _ = EnumWindows(Some(enum_proc), LPARAM(my_pid as isize));
     }
 }
 
@@ -2410,6 +2428,7 @@ impl eframe::App for ShadowPlayToastApp {
         let elapsed = self.created_at.elapsed().as_secs_f32();
         let total_dur = self.duration.as_secs_f32();
         if elapsed >= total_dur {
+            crate::ipc::clean_toast_pid();
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             std::process::exit(0);
         }
@@ -2526,14 +2545,25 @@ pub fn run_egui_toast(title: &str, subtitle: &str, icon: crate::overlay::ToastIc
     let toast_w: f32 = 340.0;
     let toast_h: f32 = 64.0;
 
-    #[cfg(target_os = "windows")]
-    unsafe {
-        use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, PostMessageW, WM_CLOSE};
-        if let Ok(prev) = FindWindowW(None, windows::core::w!("Scythe Notification")) {
-            let _ = PostMessageW(prev, WM_CLOSE, windows::Win32::Foundation::WPARAM(0), windows::Win32::Foundation::LPARAM(0));
-            std::thread::sleep(Duration::from_millis(30));
+    let toast_pid_path = crate::ipc::get_toast_pid_path();
+    if let Ok(prev_pid_str) = std::fs::read_to_string(&toast_pid_path) {
+        if let Ok(prev_pid) = prev_pid_str.trim().parse::<u32>() {
+            #[cfg(target_os = "windows")]
+            unsafe {
+                use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+                if let Ok(h) = OpenProcess(PROCESS_TERMINATE, false, prev_pid) {
+                    let _ = TerminateProcess(h, 0);
+                    let _ = windows::Win32::Foundation::CloseHandle(h);
+                }
+            }
+            #[cfg(not(target_os = "windows"))]
+            unsafe {
+                let _ = libc::kill(prev_pid as i32, libc::SIGKILL);
+            }
         }
     }
+    let _ = std::fs::create_dir_all(toast_pid_path.parent().unwrap_or(std::path::Path::new(".")));
+    let _ = std::fs::write(&toast_pid_path, std::process::id().to_string());
 
     #[cfg(target_os = "windows")]
     let (mon_x, screen_w): (f32, f32) = unsafe {
@@ -2573,8 +2603,10 @@ pub fn run_egui_toast(title: &str, subtitle: &str, icon: crate::overlay::ToastIc
     };
 
     // Watchdog thread to guarantee exit after duration
+    let watchdog_pid_path = toast_pid_path.clone();
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(3200));
+        let _ = std::fs::remove_file(watchdog_pid_path);
         std::process::exit(0);
     });
 
@@ -2583,4 +2615,6 @@ pub fn run_egui_toast(title: &str, subtitle: &str, icon: crate::overlay::ToastIc
         options,
         Box::new(|_cc| Ok(Box::new(app))),
     );
+
+    crate::ipc::clean_toast_pid();
 }

@@ -99,34 +99,38 @@ pub fn hotkey_to_hyprland_lua(hotkey: &str) -> Option<String> {
 }
 
 #[cfg(unix)]
+static RULES_INITIALIZED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(unix)]
 /// Dynamically inject binds and window rules into running Hyprland without touching hyprland.conf
 pub fn register_hyprland_binds(config: &ScytheConfig) {
     if !is_hyprland() {
         return;
     }
 
-    // Register modern Hyprland (0.55+) layer rules for genuine frosted glass blur & floating window rules
-    let _ = Command::new("hyprctl")
-        .args(["eval", r#"hl.layer_rule({ match = { namespace = "scythe-overlay" }, blur = true, ignore_alpha = 0.1 })"#])
-        .output();
-    let _ = Command::new("hyprctl")
-        .args(["eval", r#"hl.layer_rule({ match = { namespace = "scythe-notification" }, blur = true, ignore_alpha = 0.1 })"#])
-        .output();
-    let _ = Command::new("hyprctl")
-        .args(["eval", r#"hl.window_rule({ match = { class = "scythe-overlay" }, float = true, pin = true, move = "0 0", size = "100% 100%" })"#])
-        .output();
-    let _ = Command::new("hyprctl")
-        .args(["eval", r#"hl.window_rule({ match = { title = "Select Recordings Directory" }, float = true, pin = true, stay_focused = true, center = true })"#])
-        .output();
-    let _ = Command::new("hyprctl")
-        .args(["eval", r#"hl.window_rule({ match = { class = "kdialog" }, float = true, pin = true, stay_focused = true, center = true })"#])
-        .output();
-    let _ = Command::new("hyprctl")
-        .args(["eval", r#"hl.window_rule({ match = { class = "org.kde.kdialog" }, float = true, pin = true, stay_focused = true, center = true })"#])
-        .output();
-    let _ = Command::new("hyprctl")
-        .args(["eval", r#"hl.layer_rule({ match = { namespace = "vrec-overlay" }, blur = true, ignore_alpha = 0.1 })"#])
-        .output();
+    if !RULES_INITIALIZED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        // Register modern Hyprland (0.55+) layer rules for genuine frosted glass blur & floating window rules
+        let _ = Command::new("hyprctl")
+            .args(["eval", r#"hl.layer_rule({ match = { namespace = "scythe-overlay" }, blur = true, ignore_alpha = 0.1 })"#])
+            .output();
+        let _ = Command::new("hyprctl")
+            .args(["eval", r#"hl.layer_rule({ match = { namespace = "scythe-notification" }, blur = true, ignore_alpha = 0.1 })"#])
+            .output();
+        let _ = Command::new("hyprctl")
+            .args(["eval", r#"hl.window_rule({ match = { class = "scythe-overlay" }, float = true, pin = true, move = "0 0", size = "100% 100%" })"#])
+            .output();
+        let _ = Command::new("hyprctl")
+            .args(["eval", r#"hl.window_rule({ match = { title = "Select Recordings Directory" }, float = true, pin = true, stay_focused = true, center = true })"#])
+            .output();
+        let _ = Command::new("hyprctl")
+            .args(["eval", r#"hl.window_rule({ match = { class = "kdialog" }, float = true, pin = true, stay_focused = true, center = true })"#])
+            .output();
+        let _ = Command::new("hyprctl")
+            .args(["eval", r#"hl.window_rule({ match = { class = "org.kde.kdialog" }, float = true, pin = true, stay_focused = true, center = true })"#])
+            .output();
+        let _ = Command::new("hyprctl")
+            .args(["eval", r#"hl.layer_rule({ match = { namespace = "vrec-overlay" }, blur = true, ignore_alpha = 0.1 })"#])
+            .output();
 
     // Also register legacy window rules for backward compatibility with older Hyprland versions
     let legacy_rules = [
@@ -160,10 +164,11 @@ pub fn register_hyprland_binds(config: &ScytheConfig) {
         "pin, class:^(vrec-overlay)$",
         "noborder, class:^(vrec-overlay)$",
     ];
-    for rule in legacy_rules {
-        let _ = Command::new("hyprctl")
-            .args(["keyword", "windowrulev2", rule])
-            .output();
+        for rule in legacy_rules {
+            let _ = Command::new("hyprctl")
+                .args(["keyword", "windowrulev2", rule])
+                .output();
+        }
     }
 
     let binds = [
@@ -203,8 +208,26 @@ pub fn register_hyprland_binds(config: &ScytheConfig) {
     }
 }
 
+pub fn register_hyprland_binds_async(config: &ScytheConfig) {
+    let cfg = config.clone();
+    std::thread::spawn(move || {
+        register_hyprland_binds(&cfg);
+    });
+}
+
+pub fn unbind_hotkey_async(hotkey: &str) {
+    let hk = hotkey.to_string();
+    std::thread::spawn(move || {
+        unbind_hotkey(&hk);
+    });
+}
+
 #[cfg(not(unix))]
 pub fn register_hyprland_binds(_config: &ScytheConfig) {}
+#[cfg(not(unix))]
+pub fn register_hyprland_binds_async(_config: &ScytheConfig) {}
+#[cfg(not(unix))]
+pub fn unbind_hotkey_async(_hotkey: &str) {}
 
 #[cfg(unix)]
 /// Unbind a specific hotkey combo from running Hyprland
