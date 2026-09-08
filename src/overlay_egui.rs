@@ -48,14 +48,19 @@ fn format_egui_key(key: egui::Key) -> Option<String> {
 }
 
 fn probe_duration_sec(path: &std::path::Path) -> f32 {
-    let out = std::process::Command::new("ffprobe")
-        .args([
-            "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
-        ])
-        .arg(path)
-        .output();
+    let mut cmd = std::process::Command::new("ffprobe");
+    cmd.args([
+        "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+    ])
+    .arg(path);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    let out = cmd.output();
     if let Ok(out) = out {
         let text = String::from_utf8_lossy(&out.stdout);
         if let Ok(val) = text.trim().parse::<f32>() {
@@ -93,6 +98,11 @@ fn trim_clip(
         "-avoid_negative_ts", "make_zero",
     ])
     .arg(&out_path);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
 
     let res = cmd.output().map_err(|e| format!("Failed to spawn ffmpeg: {}", e))?;
     if res.status.success() {
@@ -108,11 +118,21 @@ fn play_clip(path: &std::path::Path) {
     std::thread::spawn(move || {
         #[cfg(target_os = "windows")]
         {
-            use std::os::windows::process::CommandExt;
-            let _ = std::process::Command::new("cmd")
-                .args(["/C", "start", "", &p.to_string_lossy()])
-                .creation_flags(0x08000000)
-                .spawn();
+            use windows::core::HSTRING;
+            use windows::Win32::UI::Shell::ShellExecuteW;
+            use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+            let path_str = p.to_string_lossy().to_string();
+            unsafe {
+                let _ = ShellExecuteW(
+                    None,
+                    windows::core::w!("open"),
+                    &HSTRING::from(&path_str),
+                    None,
+                    None,
+                    SW_SHOWNORMAL,
+                );
+            }
         }
         #[cfg(not(target_os = "windows"))]
         {
@@ -263,7 +283,7 @@ fn pick_folder(current_dir: &str, tx: Sender<String>, is_active: Arc<AtomicBool>
                 clean_cur, clean_cur
             );
             let mut cmd = std::process::Command::new("powershell.exe");
-            cmd.args(["-NoProfile", "-STA", "-Command", &script]);
+            cmd.args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-STA", "-Command", &script]);
             cmd.creation_flags(0x08000000);
             if let Ok(out) = cmd.output() {
                 let sel = String::from_utf8_lossy(&out.stdout).trim().to_string();

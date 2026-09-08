@@ -123,11 +123,20 @@ pub fn open_browser_url(url: &str) {
     std::thread::spawn(move || {
         #[cfg(target_os = "windows")]
         {
-            use std::os::windows::process::CommandExt;
-            let _ = std::process::Command::new("cmd")
-                .args(["/C", "start", "", &u])
-                .creation_flags(0x08000000)
-                .spawn();
+            use windows::core::HSTRING;
+            use windows::Win32::UI::Shell::ShellExecuteW;
+            use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+            unsafe {
+                let _ = ShellExecuteW(
+                    None,
+                    windows::core::w!("open"),
+                    &HSTRING::from(&u),
+                    None,
+                    None,
+                    SW_SHOWNORMAL,
+                );
+            }
         }
         #[cfg(target_os = "macos")]
         {

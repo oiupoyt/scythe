@@ -283,9 +283,19 @@ fn handle_save_replay() -> Result<(), Box<dyn std::error::Error + Send + Sync>> 
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let args: Vec<String> = env::args().collect();
+
+    #[cfg(target_os = "windows")]
+    unsafe {
+        let is_cli = args.iter().any(|a| a == "--status" || a == "--help" || a == "-h");
+        if !is_cli {
+            use windows::Win32::System::Console::FreeConsole;
+            let _ = FreeConsole();
+        }
+    }
+
     ensure_wayland_env();
 
-    let args: Vec<String> = env::args().collect();
     if args.len() > 1 {
         match args[1].as_str() {
             "--save" => {

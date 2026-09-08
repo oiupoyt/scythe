@@ -51,13 +51,34 @@ pub fn spawn_toast(title: &str, subtitle: &str, icon: ToastIcon) {
     let icon_owned = icon_str.to_string();
 
     std::thread::spawn(move || {
-        let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("scythe-ui"));
-        let _ = std::process::Command::new(exe)
-            .args(["--toast", &title_owned, &subtitle_owned, &icon_owned])
+        let exe = if let Ok(mut p) = std::env::current_exe() {
+            p.pop();
+            #[cfg(target_os = "windows")]
+            let ui = p.join("scythe-ui.exe");
+            #[cfg(not(target_os = "windows"))]
+            let ui = p.join("scythe-ui");
+            if ui.exists() {
+                ui
+            } else {
+                std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("scythe-ui"))
+            }
+        } else {
+            std::path::PathBuf::from("scythe-ui")
+        };
+        let mut cmd = std::process::Command::new(&exe);
+        if let Some(parent) = exe.parent() {
+            cmd.current_dir(parent);
+        }
+        cmd.args(["--toast", &title_owned, &subtitle_owned, &icon_owned])
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn();
+            .stderr(std::process::Stdio::null());
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        }
+        let _ = cmd.spawn();
     });
 }
 

@@ -21,6 +21,12 @@ fn ensure_wayland_env() {
 #[tokio::main]
 #[allow(unused_assignments)]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    #[cfg(target_os = "windows")]
+    unsafe {
+        use windows::Win32::System::Console::FreeConsole;
+        let _ = FreeConsole();
+    }
+
     ensure_wayland_env();
 
     #[cfg(unix)]
@@ -496,11 +502,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                         let _ = m.finalize();
                                     }
                                     if let Ok(exe) = std::env::current_exe() {
-                                        let _ = std::process::Command::new(exe)
-                                            .stdin(std::process::Stdio::null())
+                                        let mut cmd = std::process::Command::new(exe);
+                                        cmd.stdin(std::process::Stdio::null())
                                             .stdout(std::process::Stdio::null())
-                                            .stderr(std::process::Stdio::null())
-                                            .spawn();
+                                            .stderr(std::process::Stdio::null());
+                                        #[cfg(target_os = "windows")]
+                                        {
+                                            use std::os::windows::process::CommandExt;
+                                            cmd.creation_flags(0x08000000);
+                                        }
+                                        let _ = cmd.spawn();
                                     }
                                     std::thread::sleep(std::time::Duration::from_millis(150));
                                     std::process::exit(0);
