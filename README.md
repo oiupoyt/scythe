@@ -1,4 +1,4 @@
-# Scythe
+# Scythe (WIP)
 
 > High-performance, zero-copy GPU hardware screen recorder and instant replay overlay for Linux (Wayland & X11) and Windows.
 
