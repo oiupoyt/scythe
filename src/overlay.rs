@@ -193,7 +193,8 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
             "purple" | "violet" => ("#a855f7", (0.659, 0.333, 0.969)),
             "amber" | "orange" => ("#f59e0b", (0.961, 0.620, 0.043)),
             "red" | "crimson" => ("#ef4444", (0.937, 0.267, 0.267)),
-            "blue" | "sapphire" | _ => ("#38bdf8", (0.220, 0.741, 0.973)),
+            "blue" | "sapphire" => ("#38bdf8", (0.220, 0.741, 0.973)),
+            _ => ("#38bdf8", (0.220, 0.741, 0.973)),
         };
 
         let (active_accent_hex, active_accent) = if icon == ToastIcon::Record {
@@ -203,8 +204,8 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
         };
 
         fn get_active_gdk_monitor(display: &gdk::Display) -> Option<gdk::Monitor> {
-            if let Ok(out) = std::process::Command::new("hyprctl").args(["monitors", "-j"]).output() {
-                if let Ok(v) = serde_json::from_slice::<Vec<serde_json::Value>>(&out.stdout) {
+            if let Ok(out) = std::process::Command::new("hyprctl").args(["monitors", "-j"]).output()
+                && let Ok(v) = serde_json::from_slice::<Vec<serde_json::Value>>(&out.stdout) {
                     let focused = v.iter().find(|m| m["focused"].as_bool().unwrap_or(false))
                         .or_else(|| v.first());
                     if let Some(m) = focused {
@@ -220,7 +221,6 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
                         }
                     }
                 }
-            }
             display.primary_monitor().or_else(|| display.monitor(0))
         }
 

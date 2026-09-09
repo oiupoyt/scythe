@@ -589,13 +589,12 @@ mod tests {
         let mut got_sys_samples = false;
         let start = std::time::Instant::now();
         while start.elapsed() < std::time::Duration::from_millis(600) {
-            if let Ok(samples) = rx.try_recv() {
-                if !samples.is_empty() {
+            if let Ok(samples) = rx.try_recv()
+                && !samples.is_empty() {
                     got_sys_samples = true;
                     println!("Received {} system audio samples", samples.len());
                     break;
                 }
-            }
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
         assert!(got_sys_samples, "Did not receive any system audio samples");
@@ -608,13 +607,12 @@ mod tests {
         let mut got_mic_samples = false;
         let start = std::time::Instant::now();
         while start.elapsed() < std::time::Duration::from_millis(600) {
-            if let Ok(samples) = rx.try_recv() {
-                if !samples.is_empty() {
+            if let Ok(samples) = rx.try_recv()
+                && !samples.is_empty() {
                     got_mic_samples = true;
                     println!("Received {} mic audio samples", samples.len());
                     break;
                 }
-            }
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
         if !got_mic_samples {
@@ -629,13 +627,12 @@ mod tests {
         let mut got_both_samples = false;
         let start = std::time::Instant::now();
         while start.elapsed() < std::time::Duration::from_millis(600) {
-            if let Ok(samples) = rx.try_recv() {
-                if !samples.is_empty() {
+            if let Ok(samples) = rx.try_recv()
+                && !samples.is_empty() {
                     got_both_samples = true;
                     println!("Received {} mixed audio samples", samples.len());
                     break;
                 }
-            }
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
         if !got_both_samples {

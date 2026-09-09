@@ -80,7 +80,9 @@ pub fn check_for_updates() -> Option<ReleaseInfo> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Default)]
 pub enum UpdateStatus {
+    #[default]
     Idle,
     Checking,
     UpToDate { version: String },
@@ -88,11 +90,6 @@ pub enum UpdateStatus {
     Failed(String),
 }
 
-impl Default for UpdateStatus {
-    fn default() -> Self {
-        UpdateStatus::Idle
-    }
-}
 
 pub fn spawn_update_check(status: Arc<Mutex<UpdateStatus>>) {
     if let Ok(mut lock) = status.lock() {

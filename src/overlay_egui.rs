@@ -367,7 +367,8 @@ pub fn resolve_accent_color(accent: &str) -> Color32 {
         "purple" | "violet" => Color32::from_rgb(168, 85, 247),
         "amber" | "orange" => Color32::from_rgb(245, 158, 11),
         "red" | "crimson" => Color32::from_rgb(239, 68, 68),
-        "blue" | "sapphire" | _ => Color32::from_rgb(56, 189, 248), // Charming and comforting sky sapphire blue
+        "blue" | "sapphire" => Color32::from_rgb(56, 189, 248),
+        _ => Color32::from_rgb(56, 189, 248),
     }
 }
 
@@ -996,8 +997,8 @@ impl ScytheOverlayApp {
             ui.vertical_centered(|ui| {
                 // Voluntary, non-intrusive Update Notification Banner
                 let cur_update = self.update_status.lock().ok().map(|g| g.clone()).unwrap_or_default();
-                if let crate::updater::UpdateStatus::Available(ref info) = cur_update {
-                    if !self.update_dismissed {
+                if let crate::updater::UpdateStatus::Available(ref info) = cur_update
+                    && !self.update_dismissed {
                         egui::Frame::NONE
                             .fill(Color32::from_rgba_unmultiplied(13, 14, 18, 210))
                             .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 170)))
@@ -1028,7 +1029,6 @@ impl ScytheOverlayApp {
                             });
                         ui.add_space(8.0);
                     }
-                }
 
                 ui.horizontal_top(|ui| {
                     ui.spacing_mut().item_spacing = Vec2::new(card_gap, 0.0);
@@ -1342,13 +1342,11 @@ impl ScytheOverlayApp {
                                             .desired_width(55.0)
                                             .font(FontId::monospace(11.5))
                                     );
-                                    if edit_resp.changed() {
-                                        if let Ok(parsed) = self.fps_input_str.trim().parse::<u32>() {
-                                            if (15..=360).contains(&parsed) {
+                                    if edit_resp.changed()
+                                        && let Ok(parsed) = self.fps_input_str.trim().parse::<u32>()
+                                            && (15..=360).contains(&parsed) {
                                                 self.target_fps = parsed;
                                             }
-                                        }
-                                    }
 
                                     ui.add_space(8.0);
                                     for fps in [30, 60, 120, 144, 240] {
@@ -1371,13 +1369,11 @@ impl ScytheOverlayApp {
                                             .desired_width(55.0)
                                             .font(FontId::monospace(11.5))
                                     );
-                                    if edit_resp.changed() {
-                                        if let Ok(parsed) = self.bitrate_input_str.trim().parse::<u32>() {
-                                            if (1..=300).contains(&parsed) {
+                                    if edit_resp.changed()
+                                        && let Ok(parsed) = self.bitrate_input_str.trim().parse::<u32>()
+                                            && (1..=300).contains(&parsed) {
                                                 self.bitrate_mbps = parsed;
                                             }
-                                        }
-                                    }
                                     ui.label(egui::RichText::new("Mbps").size(10.5).color(Color32::from_rgb(150, 150, 155)));
 
                                     ui.add_space(8.0);
@@ -1407,13 +1403,11 @@ impl ScytheOverlayApp {
                                             .desired_width(55.0)
                                             .font(FontId::monospace(11.5))
                                     );
-                                    if edit_resp.changed() {
-                                        if let Ok(parsed) = self.replay_sec_input_str.trim().parse::<u32>() {
-                                            if (5..=1800).contains(&parsed) {
+                                    if edit_resp.changed()
+                                        && let Ok(parsed) = self.replay_sec_input_str.trim().parse::<u32>()
+                                            && (5..=1800).contains(&parsed) {
                                                 self.replay_sec = parsed;
                                             }
-                                        }
-                                    }
                                     ui.label(egui::RichText::new("sec").size(10.5).color(Color32::from_rgb(150, 150, 155)));
 
                                     ui.add_space(8.0);
@@ -1852,8 +1846,8 @@ impl ScytheOverlayApp {
 
                     ui.add_space(10.0);
 
-                    if let Some((msg, ts)) = &self.trim_status_msg {
-                        if ts.elapsed() < Duration::from_secs(4) {
+                    if let Some((msg, ts)) = &self.trim_status_msg
+                        && ts.elapsed() < Duration::from_secs(4) {
                             egui::Frame::NONE
                                 .fill(Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 25))
                                 .stroke(Stroke::new(1.0_f32, accent))
@@ -1869,7 +1863,6 @@ impl ScytheOverlayApp {
                                 });
                             ui.add_space(8.0);
                         }
-                    }
 
                     // Main two-column split
                     ui.horizontal(|ui| {
@@ -2183,12 +2176,11 @@ impl eframe::App for ScytheOverlayApp {
         self.frame_count += 1;
         // Auto-position, DWM transparency, and size to monitor on launch
         if !self.initial_pos_set && self.frame_count >= 2 {
-            if let Some(monitor_size) = ctx.input(|i| i.viewport().monitor_size) {
-                if monitor_size.x > 100.0 && monitor_size.y > 100.0 {
+            if let Some(monitor_size) = ctx.input(|i| i.viewport().monitor_size)
+                && monitor_size.x > 100.0 && monitor_size.y > 100.0 {
                     ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(0.0, 0.0)));
                     ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(monitor_size));
                 }
-            }
             #[cfg(target_os = "windows")]
             apply_windows_transparency("Scythe");
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
@@ -2279,9 +2271,9 @@ impl eframe::App for ScytheOverlayApp {
             }
 
             // Click outside active panel on darkened background to dismiss
-            if !self.folder_picking_active.load(Ordering::SeqCst) && ctx.input(|i| i.pointer.primary_clicked()) {
-                if let Some(pos) = ctx.input(|i| i.pointer.interact_pos()) {
-                    if self.panel_rect.width() > 10.0 && !self.panel_rect.expand(6.0).contains(pos) {
+            if !self.folder_picking_active.load(Ordering::SeqCst) && ctx.input(|i| i.pointer.primary_clicked())
+                && let Some(pos) = ctx.input(|i| i.pointer.interact_pos())
+                    && self.panel_rect.width() > 10.0 && !self.panel_rect.expand(6.0).contains(pos) {
                         if self.replay_dropdown_open || self.record_dropdown_open {
                             self.replay_dropdown_open = false;
                             self.record_dropdown_open = false;
@@ -2291,8 +2283,6 @@ impl eframe::App for ScytheOverlayApp {
                             std::process::exit(0);
                         }
                     }
-                }
-            }
         }
 
         let mut visuals = egui::Visuals::dark();
@@ -2412,8 +2402,8 @@ pub fn apply_windows_transparency(title: &str) {
 #[cfg(not(target_os = "windows"))]
 pub fn query_focused_monitor_rect() -> (f32, f32, f32, f32) {
     // 1. hyprctl monitors -j (Hyprland/Wayland)
-    if let Ok(out) = std::process::Command::new("hyprctl").args(["monitors", "-j"]).output() {
-        if let Ok(v) = serde_json::from_slice::<Vec<serde_json::Value>>(&out.stdout) {
+    if let Ok(out) = std::process::Command::new("hyprctl").args(["monitors", "-j"]).output()
+        && let Ok(v) = serde_json::from_slice::<Vec<serde_json::Value>>(&out.stdout) {
             let focused = v.iter().find(|m| m["focused"].as_bool().unwrap_or(false))
                 .or_else(|| v.first());
             if let Some(m) = focused {
@@ -2431,10 +2421,9 @@ pub fn query_focused_monitor_rect() -> (f32, f32, f32, f32) {
                 }
             }
         }
-    }
     // 2. xrandr fallback (X11 / XWayland)
-    if let Ok(out) = std::process::Command::new("xrandr").output() {
-        if let Ok(text) = std::str::from_utf8(&out.stdout) {
+    if let Ok(out) = std::process::Command::new("xrandr").output()
+        && let Ok(text) = std::str::from_utf8(&out.stdout) {
             for line in text.lines() {
                 if line.contains(" connected") {
                     for part in line.split_whitespace() {
@@ -2442,25 +2431,22 @@ pub fn query_focused_monitor_rect() -> (f32, f32, f32, f32) {
                             let parts: Vec<&str> = part.split('+').collect();
                             if parts.len() >= 3 {
                                 let dims: Vec<&str> = parts[0].split('x').collect();
-                                if dims.len() == 2 {
-                                    if let (Ok(w), Ok(h), Ok(x), Ok(y)) = (
+                                if dims.len() == 2
+                                    && let (Ok(w), Ok(h), Ok(x), Ok(y)) = (
                                         dims[0].parse::<f32>(),
                                         dims[1].parse::<f32>(),
                                         parts[1].parse::<f32>(),
                                         parts[2].parse::<f32>(),
-                                    ) {
-                                        if w > 320.0 && h > 200.0 {
+                                    )
+                                        && w > 320.0 && h > 200.0 {
                                             return (x, y, w, h);
                                         }
-                                    }
-                                }
                             }
                         }
                     }
                 }
             }
         }
-    }
     (0.0, 0.0, 1920.0, 1080.0)
 }
 
@@ -2652,8 +2638,8 @@ pub fn run_egui_toast(title: &str, subtitle: &str, icon: crate::overlay::ToastIc
     let toast_h: f32 = 64.0;
 
     let toast_pid_path = crate::ipc::get_toast_pid_path();
-    if let Ok(prev_pid_str) = std::fs::read_to_string(&toast_pid_path) {
-        if let Ok(prev_pid) = prev_pid_str.trim().parse::<u32>() {
+    if let Ok(prev_pid_str) = std::fs::read_to_string(&toast_pid_path)
+        && let Ok(prev_pid) = prev_pid_str.trim().parse::<u32>() {
             #[cfg(target_os = "windows")]
             unsafe {
                 use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
@@ -2667,7 +2653,6 @@ pub fn run_egui_toast(title: &str, subtitle: &str, icon: crate::overlay::ToastIc
                 let _ = libc::kill(prev_pid as i32, libc::SIGKILL);
             }
         }
-    }
     let _ = std::fs::create_dir_all(toast_pid_path.parent().unwrap_or(std::path::Path::new(".")));
     let _ = std::fs::write(&toast_pid_path, std::process::id().to_string());
 

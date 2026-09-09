@@ -244,19 +244,18 @@ X-GNOME-Autostart-enabled=true\n";
 
             // 3. Hyprland execs.lua integration if present
             let hypr_execs_lua = home.join(".config").join("hypr").join("hyprland").join("execs.lua");
-            if hypr_execs_lua.exists() {
-                if let Ok(mut text) = fs::read_to_string(&hypr_execs_lua) {
+            if hypr_execs_lua.exists()
+                && let Ok(mut text) = fs::read_to_string(&hypr_execs_lua) {
                     let mut modified = false;
 
                     let daemon_cmd_pattern = "scythe-daemon";
                     let daemon_cmd_line = "    hl.exec_cmd(\"scythe-daemon\")\n";
                     if self.autostart_replay {
-                        if !text.contains(daemon_cmd_pattern) {
-                            if let Some(pos) = text.rfind("end)") {
+                        if !text.contains(daemon_cmd_pattern)
+                            && let Some(pos) = text.rfind("end)") {
                                 text.insert_str(pos, daemon_cmd_line);
                                 modified = true;
                             }
-                        }
                     } else if text.contains(daemon_cmd_pattern) {
                         text = text.lines()
                             .filter(|l| !l.contains(daemon_cmd_pattern))
@@ -268,12 +267,11 @@ X-GNOME-Autostart-enabled=true\n";
                     let overlay_cmd_pattern = "scythe-ui --menu";
                     let overlay_cmd_line = "    hl.exec_cmd(\"scythe-ui --menu\")\n";
                     if self.autostart_overlay {
-                        if !text.contains(overlay_cmd_pattern) {
-                            if let Some(pos) = text.rfind("end)") {
+                        if !text.contains(overlay_cmd_pattern)
+                            && let Some(pos) = text.rfind("end)") {
                                 text.insert_str(pos, overlay_cmd_line);
                                 modified = true;
                             }
-                        }
                     } else if text.contains(overlay_cmd_pattern) {
                         text = text.lines()
                             .filter(|l| !l.contains(overlay_cmd_pattern))
@@ -286,7 +284,6 @@ X-GNOME-Autostart-enabled=true\n";
                         let _ = fs::write(&hypr_execs_lua, text);
                     }
                 }
-            }
         }
     }
 

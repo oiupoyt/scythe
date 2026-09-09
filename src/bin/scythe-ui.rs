@@ -91,17 +91,15 @@ fn get_ui_cmd() -> std::process::Command {
 fn check_and_toggle_overlay() -> bool {
     let pid_path = scythe::ipc::get_overlay_pid_path();
     if pid_path.exists() {
-        if let Ok(metadata) = std::fs::metadata(&pid_path) {
-            if let Ok(modified) = metadata.modified() {
-                if let Ok(elapsed) = modified.elapsed() {
+        if let Ok(metadata) = std::fs::metadata(&pid_path)
+            && let Ok(modified) = metadata.modified()
+                && let Ok(elapsed) = modified.elapsed() {
                     // Debounce: if the overlay was spawned less than 400ms ago, this is a
                     // duplicate event from concurrent triggers. Do not kill it; simply exit.
                     if elapsed < std::time::Duration::from_millis(400) {
                         return true;
                     }
                 }
-            }
-        }
 
         if let Ok(content) = std::fs::read_to_string(&pid_path) {
             #[cfg(unix)]
@@ -273,12 +271,11 @@ fn handle_toggle_cursor() -> Result<(), Box<dyn std::error::Error + Send + Sync>
 
 fn handle_save_replay() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     ensure_daemon_running();
-    if let Ok(st) = query_status() {
-        if !st.is_replay_active {
+    if let Ok(st) = query_status()
+        && !st.is_replay_active {
             show_shadowplay_toast("INSTANT REPLAY", "Replay is turned off", ToastIcon::Error);
             return Ok(());
         }
-    }
     send_with_notification(Command::SaveReplay, "INSTANT REPLAY", "Saved to Videos", ToastIcon::Replay)
 }
 
@@ -481,13 +478,12 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut id_rec = None;
         let mut id_cur = None;
 
-        if !is_on_hyprland {
-            if let Some(hk) = m_menu {
+        if !is_on_hyprland
+            && let Some(hk) = m_menu {
                 id_menu = Some(hk.id());
                 let _ = mgr.register(hk);
                 reg.push(hk);
             }
-        }
         if let Some(hk) = m_save {
             id_save = Some(hk.id());
             let _ = mgr.register(hk);
