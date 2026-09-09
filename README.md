@@ -17,15 +17,17 @@ Scythe is a native, ultra-lightweight alternative to NVIDIA ShadowPlay and GPU S
   - **X11**: XCB Shared Memory (MIT-SHM) capture with per-frame pool reuse.
   - **Windows**: Desktop Duplication API via Direct3D 11 (DXGI) texture binding.
 - **Hardware-Accelerated Encoding**:
-  - NVIDIA NVENC (`h264_nvenc`, `hevc_nvenc`)
-  - AMD & Intel VAAPI (`h264_vaapi`, `hevc_vaapi`)
-  - Automatic CPU fallback (`libx264`)
+  - NVIDIA NVENC (`h264_nvenc`, `hevc_nvenc`, `av1_nvenc`) with direct hardware BGR0 input
+  - AMD AMF (`h264_amf`, `hevc_amf`, `av1_amf`) with native hardware format support
+  - Intel QuickSync (`h264_qsv`, `hevc_qsv`, `av1_qsv`)
+  - AMD & Intel VAAPI (`h264_vaapi`, `hevc_vaapi`, `av1_vaapi`) with DMA-BUF zero-copy
+  - Universal SIMD-accelerated CPU fallback (`libx264`, `libx265`, `libsvtav1`)
 - **ShadowPlay-Style Stealth Overlay**:
   - Native GTK 3 Layer-Shell overlay with real background blur for Wayland compositors (Hyprland, Sway, etc.).
   - Cross-platform hardware-rendered `egui` overlay for Windows, GNOME, KDE, and X11.
   - Translucent frosted glass HUD dock, centered controls, and contextual dropdowns.
 - **Dynamic Hyprland Integration**: Automatically registers overlay blur rules and binds hotkeys at runtime without modifying `hyprland.conf`.
-- **Multi-Channel Audio Routing**: Record system audio, microphone, or both simultaneously with individual volume controls via native PulseAudio/PipeWire and WASAPI.
+- **Multi-Channel Audio Routing**: Record system audio, microphone, or both simultaneously with individual volume controls via native PulseAudio/PipeWire and WASAPI/CPAL.
 
 ---
 
@@ -54,10 +56,12 @@ makepkg -si
 
 Download the latest packages directly from [GitHub Releases](https://github.com/oiupoyt/scythe/releases):
 
-- **Debian / Ubuntu / Linux Mint**: `scythe_0.1.0_amd64.deb`
-- **Fedora / RHEL / openSUSE**: `scythe-0.1.0-2.x86_64.rpm`
+- **Windows Setup**: `scythe-setup.exe` (Official installer with Start Menu & Desktop shortcuts)
+- **Windows Portable**: `scythe.exe` (Standalone self-contained executable) & `scythe-windows-x86_64.zip`
+- **Debian / Ubuntu / Linux Mint**: `scythe_*_amd64.deb`
+- **Fedora / RHEL / openSUSE**: `*.rpm`
 - **Universal Linux**: `scythe-x86_64.AppImage`
-- **Windows**: `scythe-setup.exe`
+- **Generic Linux**: `scythe-linux-x86_64.tar.gz`
 
 ### Build from Source
 
