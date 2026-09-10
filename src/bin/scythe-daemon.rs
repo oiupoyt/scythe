@@ -488,6 +488,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut ticker = crossbeam_channel::tick(std::time::Duration::from_nanos(1_000_000_000 / config.fps.max(1) as u64));
         let mut latest_frame: Option<Frame> = None;
         let mut has_new_frame = false;
+        let mut last_encoded_raw_ptr: usize = 0;
 
         loop {
             crossbeam_channel::select! {
@@ -671,24 +672,44 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 recv(ticker) -> _ => {
                     while ticker.try_recv().is_ok() {}
 
+                    if !normal_recording && !config.replay_enabled {
+                        has_new_frame = false;
+                        continue;
+                    }
+
                     let now = std::time::Instant::now();
                     let elapsed = now.duration_since(stream_start);
                     let raw_pts = (elapsed.as_secs_f64() * config.fps as f64).round() as i64;
                     let pts = if raw_pts > last_video_pts { raw_pts } else { last_video_pts + 1 };
                     last_video_pts = pts;
 
-                    let packets_res = if has_new_frame {
+                    let is_same_raw_frame = match &latest_frame {
+                        Some(Frame::Raw { data, .. }) => {
+                            let ptr = Arc::as_ptr(data) as usize;
+                            ptr != 0 && ptr == last_encoded_raw_ptr
+                        }
+                        _ => false,
+                    };
+
+                    let packets_res = if has_new_frame && !is_same_raw_frame {
                         has_new_frame = false;
                         if let Some(ref f) = latest_frame {
+                            if let Frame::Raw { data, .. } = f {
+                                last_encoded_raw_ptr = Arc::as_ptr(data) as usize;
+                            }
                             encoder.encode_frame(f, pts)
                         } else {
                             Ok(Vec::new())
                         }
                     } else {
+                        has_new_frame = false;
                         match encoder.encode_cached_frame(pts) {
                             Ok(pkts) => Ok(pkts),
                             Err(_) => {
                                 if let Some(ref f) = latest_frame {
+                                    if let Frame::Raw { data, .. } = f {
+                                        last_encoded_raw_ptr = Arc::as_ptr(data) as usize;
+                                    }
                                     encoder.encode_frame(f, pts)
                                 } else {
                                     Ok(Vec::new())

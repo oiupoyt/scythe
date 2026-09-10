@@ -25,9 +25,22 @@ ln -sf "$BIN_DIR/scythe-daemon" "$BIN_DIR/vrec-daemon"
 ln -sf "$BIN_DIR/scythe-ui" "$BIN_DIR/vrec-ui"
 ln -sf "$BIN_DIR/scythe-ui" "$BIN_DIR/vrec"
 
-if pgrep -x scythe-daemon > /dev/null; then
+SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
+if [ -f "$SYSTEMD_USER_DIR/vrec-daemon.service" ] || systemctl --user is-active --quiet vrec-daemon.service 2>/dev/null; then
+    echo "Migrating legacy vrec-daemon systemd service to scythe-daemon.service..."
+    systemctl --user stop vrec-daemon.service 2>/dev/null || true
+    systemctl --user disable vrec-daemon.service 2>/dev/null || true
+    rm -f "$SYSTEMD_USER_DIR/vrec-daemon.service"
+    rm -f "$SYSTEMD_USER_DIR/default.target.wants/vrec-daemon.service"
+fi
+
+if systemctl --user is-active --quiet scythe-daemon.service 2>/dev/null; then
+    echo "Restarting active scythe-daemon systemd service..."
+    systemctl --user restart scythe-daemon.service
+elif pgrep -x scythe-daemon > /dev/null || pgrep -x vrec-daemon > /dev/null; then
     echo "Restarting active scythe-daemon engine..."
-    pkill -x scythe-daemon || true
+    pkill -x scythe-daemon 2>/dev/null || true
+    pkill -x vrec-daemon 2>/dev/null || true
     sleep 0.5
     nohup "$BIN_DIR/scythe-daemon" > /dev/null 2>&1 &
     disown

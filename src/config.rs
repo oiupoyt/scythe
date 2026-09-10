@@ -147,6 +147,22 @@ impl ScytheConfig {
         let mut p = Self::expand_tilde(&self.output_directory);
         let _ = fs::create_dir_all(&p);
         p.push(filename);
+
+        if !p.exists() {
+            return p.to_string_lossy().to_string();
+        }
+
+        let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("recording");
+        let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("mp4");
+        let parent = p.parent().unwrap_or_else(|| std::path::Path::new("."));
+
+        for counter in 1..10000 {
+            let candidate = parent.join(format!("{}_{}.{}", stem, counter, ext));
+            if !candidate.exists() {
+                return candidate.to_string_lossy().to_string();
+            }
+        }
+
         p.to_string_lossy().to_string()
     }
 
@@ -360,5 +376,27 @@ mod tests {
         for part in &date_parts {
             assert!(part.chars().all(|c| c.is_ascii_digit()));
         }
+    }
+
+    #[test]
+    fn test_resolve_save_path_collision() {
+        let temp_dir = std::env::temp_dir().join(format!("scythe_test_collision_{}", std::process::id()));
+        let cfg = ScytheConfig {
+            output_directory: temp_dir.to_string_lossy().to_string(),
+            ..Default::default()
+        };
+
+        let path1 = cfg.resolve_save_path("test_clip.mp4");
+        assert!(path1.ends_with("test_clip.mp4"));
+        fs::write(&path1, b"dummy").unwrap();
+
+        let path2 = cfg.resolve_save_path("test_clip.mp4");
+        assert!(path2.ends_with("test_clip_1.mp4"), "Expected collision to append _1: {}", path2);
+        fs::write(&path2, b"dummy2").unwrap();
+
+        let path3 = cfg.resolve_save_path("test_clip.mp4");
+        assert!(path3.ends_with("test_clip_2.mp4"), "Expected collision to append _2: {}", path3);
+
+        let _ = fs::remove_dir_all(temp_dir);
     }
 }
