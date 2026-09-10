@@ -143,6 +143,102 @@ pub fn soft_limit(x: f32) -> f32 {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct ResampleState {
+    pub phase: f64,
+}
+
+pub fn convert_to_stereo_48k(
+    raw_data: &[f32],
+    in_channels: u16,
+    in_sample_rate: u32,
+    gain: f32,
+    state: &mut ResampleState,
+) -> Vec<f32> {
+    let ch = (in_channels as usize).max(1);
+    let num_frames = raw_data.len() / ch;
+    if num_frames == 0 {
+        return Vec::new();
+    }
+
+    // Step 1: Up/downmix any input channel layout into stereo (2 channels)
+    let mut stereo_in = Vec::with_capacity(num_frames * 2);
+    match ch {
+        1 => {
+            for &sample in raw_data {
+                let s = sample * gain;
+                stereo_in.push(s);
+                stereo_in.push(s);
+            }
+        }
+        2 => {
+            for pair in raw_data.chunks_exact(2) {
+                stereo_in.push(pair[0] * gain);
+                stereo_in.push(pair[1] * gain);
+            }
+        }
+        3 => {
+            for frame in raw_data.chunks_exact(3) {
+                let center = frame[2] * std::f32::consts::FRAC_1_SQRT_2;
+                stereo_in.push((frame[0] + center) * gain);
+                stereo_in.push((frame[1] + center) * gain);
+            }
+        }
+        _ => {
+            // Surround downmix (4, 5.1, 7.1)
+            for frame in raw_data.chunks_exact(ch) {
+                let center = if ch > 2 { frame[2] * std::f32::consts::FRAC_1_SQRT_2 } else { 0.0 };
+                let l_surround = if ch > 4 { frame[4] * std::f32::consts::FRAC_1_SQRT_2 } else { 0.0 };
+                let r_surround = if ch > 5 { frame[5] * std::f32::consts::FRAC_1_SQRT_2 } else { 0.0 };
+                let l = (frame[0] + center + l_surround) * gain;
+                let r = (frame[1] + center + r_surround) * gain;
+                stereo_in.push(l);
+                stereo_in.push(r);
+            }
+        }
+    }
+
+    // Step 2: Sample rate conversion to 48,000 Hz
+    if in_sample_rate == 48000 || in_sample_rate == 0 {
+        for sample in stereo_in.iter_mut() {
+            *sample = soft_limit(*sample);
+        }
+        return stereo_in;
+    }
+
+    let in_frames = stereo_in.len() / 2;
+    let ratio = in_sample_rate as f64 / 48000.0;
+    let est_out = ((in_frames as f64) / ratio).ceil() as usize;
+    let mut out = Vec::with_capacity(est_out * 2 + 8);
+
+    while state.phase < in_frames as f64 {
+        let idx = state.phase.floor() as usize;
+        let frac = (state.phase - idx as f64) as f32;
+
+        let (cur_l, cur_r) = (stereo_in[idx * 2], stereo_in[idx * 2 + 1]);
+        let (next_l, next_r) = if idx + 1 < in_frames {
+            (stereo_in[(idx + 1) * 2], stereo_in[(idx + 1) * 2 + 1])
+        } else {
+            (cur_l, cur_r)
+        };
+
+        let l = cur_l + (next_l - cur_l) * frac;
+        let r = cur_r + (next_r - cur_r) * frac;
+
+        out.push(soft_limit(l));
+        out.push(soft_limit(r));
+
+        state.phase += ratio;
+    }
+
+    state.phase -= in_frames as f64;
+    if state.phase < 0.0 {
+        state.phase = 0.0;
+    }
+
+    out
+}
+
 #[cfg(unix)]
 fn is_parec_available() -> bool {
     std::process::Command::new("parec")
@@ -382,6 +478,13 @@ impl AudioCapture {
         let host = cpal::default_host();
 
         let find_system_device = || -> Option<cpal::Device> {
+            #[cfg(target_os = "windows")]
+            {
+                if let Some(out_dev) = host.default_output_device() {
+                    return Some(out_dev);
+                }
+            }
+            #[cfg(not(target_os = "windows"))]
             if let Ok(devs) = host.input_devices() {
                 for d in devs {
                     let n = get_device_name(&d).to_lowercase();
@@ -417,21 +520,24 @@ impl AudioCapture {
 
         let levels_for_cpal = Arc::clone(&levels);
         let build_stream = move |dev: &cpal::Device, tx: Sender<Vec<f32>>, gain: f32, is_mic: bool| -> Result<(cpal::Stream, u32, u16), Box<dyn std::error::Error + Send + Sync>> {
-            let config = dev.default_input_config()?;
-            let sample_rate = config.sample_rate();
-            let channels = config.channels();
+            let config = dev.default_input_config().or_else(|_| dev.default_output_config())?;
+            let in_sample_rate = config.sample_rate();
+            let in_channels = config.channels();
             let format = config.sample_format();
             let err_fn = |err| eprintln!("Audio stream error: {}", err);
             let stream_config: cpal::StreamConfig = config.into();
             let lvl_f32 = Arc::clone(&levels_for_cpal);
             let lvl_i16 = Arc::clone(&levels_for_cpal);
 
+            let mut resample_state_f32 = ResampleState::default();
+            let mut resample_state_i16 = ResampleState::default();
+
             let stream = match format {
                 cpal::SampleFormat::F32 => {
                     dev.build_input_stream(
                         stream_config,
                         move |data: &[f32], _: &_| {
-                            let f32_data: Vec<f32> = data.iter().map(|&s| soft_limit(s * gain)).collect();
+                            let f32_data = convert_to_stereo_48k(data, in_channels, in_sample_rate, gain, &mut resample_state_f32);
                             if is_mic {
                                 lvl_f32.update_mic(&f32_data);
                             } else {
@@ -447,7 +553,8 @@ impl AudioCapture {
                     dev.build_input_stream(
                         stream_config,
                         move |data: &[i16], _: &_| {
-                            let f32_data: Vec<f32> = data.iter().map(|&s| soft_limit((s as f32 / i16::MAX as f32) * gain)).collect();
+                            let converted_f32: Vec<f32> = data.iter().map(|&s| s as f32 / 32768.0).collect();
+                            let f32_data = convert_to_stereo_48k(&converted_f32, in_channels, in_sample_rate, gain, &mut resample_state_i16);
                             if is_mic {
                                 lvl_i16.update_mic(&f32_data);
                             } else {
@@ -462,7 +569,7 @@ impl AudioCapture {
                 _ => return Err("Unsupported audio format".into()),
             };
             stream.play()?;
-            Ok((stream, sample_rate, channels))
+            Ok((stream, 48000, 2))
         };
 
         match audio_mode {
@@ -639,6 +746,49 @@ mod tests {
             println!("Note: No mixed audio hardware active in current test environment");
         }
         drop(both_cap);
+    }
+
+    #[test]
+    fn test_convert_mono_44100_to_stereo_48000() {
+        let mut state = ResampleState::default();
+        // 4410 mono frames at 44.1kHz = 0.1 seconds
+        let mono_input: Vec<f32> = (0..4410).map(|i| (i as f32 * 0.05).sin() * 0.5).collect();
+        let output = convert_to_stereo_48k(&mono_input, 1, 44100, 1.0, &mut state);
+
+        // At 48000 Hz, 0.1s should yield ~4800 stereo frames = ~9600 floats
+        let num_out_frames = output.len() / 2;
+        assert!(
+            (num_out_frames as i32 - 4800).abs() <= 5,
+            "Expected ~4800 frames, got {}",
+            num_out_frames
+        );
+
+        // Ensure every pair has left == right (mono centered)
+        for pair in output.chunks_exact(2) {
+            assert!((pair[0] - pair[1]).abs() < 1e-5, "Mono upmix must be centered: {} != {}", pair[0], pair[1]);
+        }
+    }
+
+    #[test]
+    fn test_convert_stereo_48000_passthrough() {
+        let mut state = ResampleState::default();
+        let stereo_input = vec![0.25f32, -0.25f32, 0.5f32, -0.5f32];
+        let output = convert_to_stereo_48k(&stereo_input, 2, 48000, 1.0, &mut state);
+        assert_eq!(output.len(), 4);
+        assert!((output[0] - 0.25).abs() < 1e-5);
+        assert!((output[1] - (-0.25)).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_convert_5_1_surround_downmix() {
+        let mut state = ResampleState::default();
+        // 6 channels: FL, FR, FC, LFE, SL, SR
+        let surround_input = vec![0.2f32, 0.2f32, 0.4f32, 0.0f32, 0.1f32, 0.1f32];
+        let output = convert_to_stereo_48k(&surround_input, 6, 48000, 1.0, &mut state);
+        assert_eq!(output.len(), 2);
+        // Both channels should be equal due to symmetrical inputs
+        assert!((output[0] - output[1]).abs() < 1e-5);
+        assert!(output[0] > 0.2, "Downmixing center/surround should contribute to stereo channel");
     }
 }
 

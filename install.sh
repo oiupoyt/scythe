@@ -34,8 +34,9 @@ if [ -f "$SYSTEMD_USER_DIR/vrec-daemon.service" ] || systemctl --user is-active 
     rm -f "$SYSTEMD_USER_DIR/default.target.wants/vrec-daemon.service"
 fi
 
-if systemctl --user is-active --quiet scythe-daemon.service 2>/dev/null; then
+if [ -f "$SYSTEMD_USER_DIR/scythe-daemon.service" ] || systemctl --user is-enabled --quiet scythe-daemon.service 2>/dev/null; then
     echo "Restarting active scythe-daemon systemd service..."
+    systemctl --user reset-failed scythe-daemon.service 2>/dev/null || true
     systemctl --user restart scythe-daemon.service
 elif pgrep -x scythe-daemon > /dev/null || pgrep -x vrec-daemon > /dev/null; then
     echo "Restarting active scythe-daemon engine..."

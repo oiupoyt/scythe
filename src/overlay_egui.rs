@@ -335,6 +335,42 @@ fn pick_folder(current_dir: &str, tx: Sender<String>, is_active: Arc<AtomicBool>
     });
 }
 
+fn spawn_daemon_process() {
+    let mut cmd = if let Ok(mut path) = std::env::current_exe() {
+        path.pop();
+        #[cfg(target_os = "windows")]
+        let primary = path.join("scythe-daemon.exe");
+        #[cfg(not(target_os = "windows"))]
+        let primary = path.join("scythe-daemon");
+
+        if primary.exists() {
+            std::process::Command::new(primary)
+        } else {
+            #[cfg(target_os = "windows")]
+            { std::process::Command::new("scythe-daemon.exe") }
+            #[cfg(not(target_os = "windows"))]
+            { std::process::Command::new("scythe-daemon") }
+        }
+    } else {
+        #[cfg(target_os = "windows")]
+        { std::process::Command::new("scythe-daemon.exe") }
+        #[cfg(not(target_os = "windows"))]
+        { std::process::Command::new("scythe-daemon") }
+    };
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+
+    let _ = cmd
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+}
+
 // Asynchronous daemon command dispatcher to avoid blocking the egui render loop
 fn async_send_command(cmd: Command) {
     std::thread::spawn(move || {
@@ -1266,7 +1302,7 @@ impl ScytheOverlayApp {
                                             self.config.autostart = ar;
                                             let _ = self.config.save();
                                             if ar {
-                                                let _ = std::process::Command::new("scythe-daemon").spawn();
+                                                spawn_daemon_process();
                                             }
                                             self.show_hud_notification(
                                                 "AUTOSTART REPLAY",
