@@ -23,6 +23,19 @@ pub enum KeybindAction {
     ToggleCursor,
 }
 
+pub fn setup_custom_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert(
+        "modern_sans".to_owned(),
+        Arc::new(egui::FontData::from_static(include_bytes!("../assets/fonts/AdwaitaSans-Regular.ttf"))),
+    );
+    fonts.families
+        .entry(egui::FontFamily::Proportional)
+        .or_default()
+        .insert(0, "modern_sans".to_owned());
+    ctx.set_fonts(fonts);
+}
+
 fn format_egui_key(key: egui::Key) -> Option<String> {
     match key {
         egui::Key::Escape => None,
@@ -151,7 +164,7 @@ fn render_vu_meter(ui: &mut egui::Ui, level: f32, width: f32, height: f32, label
 
     let bg_color = Color32::from_rgb(14, 14, 16);
     let border_stroke = Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 20));
-    ui.painter().rect(rect, CornerRadius::ZERO, bg_color, border_stroke, egui::StrokeKind::Inside);
+    ui.painter().rect(rect, CornerRadius::same(3), bg_color, border_stroke, egui::StrokeKind::Inside);
 
     let fill_w = (rect.width() * clamped).max(0.0);
     if fill_w > 0.5 {
@@ -163,7 +176,7 @@ fn render_vu_meter(ui: &mut egui::Ui, level: f32, width: f32, height: f32, label
         } else {
             Color32::from_rgb(34, 197, 94)
         };
-        ui.painter().rect_filled(fill_rect, CornerRadius::ZERO, fill_color);
+        ui.painter().rect_filled(fill_rect, CornerRadius::same(3), fill_color);
     }
 
     if clamped > 0.05 {
@@ -179,7 +192,7 @@ fn render_vu_meter(ui: &mut egui::Ui, level: f32, width: f32, height: f32, label
             rect.left_center() + Vec2::new(3.0, 0.0),
             egui::Align2::LEFT_CENTER,
             label,
-            FontId::monospace(8.0),
+            FontId::proportional(8.5),
             Color32::from_rgba_unmultiplied(255, 255, 255, 200),
         );
     }
@@ -382,16 +395,16 @@ fn async_send_command(cmd: Command) {
 #[allow(dead_code)]
 fn render_keycap(ui: &mut egui::Ui, text: &str) {
     egui::Frame::NONE
-        .fill(Color32::from_rgb(15, 15, 17))
-        .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 28)))
-        .corner_radius(CornerRadius::ZERO)
-        .inner_margin(Margin::symmetric(6_i8, 2_i8))
+        .fill(Color32::from_rgb(18, 20, 26))
+        .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 26)))
+        .corner_radius(CornerRadius::same(5))
+        .inner_margin(Margin::symmetric(7_i8, 3_i8))
         .show(ui, |ui| {
             ui.label(
                 egui::RichText::new(text)
                     .font(FontId::monospace(9.5))
                     .strong()
-                    .color(Color32::from_rgb(215, 215, 220)),
+                    .color(Color32::from_rgb(220, 222, 228)),
             );
         });
 }
@@ -417,16 +430,16 @@ fn render_keycap_button(
 ) -> bool {
     let (fill, stroke, text_color, label_text) = if listening {
         (
-            Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 28),
+            Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 32),
             Stroke::new(1.5_f32, accent),
             accent,
             "PRESS KEYS...".to_string(),
         )
     } else {
         (
-            Color32::from_rgba_unmultiplied(18, 20, 26, 195),
-            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 28)),
-            Color32::from_rgb(220, 220, 225),
+            Color32::from_rgba_unmultiplied(20, 22, 30, 210),
+            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 24)),
+            Color32::from_rgb(220, 220, 228),
             text.to_string(),
         )
     };
@@ -439,33 +452,33 @@ fn render_keycap_button(
     )
     .fill(fill)
     .stroke(stroke)
-    .corner_radius(CornerRadius::ZERO)
+    .corner_radius(CornerRadius::same(6))
     .min_size(Vec2::new(130.0, 26.0));
 
     ui.add(btn).clicked()
 }
 
-// Minimal squared button selector
+// Modern sleek rounded button
 fn squared_button(ui: &mut egui::Ui, text: &str, active: bool, accent: Color32) -> bool {
     let fill = if active {
         accent
     } else {
-        Color32::from_rgba_unmultiplied(255, 255, 255, 10)
+        Color32::from_rgba_unmultiplied(255, 255, 255, 12)
     };
     let stroke = if active {
         Stroke::new(1.0_f32, accent)
     } else {
-        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 22))
+        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 24))
     };
     let text_color = if active {
         Color32::from_rgb(10, 10, 12)
     } else {
-        Color32::from_rgb(200, 200, 205)
+        Color32::from_rgb(215, 215, 220)
     };
-    let btn = egui::Button::new(egui::RichText::new(text).size(11.0).strong().color(text_color))
+    let btn = egui::Button::new(egui::RichText::new(text).size(11.5).strong().color(text_color))
         .fill(fill)
         .stroke(stroke)
-        .corner_radius(CornerRadius::ZERO);
+        .corner_radius(CornerRadius::same(6));
     ui.add(btn).clicked()
 }
 
@@ -474,7 +487,7 @@ fn pill_button(ui: &mut egui::Ui, text: &str, active: bool, accent: Color32) -> 
     squared_button(ui, text, active, accent)
 }
 
-// Sleek Squared Switch Toggle
+// Sleek Modern Switch Toggle
 fn toggle_switch(ui: &mut egui::Ui, on: &mut bool, accent: Color32) -> egui::Response {
     let desired_size = egui::vec2(38.0, 20.0);
     let (rect, mut response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
@@ -489,14 +502,14 @@ fn toggle_switch(ui: &mut egui::Ui, on: &mut bool, accent: Color32) -> egui::Res
         let bg_color = if *on {
             accent
         } else {
-            Color32::from_rgb(25, 25, 28)
+            Color32::from_rgb(26, 28, 34)
         };
-        let stroke = Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 26));
-        ui.painter().rect(rect, CornerRadius::ZERO, bg_color, stroke, egui::StrokeKind::Inside);
+        let stroke = Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 28));
+        ui.painter().rect(rect, CornerRadius::same(10), bg_color, stroke, egui::StrokeKind::Inside);
         let knob_w = rect.height() - 4.0;
         let knob_x = egui::lerp((rect.left() + 2.0)..=(rect.right() - knob_w - 2.0), how_on);
         let knob_rect = egui::Rect::from_min_size(egui::pos2(knob_x, rect.top() + 2.0), egui::vec2(knob_w, knob_w));
-        ui.painter().rect_filled(knob_rect, CornerRadius::ZERO, Color32::WHITE);
+        ui.painter().rect_filled(knob_rect, CornerRadius::same(8), Color32::WHITE);
     }
     response
 }
@@ -629,11 +642,11 @@ fn draw_settings_icon(painter: &egui::Painter, center: egui::Pos2, radius: f32, 
             center + Vec2::new(x_off, y_off),
             Vec2::new(knob_w, knob_h),
         );
-        painter.rect_filled(knob_rect, CornerRadius::ZERO, color);
+        painter.rect_filled(knob_rect, CornerRadius::same(2), color);
     }
 }
 
-// Minimal Squared Action Card Renderer
+// Modern Sleek Action Card Renderer
 #[allow(clippy::too_many_arguments)]
 fn render_action_card(
     ui: &mut egui::Ui,
@@ -656,36 +669,36 @@ fn render_action_card(
     let hovered = response.hovered();
 
     let bg = if dropdown_open {
-        Color32::from_rgba_unmultiplied(22, 24, 30, 220)
+        Color32::from_rgba_unmultiplied(26, 30, 44, 245)
     } else if hovered {
-        Color32::from_rgba_unmultiplied(18, 20, 26, 210)
+        Color32::from_rgba_unmultiplied(22, 26, 38, 235)
     } else {
-        Color32::from_rgba_unmultiplied(12, 13, 17, 195)
+        Color32::from_rgba_unmultiplied(16, 18, 25, 220)
     };
 
     let border = if dropdown_open {
         accent
     } else if hovered {
-        Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 190)
+        Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 180)
     } else {
-        Color32::from_rgba_unmultiplied(255, 255, 255, 25)
+        Color32::from_rgba_unmultiplied(255, 255, 255, 24)
     };
 
     let painter = ui.painter();
-    // Card background - SQUARED
-    painter.rect(rect, CornerRadius::ZERO, bg, Stroke::new(1.0_f32, border), egui::StrokeKind::Inside);
+    // Card background - Modern Sleek Glass with rounded corners
+    painter.rect(rect, CornerRadius::same(12), bg, Stroke::new(1.0_f32, border), egui::StrokeKind::Inside);
 
-    // Card Title
+    // Card Title (clean modern sans typography)
     painter.text(
-        egui::pos2(rect.center().x, rect.top() + 24.0),
+        egui::pos2(rect.center().x, rect.top() + 25.0),
         egui::Align2::CENTER_CENTER,
         title,
-        FontId::monospace(14.5),
+        FontId::proportional(14.0),
         if is_active { accent } else { Color32::WHITE },
     );
 
     // Centered vector icon
-    let icon_center = egui::pos2(rect.center().x, rect.top() + 84.0);
+    let icon_center = egui::pos2(rect.center().x, rect.top() + 85.0);
     draw_icon(painter, icon_center);
 
     // Status subtitle (e.g. "01:23" or "Not recording" / "Buffer 60s")
@@ -703,13 +716,13 @@ fn render_action_card(
         egui::Align2::CENTER_CENTER,
         sub_text,
         FontId::proportional(10.0),
-        Color32::from_rgb(120, 120, 126),
+        Color32::from_rgb(130, 135, 145),
     );
 
     response.clicked()
 }
 
-// Sleek Squared Dropdown Action Menu Container
+// Modern Sleek Dropdown Action Menu Container
 fn render_dropdown_menu(
     ui: &mut egui::Ui,
     card_width: f32,
@@ -718,10 +731,10 @@ fn render_dropdown_menu(
 ) {
     ui.add_space(6.0);
     egui::Frame::NONE
-        .fill(Color32::from_rgba_unmultiplied(12, 13, 17, 235))
-        .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 180)))
-        .corner_radius(CornerRadius::ZERO)
-        .inner_margin(Margin::ZERO)
+        .fill(Color32::from_rgba_unmultiplied(16, 19, 27, 245))
+        .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 160)))
+        .corner_radius(CornerRadius::same(10))
+        .inner_margin(Margin::symmetric(4_i8, 4_i8))
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing = Vec2::ZERO;
             ui.set_width(card_width);
@@ -731,7 +744,7 @@ fn render_dropdown_menu(
         });
 }
 
-// Sleek Squared Dropdown Action Menu Item (Completely fills container, zero bottom dead space)
+// Modern Sleek Dropdown Action Menu Item
 fn render_menu_item(ui: &mut egui::Ui, label: &str, accent: Color32, is_last: bool) -> bool {
     let (raw_rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 35.0), egui::Sense::click());
     let rect = egui::Rect::from_min_size(
@@ -741,17 +754,17 @@ fn render_menu_item(ui: &mut egui::Ui, label: &str, accent: Color32, is_last: bo
     let hovered = response.hovered();
 
     let bg = if hovered {
-        Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 28)
+        Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 32)
     } else {
         Color32::TRANSPARENT
     };
 
-    ui.painter().rect_filled(rect, CornerRadius::ZERO, bg);
+    ui.painter().rect_filled(rect, CornerRadius::same(6), bg);
 
-    // Clean 1px divider between items (not drawn on last item so it stays flush)
-    if !is_last {
+    // Clean subtle 1px divider between items (not drawn on last item so it stays flush)
+    if !is_last && !hovered {
         ui.painter().line_segment(
-            [egui::pos2(rect.left(), rect.bottom()), egui::pos2(rect.right(), rect.bottom())],
+            [egui::pos2(rect.left() + 8.0, rect.bottom()), egui::pos2(rect.right() - 8.0, rect.bottom())],
             Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 14)),
         );
     }
@@ -759,7 +772,7 @@ fn render_menu_item(ui: &mut egui::Ui, label: &str, accent: Color32, is_last: bo
     let text_color = if hovered {
         accent
     } else {
-        Color32::from_rgb(220, 220, 225)
+        Color32::from_rgb(220, 222, 228)
     };
 
     ui.painter().text(
@@ -776,9 +789,9 @@ fn render_menu_item(ui: &mut egui::Ui, label: &str, accent: Color32, is_last: bo
 // Section card helper for Settings view
 fn render_section_card(ui: &mut egui::Ui, header: &str, accent: Color32, add_contents: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::NONE
-        .fill(Color32::from_rgba_unmultiplied(16, 18, 24, 185))
-        .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 16)))
-        .corner_radius(CornerRadius::ZERO)
+        .fill(Color32::from_rgba_unmultiplied(18, 21, 28, 190))
+        .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 18)))
+        .corner_radius(CornerRadius::same(8))
         .inner_margin(Margin::symmetric(16_i8, 12_i8))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -1036,15 +1049,15 @@ impl ScytheOverlayApp {
                 if let crate::updater::UpdateStatus::Available(ref info) = cur_update
                     && !self.update_dismissed {
                         egui::Frame::NONE
-                            .fill(Color32::from_rgba_unmultiplied(13, 14, 18, 210))
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 170)))
-                            .corner_radius(CornerRadius::ZERO)
+                            .fill(Color32::from_rgba_unmultiplied(16, 19, 27, 220))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 160)))
+                            .corner_radius(CornerRadius::same(8))
                             .inner_margin(Margin::symmetric(14_i8, 7_i8))
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
                                     ui.label(
                                         egui::RichText::new(format!("UPDATE: v{}", info.version))
-                                            .font(FontId::monospace(11.0))
+                                            .size(11.5)
                                             .strong()
                                             .color(accent),
                                     );
@@ -1205,12 +1218,19 @@ impl ScytheOverlayApp {
                     });
                 });
 
-                ui.add_space(14.0);
-                ui.label(
-                    egui::RichText::new("ESC or click outside to close")
-                        .font(FontId::monospace(10.0))
-                        .color(Color32::from_rgba_unmultiplied(203, 213, 225, 120)),
-                );
+                ui.add_space(16.0);
+                egui::Frame::NONE
+                    .fill(Color32::from_rgba_unmultiplied(12, 14, 20, 180))
+                    .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 18)))
+                    .corner_radius(CornerRadius::same(12))
+                    .inner_margin(Margin::symmetric(14_i8, 5_i8))
+                    .show(ui, |ui| {
+                        ui.label(
+                            egui::RichText::new("ESC or click outside to close")
+                                .size(10.5)
+                                .color(Color32::from_rgba_unmultiplied(203, 213, 225, 150)),
+                        );
+                    });
             });
         });
     }
@@ -1228,9 +1248,9 @@ impl ScytheOverlayApp {
 
         ui.allocate_new_ui(egui::UiBuilder::new().max_rect(modal_rect), |ui| {
             egui::Frame::NONE
-                .fill(Color32::from_rgba_unmultiplied(12, 13, 17, 210))
-                .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 160)))
-                .corner_radius(CornerRadius::ZERO)
+                .fill(Color32::from_rgba_unmultiplied(14, 16, 22, 240))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 140)))
+                .corner_radius(CornerRadius::same(12))
                 .inner_margin(Margin::symmetric(24_i8, 20_i8))
                 .show(ui, |ui| {
                     ui.set_width(modal_w - 48.0);
@@ -1239,13 +1259,13 @@ impl ScytheOverlayApp {
                     ui.horizontal(|ui| {
                         let back_btn = egui::Button::new(
                             egui::RichText::new("< BACK")
-                                .font(FontId::monospace(12.0))
+                                .size(11.5)
                                 .strong()
                                 .color(accent),
                         )
-                        .fill(Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 22))
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 180)))
-                        .corner_radius(CornerRadius::ZERO);
+                        .fill(Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 24))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 160)))
+                        .corner_radius(CornerRadius::same(6));
 
                         if ui.add(back_btn).clicked() {
                             self.switch_view(ShadowPlayView::MainHud, ctx);
@@ -1255,7 +1275,7 @@ impl ScytheOverlayApp {
                         ui.add_space(14.0);
                         ui.label(
                             egui::RichText::new("SETTINGS")
-                                .font(FontId::proportional(16.0))
+                                .font(FontId::proportional(15.0))
                                 .strong()
                                 .color(Color32::WHITE),
                         );
@@ -1263,15 +1283,15 @@ impl ScytheOverlayApp {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             egui::Frame::NONE
                                 .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 12))
-                                .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 25)))
-                                .corner_radius(CornerRadius::ZERO)
-                                .inner_margin(Margin::symmetric(8_i8, 4_i8))
+                                .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 22)))
+                                .corner_radius(CornerRadius::same(6))
+                                .inner_margin(Margin::symmetric(9_i8, 4_i8))
                                 .show(ui, |ui| {
                                     ui.label(
                                         egui::RichText::new("ESC TO CLOSE")
-                                            .font(FontId::monospace(10.0))
+                                            .size(10.5)
                                             .strong()
-                                            .color(Color32::from_rgb(150, 150, 155)),
+                                            .color(Color32::from_rgb(160, 160, 168)),
                                     );
                                 });
                         });
@@ -1660,7 +1680,7 @@ impl ScytheOverlayApp {
                                         )
                                         .fill(bg)
                                         .stroke(stroke)
-                                        .corner_radius(CornerRadius::ZERO)
+                                        .corner_radius(CornerRadius::same(6))
                                         .min_size(Vec2::new(140.0, 30.0));
 
                                         if ui.add(btn).clicked() {
@@ -1754,12 +1774,12 @@ impl ScytheOverlayApp {
                             ui.horizontal(|ui| {
                                 let reset_btn = egui::Button::new(
                                     egui::RichText::new("RESET DEFAULTS")
-                                        .font(FontId::monospace(11.5))
+                                        .font(FontId::proportional(11.5))
                                         .color(Color32::from_rgb(180, 180, 190)),
                                 )
                                 .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 14))
                                 .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 28)))
-                                .corner_radius(CornerRadius::ZERO)
+                                .corner_radius(CornerRadius::same(6))
                                 .min_size(Vec2::new(135.0, 38.0));
 
                                 if ui.add(reset_btn).clicked() {
@@ -1783,13 +1803,13 @@ impl ScytheOverlayApp {
 
                                 let apply_btn = egui::Button::new(
                                     egui::RichText::new("APPLY & SAVE SETTINGS")
-                                        .font(FontId::monospace(12.5))
+                                        .font(FontId::proportional(12.5))
                                         .strong()
                                         .color(Color32::from_rgb(11, 18, 4)),
                                 )
                                 .fill(accent)
                                 .stroke(Stroke::NONE)
-                                .corner_radius(CornerRadius::ZERO)
+                                .corner_radius(CornerRadius::same(6))
                                 .min_size(Vec2::new(ui.available_width(), 38.0));
 
                                 if ui.add(apply_btn).clicked() {
@@ -1837,9 +1857,9 @@ impl ScytheOverlayApp {
 
         ui.allocate_new_ui(egui::UiBuilder::new().max_rect(modal_rect), |ui| {
             egui::Frame::NONE
-                .fill(Color32::from_rgba_unmultiplied(12, 13, 17, 210))
-                .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 160)))
-                .corner_radius(CornerRadius::ZERO)
+                .fill(Color32::from_rgba_unmultiplied(14, 16, 22, 240))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 140)))
+                .corner_radius(CornerRadius::same(12))
                 .inner_margin(Margin::symmetric(20_i8, 16_i8))
                 .show(ui, |ui| {
                     ui.set_width(modal_w - 40.0);
@@ -1848,13 +1868,13 @@ impl ScytheOverlayApp {
                     ui.horizontal(|ui| {
                         let back_btn = egui::Button::new(
                             egui::RichText::new("< BACK TO SETTINGS")
-                                .font(FontId::monospace(11.0))
+                                .size(11.5)
                                 .strong()
                                 .color(accent),
                         )
-                        .fill(Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 22))
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 180)))
-                        .corner_radius(CornerRadius::ZERO);
+                        .fill(Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 24))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 160)))
+                        .corner_radius(CornerRadius::same(6));
 
                         if ui.add(back_btn).clicked() {
                             self.switch_view(ShadowPlayView::Settings, ctx);
@@ -1864,7 +1884,7 @@ impl ScytheOverlayApp {
                         ui.add_space(12.0);
                         ui.label(
                             egui::RichText::new("GALLERY & CLIP TRIMMER")
-                                .font(FontId::proportional(14.0))
+                                .font(FontId::proportional(15.0))
                                 .strong()
                                 .color(Color32::WHITE),
                         );
@@ -1887,7 +1907,7 @@ impl ScytheOverlayApp {
                             egui::Frame::NONE
                                 .fill(Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 25))
                                 .stroke(Stroke::new(1.0_f32, accent))
-                                .corner_radius(CornerRadius::ZERO)
+                                .corner_radius(CornerRadius::same(6))
                                 .inner_margin(Margin::symmetric(10_i8, 6_i8))
                                 .show(ui, |ui| {
                                     ui.label(
@@ -1931,7 +1951,7 @@ impl ScytheOverlayApp {
                                             let resp = egui::Frame::NONE
                                                 .fill(card_bg)
                                                 .stroke(border)
-                                                .corner_radius(CornerRadius::ZERO)
+                                                .corner_radius(CornerRadius::same(8))
                                                 .inner_margin(Margin::symmetric(8_i8, 6_i8))
                                                 .show(ui, |ui| {
                                                     ui.set_width(260.0);
@@ -1939,7 +1959,7 @@ impl ScytheOverlayApp {
                                                         let badge_col = if clip.is_replay { accent } else { Color32::from_rgb(239, 68, 68) };
                                                         let badge_txt = if clip.is_replay { "REPLAY" } else { "REC" };
                                                         let (b_rect, _) = ui.allocate_exact_size(Vec2::new(44.0, 16.0), egui::Sense::hover());
-                                                        ui.painter().rect_filled(b_rect, CornerRadius::ZERO, badge_col);
+                                                        ui.painter().rect_filled(b_rect, CornerRadius::same(4), badge_col);
                                                         ui.painter().text(b_rect.center(), egui::Align2::CENTER_CENTER, badge_txt, FontId::monospace(8.5), Color32::from_rgb(11, 18, 4));
 
                                                         ui.add_space(4.0);
@@ -1995,7 +2015,7 @@ impl ScytheOverlayApp {
                                             let play_btn = egui::Button::new(egui::RichText::new("PLAY VIDEO").size(11.0).strong().color(Color32::from_rgb(11, 18, 4)))
                                                 .fill(accent)
                                                 .stroke(Stroke::NONE)
-                                                .corner_radius(CornerRadius::ZERO);
+                                                .corner_radius(CornerRadius::same(6));
                                             if ui.add(play_btn).clicked() {
                                                 play_clip(&clip.path);
                                             }
@@ -2007,7 +2027,7 @@ impl ScytheOverlayApp {
                                             let del_btn = egui::Button::new(egui::RichText::new("DELETE").size(11.0).strong().color(Color32::from_rgb(239, 68, 68)))
                                                 .fill(Color32::from_rgba_unmultiplied(239, 68, 68, 20))
                                                 .stroke(Stroke::new(1.0_f32, Color32::from_rgb(239, 68, 68)))
-                                                .corner_radius(CornerRadius::ZERO);
+                                                .corner_radius(CornerRadius::same(6));
                                             if ui.add(del_btn).clicked() {
                                                 let _ = std::fs::remove_file(&clip.path);
                                                 self.trim_status_msg = Some((format!("Deleted {}", clip.filename), Instant::now()));
@@ -2049,7 +2069,7 @@ impl ScytheOverlayApp {
                                         let trim_btn = egui::Button::new(egui::RichText::new("TRIM & EXPORT COPY").size(11.5).strong().color(Color32::from_rgb(11, 18, 4)))
                                             .fill(accent)
                                             .stroke(Stroke::NONE)
-                                            .corner_radius(CornerRadius::ZERO)
+                                            .corner_radius(CornerRadius::same(6))
                                             .min_size(Vec2::new(ui.available_width(), 32.0));
 
                                         if ui.add(trim_btn).clicked() {
@@ -2115,16 +2135,16 @@ impl ScytheOverlayApp {
                 // Drop shadow
                 painter.rect_filled(
                     toast_rect.translate(Vec2::new(0.0, 4.0)),
-                    CornerRadius::ZERO,
-                    Color32::from_rgba_unmultiplied(0, 0, 0, 120),
+                    CornerRadius::same(10),
+                    Color32::from_rgba_unmultiplied(0, 0, 0, 140),
                 );
 
-                // Solid obsidian dark slate toast card
+                // Modern sleek dark glass toast card
                 painter.rect(
                     toast_rect,
-                    CornerRadius::ZERO,
-                    Color32::from_rgba_unmultiplied(14, 16, 21, 245),
-                    Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 36)),
+                    CornerRadius::same(10),
+                    Color32::from_rgba_unmultiplied(16, 19, 27, 245),
+                    Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 30)),
                     egui::StrokeKind::Inside,
                 );
 
@@ -2134,8 +2154,8 @@ impl ScytheOverlayApp {
                 } else {
                     accent
                 };
-                let accent_line = egui::Rect::from_min_size(toast_rect.min, Vec2::new(3.5, toast_rect.height()));
-                painter.rect_filled(accent_line, CornerRadius::ZERO, line_color);
+                let accent_line = egui::Rect::from_min_size(toast_rect.min + Vec2::new(1.0, 1.0), Vec2::new(3.5, toast_rect.height() - 2.0));
+                painter.rect_filled(accent_line, CornerRadius::same(2), line_color);
 
                 // Left icon area (32x32 at center-left)
                 let icon_center = egui::pos2(toast_rect.left() + 24.0, toast_rect.center().y);
@@ -2176,14 +2196,14 @@ impl ScytheOverlayApp {
                     egui::pos2(text_left, toast_rect.top() + 19.0),
                     egui::Align2::LEFT_CENTER,
                     &notif.title,
-                    FontId::monospace(12.0),
+                    FontId::proportional(12.5),
                     Color32::WHITE,
                 );
                 painter.text(
                     egui::pos2(text_left, toast_rect.top() + 37.0),
                     egui::Align2::LEFT_CENTER,
                     &notif.subtitle,
-                    FontId::proportional(10.5),
+                    FontId::proportional(11.0),
                     Color32::from_rgb(160, 160, 168),
                 );
             } else {
@@ -2324,6 +2344,12 @@ impl eframe::App for ScytheOverlayApp {
         let mut visuals = egui::Visuals::dark();
         visuals.panel_fill = Color32::TRANSPARENT;
         visuals.window_fill = Color32::TRANSPARENT;
+        visuals.widgets.noninteractive.corner_radius = CornerRadius::same(6);
+        visuals.widgets.inactive.corner_radius = CornerRadius::same(6);
+        visuals.widgets.hovered.corner_radius = CornerRadius::same(6);
+        visuals.widgets.active.corner_radius = CornerRadius::same(6);
+        visuals.widgets.open.corner_radius = CornerRadius::same(6);
+        visuals.selection.bg_fill = self.accent_color();
         ctx.set_visuals(visuals);
 
         // Background screen darkening scrim (rgba 0, 0, 0, 115 gives ~45% dimming of background)
@@ -2517,7 +2543,10 @@ pub fn run_egui_overlay() {
     let _ = eframe::run_native(
         "scythe-overlay",
         options,
-        Box::new(|_cc| Ok(Box::new(ScytheOverlayApp::new()))),
+        Box::new(|cc| {
+            setup_custom_fonts(&cc.egui_ctx);
+            Ok(Box::new(ScytheOverlayApp::new()))
+        }),
     );
 
     crate::ipc::clean_overlay_pid();
@@ -2591,16 +2620,16 @@ impl eframe::App for ShadowPlayToastApp {
                 // Drop shadow
                 painter.rect_filled(
                     rect.translate(Vec2::new(0.0, 4.0)),
-                    CornerRadius::ZERO,
-                    Color32::from_rgba_unmultiplied(0, 0, 0, 120),
+                    CornerRadius::same(10),
+                    Color32::from_rgba_unmultiplied(0, 0, 0, 140),
                 );
 
-                // Solid obsidian dark slate toast card
+                // Modern sleek dark glass toast card
                 painter.rect(
                     rect,
-                    CornerRadius::ZERO,
-                    Color32::from_rgba_unmultiplied(14, 16, 21, 245),
-                    Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 36)),
+                    CornerRadius::same(10),
+                    Color32::from_rgba_unmultiplied(16, 19, 27, 245),
+                    Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 30)),
                     egui::StrokeKind::Inside,
                 );
 
@@ -2610,8 +2639,8 @@ impl eframe::App for ShadowPlayToastApp {
                 } else {
                     self.accent
                 };
-                let accent_line = egui::Rect::from_min_size(rect.min, Vec2::new(3.5, rect.height()));
-                painter.rect_filled(accent_line, CornerRadius::ZERO, line_color);
+                let accent_line = egui::Rect::from_min_size(rect.min + Vec2::new(1.0, 1.0), Vec2::new(3.5, rect.height() - 2.0));
+                painter.rect_filled(accent_line, CornerRadius::same(2), line_color);
 
                 // Left icon area (32x32 at center-left)
                 let icon_center = egui::pos2(rect.left() + 24.0, rect.center().y);
@@ -2652,14 +2681,14 @@ impl eframe::App for ShadowPlayToastApp {
                     egui::pos2(text_left, rect.top() + 19.0),
                     egui::Align2::LEFT_CENTER,
                     &self.title,
-                    FontId::monospace(12.0),
+                    FontId::proportional(12.5),
                     Color32::WHITE,
                 );
                 painter.text(
                     egui::pos2(text_left, rect.top() + 37.0),
                     egui::Align2::LEFT_CENTER,
                     &self.subtitle,
-                    FontId::proportional(10.5),
+                    FontId::proportional(11.0),
                     Color32::from_rgb(160, 160, 168),
                 );
             });
@@ -2740,7 +2769,10 @@ pub fn run_egui_toast(title: &str, subtitle: &str, icon: crate::overlay::ToastIc
     let _ = eframe::run_native(
         "scythe-toast",
         options,
-        Box::new(|_cc| Ok(Box::new(app))),
+        Box::new(|cc| {
+            setup_custom_fonts(&cc.egui_ctx);
+            Ok(Box::new(app))
+        }),
     );
 
     crate::ipc::clean_toast_pid();
