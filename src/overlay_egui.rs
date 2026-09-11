@@ -516,49 +516,42 @@ fn toggle_switch(ui: &mut egui::Ui, on: &mut bool, accent: Color32) -> egui::Res
 
 // Minimal Squared Vector Icon Renderers (Clean, Sleek & Modern)
 fn draw_replay_icon(painter: &egui::Painter, center: egui::Pos2, radius: f32, is_active: bool, accent: Color32) {
-    use std::f32::consts::PI;
     let color = if is_active {
         accent
     } else {
         Color32::from_rgb(150, 150, 155)
     };
 
-    // 1. Sleek circular track arc (sweeping ~290 degrees counter-clockwise for rewind effect)
-    let arc_radius = radius * 0.92;
-    let start_angle = -PI * 0.65; // top-left
-    let end_angle = PI * 0.95;    // bottom-left
-    let steps = 40;
-    let mut points = Vec::with_capacity(steps + 1);
-    for i in 0..=steps {
-        let t = i as f32 / steps as f32;
-        let angle = start_angle + t * (end_angle - start_angle);
-        points.push(center + Vec2::new(angle.cos() * arc_radius, angle.sin() * arc_radius));
-    }
-    let stroke = Stroke::new(2.4_f32, color);
-    for w in points.windows(2) {
-        painter.line_segment([w[0], w[1]], stroke);
-    }
+    // 1. Sleek circular track ring with high-contrast active accent
+    let ring_r = radius * 0.94;
+    let track_alpha = if is_active { 190 } else { 110 };
+    let stroke = Stroke::new(
+        1.8_f32,
+        Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), track_alpha),
+    );
+    painter.circle_stroke(center, ring_r, stroke);
 
-    // 2. Crisp directional arrow head pointing counter-clockwise
-    let tip = points[0];
-    let tangent = Vec2::new(-start_angle.sin(), start_angle.cos()).normalized();
-    let normal = Vec2::new(start_angle.cos(), start_angle.sin()).normalized();
-    let p_back_1 = tip - tangent * 7.5 + normal * 4.5;
-    let p_back_2 = tip - tangent * 7.5 - normal * 4.5;
+    // 2. Dual Rewind Triangles ◀ ◀ (Iconic instant replay / rewind navigation)
+    let tri_h = radius * 0.46;
+    let tri_w = radius * 0.32;
+    let gap = radius * 0.08;
+
+    // Left triangle ◀ (pointing left)
+    let t1_tip = center + Vec2::new(-tri_w - gap * 0.5, 0.0);
+    let t1_top = center + Vec2::new(-gap * 0.5, -tri_h);
+    let t1_bot = center + Vec2::new(-gap * 0.5, tri_h);
     painter.add(egui::Shape::convex_polygon(
-        vec![tip, p_back_1, p_back_2],
+        vec![t1_tip, t1_top, t1_bot],
         color,
         Stroke::NONE,
     ));
 
-    // 3. Crisp centered solid Play triangle ▶ (optical centering slightly right)
-    let tri_r = radius * 0.42;
-    let tri_offset = Vec2::new(tri_r * 0.18, 0.0);
-    let p1 = center + tri_offset + Vec2::new(tri_r, 0.0);
-    let p2 = center + tri_offset + Vec2::new(-tri_r * 0.65, -tri_r * 0.75);
-    let p3 = center + tri_offset + Vec2::new(-tri_r * 0.65, tri_r * 0.75);
+    // Right triangle ◀ (pointing left)
+    let t2_tip = center + Vec2::new(gap * 0.5, 0.0);
+    let t2_top = center + Vec2::new(tri_w + gap * 0.5, -tri_h);
+    let t2_bot = center + Vec2::new(tri_w + gap * 0.5, tri_h);
     painter.add(egui::Shape::convex_polygon(
-        vec![p1, p2, p3],
+        vec![t2_tip, t2_top, t2_bot],
         color,
         Stroke::NONE,
     ));
@@ -668,23 +661,54 @@ fn render_action_card(
     );
     let hovered = response.hovered();
     let painter = ui.painter();
-    // Clean translucent card style: frosted dark glass fill, no outline, no shadows, no top strip
+    // Neutral translucent black card fill (pure black, zero blue hue, zero accent fill)
     let bg = if dropdown_open {
-        Color32::from_rgba_unmultiplied(22, 26, 36, 175)
+        Color32::from_rgba_unmultiplied(18, 18, 18, 175)
     } else if hovered {
-        Color32::from_rgba_unmultiplied(26, 30, 42, 185)
-    } else if is_active {
-        Color32::from_rgba_unmultiplied(
-            ((16.0 + accent.r() as f32 * 0.08).min(255.0)) as u8,
-            ((18.0 + accent.g() as f32 * 0.08).min(255.0)) as u8,
-            ((26.0 + accent.b() as f32 * 0.08).min(255.0)) as u8,
-            165,
-        )
+        Color32::from_rgba_unmultiplied(22, 22, 22, 180)
     } else {
-        Color32::from_rgba_unmultiplied(16, 18, 26, 155)
+        Color32::from_rgba_unmultiplied(10, 10, 10, 155)
     };
 
     painter.rect_filled(rect, CornerRadius::ZERO, bg);
+
+    // Multi-pass smoothed glowing accent outline (radiating outwards softly)
+    let (glow_outer, glow_mid, glow_inner, core_alpha) = if hovered || dropdown_open {
+        (28, 62, 115, 235)
+    } else if is_active {
+        (20, 48, 88, 195)
+    } else {
+        (12, 26, 52, 125)
+    };
+
+    // Layer 3: Outer softest diffusion
+    painter.rect_stroke(
+        rect.expand(2.5),
+        CornerRadius::ZERO,
+        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), glow_outer)),
+        egui::StrokeKind::Outside,
+    );
+    // Layer 2: Mid glow
+    painter.rect_stroke(
+        rect.expand(1.5),
+        CornerRadius::ZERO,
+        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), glow_mid)),
+        egui::StrokeKind::Outside,
+    );
+    // Layer 1: Inner halo
+    painter.rect_stroke(
+        rect.expand(0.5),
+        CornerRadius::ZERO,
+        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), glow_inner)),
+        egui::StrokeKind::Outside,
+    );
+    // Core sharp accent outline
+    painter.rect_stroke(
+        rect,
+        CornerRadius::ZERO,
+        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), core_alpha)),
+        egui::StrokeKind::Inside,
+    );
 
     // Card Title (clean modern sans typography)
     painter.text(
@@ -695,15 +719,8 @@ fn render_action_card(
         if is_active { accent } else { Color32::WHITE },
     );
 
-    // Centered vector icon with ambient circle glow when active
+    // Centered vector icon (no ambient fill circle)
     let icon_center = egui::pos2(rect.center().x, rect.top() + 85.0);
-    if is_active {
-        painter.circle_filled(
-            icon_center,
-            30.0,
-            Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 22),
-        );
-    }
     draw_icon(painter, icon_center);
 
     // Status subtitle (e.g. "01:23" or "Not recording" / "Buffer 60s")
@@ -731,13 +748,13 @@ fn render_action_card(
 fn render_dropdown_menu(
     ui: &mut egui::Ui,
     card_width: f32,
-    _accent: Color32,
+    accent: Color32,
     add_contents: impl FnOnce(&mut egui::Ui),
 ) {
-    ui.add_space(4.0);
+    ui.add_space(6.0);
     egui::Frame::NONE
-        .fill(Color32::from_rgba_unmultiplied(14, 16, 24, 180))
-        .stroke(Stroke::NONE)
+        .fill(Color32::from_rgba_unmultiplied(10, 10, 10, 185))
+        .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 130)))
         .corner_radius(CornerRadius::ZERO)
         .inner_margin(Margin::ZERO)
         .show(ui, |ui| {
