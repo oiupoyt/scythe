@@ -668,18 +668,23 @@ fn render_action_card(
     );
     let hovered = response.hovered();
     let painter = ui.painter();
-    // Clean transparent card style: no drop shadow bar underneath, no border outline, transparent fill
+    // Clean translucent card style: frosted dark glass fill, no outline, no shadows, no top strip
     let bg = if dropdown_open {
-        Color32::TRANSPARENT
+        Color32::from_rgba_unmultiplied(22, 26, 36, 175)
     } else if hovered {
-        Color32::from_rgba_unmultiplied(255, 255, 255, 8)
+        Color32::from_rgba_unmultiplied(26, 30, 42, 185)
+    } else if is_active {
+        Color32::from_rgba_unmultiplied(
+            ((16.0 + accent.r() as f32 * 0.08).min(255.0)) as u8,
+            ((18.0 + accent.g() as f32 * 0.08).min(255.0)) as u8,
+            ((26.0 + accent.b() as f32 * 0.08).min(255.0)) as u8,
+            165,
+        )
     } else {
-        Color32::TRANSPARENT
+        Color32::from_rgba_unmultiplied(16, 18, 26, 155)
     };
 
-    if bg != Color32::TRANSPARENT {
-        painter.rect_filled(rect, CornerRadius::ZERO, bg);
-    }
+    painter.rect_filled(rect, CornerRadius::ZERO, bg);
 
     // Card Title (clean modern sans typography)
     painter.text(
@@ -722,7 +727,7 @@ fn render_action_card(
     response.clicked()
 }
 
-// Modern Sleek Transparent Dropdown Action Menu Container
+// Modern Sleek Translucent Dropdown Action Menu Container
 fn render_dropdown_menu(
     ui: &mut egui::Ui,
     card_width: f32,
@@ -731,7 +736,7 @@ fn render_dropdown_menu(
 ) {
     ui.add_space(4.0);
     egui::Frame::NONE
-        .fill(Color32::from_rgba_unmultiplied(10, 12, 18, 100))
+        .fill(Color32::from_rgba_unmultiplied(14, 16, 24, 180))
         .stroke(Stroke::NONE)
         .corner_radius(CornerRadius::ZERO)
         .inner_margin(Margin::ZERO)
@@ -2400,9 +2405,9 @@ impl eframe::App for ScytheOverlayApp {
         visuals.selection.bg_fill = self.accent_color();
         ctx.set_visuals(visuals);
 
-        // Background screen darkening scrim (light transparent scrim for high visibility)
+        // Background screen darkening scrim (translucent dimming so background remains visible)
         egui::CentralPanel::default()
-            .frame(egui::Frame::NONE.fill(Color32::from_rgba_unmultiplied(0, 0, 0, 48)))
+            .frame(egui::Frame::NONE.fill(Color32::from_rgba_unmultiplied(0, 0, 0, 80)))
             .show(ctx, |ui| {
                 match self.current_view {
                     ShadowPlayView::MainHud => self.render_main_hud(ctx, ui),
