@@ -670,9 +670,9 @@ fn render_action_card(
     let painter = ui.painter();
     // Clean transparent card style: no drop shadow bar underneath, no border outline, transparent fill
     let bg = if dropdown_open {
-        Color32::from_rgba_unmultiplied(255, 255, 255, 14)
+        Color32::TRANSPARENT
     } else if hovered {
-        Color32::from_rgba_unmultiplied(255, 255, 255, 10)
+        Color32::from_rgba_unmultiplied(255, 255, 255, 8)
     } else {
         Color32::TRANSPARENT
     };
@@ -722,17 +722,17 @@ fn render_action_card(
     response.clicked()
 }
 
-// Modern Sleek Dropdown Action Menu Container - Pixel-Perfect Card Alignment
+// Modern Sleek Transparent Dropdown Action Menu Container
 fn render_dropdown_menu(
     ui: &mut egui::Ui,
     card_width: f32,
-    accent: Color32,
+    _accent: Color32,
     add_contents: impl FnOnce(&mut egui::Ui),
 ) {
     ui.add_space(4.0);
     egui::Frame::NONE
-        .fill(Color32::from_rgba_unmultiplied(14, 16, 24, 240))
-        .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 140)))
+        .fill(Color32::from_rgba_unmultiplied(10, 12, 18, 100))
+        .stroke(Stroke::NONE)
         .corner_radius(CornerRadius::ZERO)
         .inner_margin(Margin::ZERO)
         .show(ui, |ui| {
@@ -2400,9 +2400,9 @@ impl eframe::App for ScytheOverlayApp {
         visuals.selection.bg_fill = self.accent_color();
         ctx.set_visuals(visuals);
 
-        // Background screen darkening scrim (deep smooth slate tint letting compositor blur shine through)
+        // Background screen darkening scrim (light transparent scrim for high visibility)
         egui::CentralPanel::default()
-            .frame(egui::Frame::NONE.fill(Color32::from_rgba_unmultiplied(6, 8, 12, 130)))
+            .frame(egui::Frame::NONE.fill(Color32::from_rgba_unmultiplied(0, 0, 0, 48)))
             .show(ctx, |ui| {
                 match self.current_view {
                     ShadowPlayView::MainHud => self.render_main_hud(ctx, ui),
