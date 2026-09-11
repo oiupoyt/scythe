@@ -164,7 +164,7 @@ fn render_vu_meter(ui: &mut egui::Ui, level: f32, width: f32, height: f32, label
 
     let bg_color = Color32::from_rgb(14, 14, 16);
     let border_stroke = Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 20));
-    ui.painter().rect(rect, CornerRadius::same(3), bg_color, border_stroke, egui::StrokeKind::Inside);
+    ui.painter().rect(rect, CornerRadius::ZERO, bg_color, border_stroke, egui::StrokeKind::Inside);
 
     let fill_w = (rect.width() * clamped).max(0.0);
     if fill_w > 0.5 {
@@ -176,7 +176,7 @@ fn render_vu_meter(ui: &mut egui::Ui, level: f32, width: f32, height: f32, label
         } else {
             Color32::from_rgb(34, 197, 94)
         };
-        ui.painter().rect_filled(fill_rect, CornerRadius::same(3), fill_color);
+        ui.painter().rect_filled(fill_rect, CornerRadius::ZERO, fill_color);
     }
 
     if clamped > 0.05 {
@@ -397,7 +397,7 @@ fn render_keycap(ui: &mut egui::Ui, text: &str) {
     egui::Frame::NONE
         .fill(Color32::from_rgb(18, 20, 26))
         .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 26)))
-        .corner_radius(CornerRadius::same(5))
+        .corner_radius(CornerRadius::ZERO)
         .inner_margin(Margin::symmetric(7_i8, 3_i8))
         .show(ui, |ui| {
             ui.label(
@@ -452,7 +452,7 @@ fn render_keycap_button(
     )
     .fill(fill)
     .stroke(stroke)
-    .corner_radius(CornerRadius::same(6))
+    .corner_radius(CornerRadius::ZERO)
     .min_size(Vec2::new(130.0, 26.0));
 
     ui.add(btn).clicked()
@@ -478,7 +478,7 @@ fn squared_button(ui: &mut egui::Ui, text: &str, active: bool, accent: Color32) 
     let btn = egui::Button::new(egui::RichText::new(text).size(11.5).strong().color(text_color))
         .fill(fill)
         .stroke(stroke)
-        .corner_radius(CornerRadius::same(6));
+        .corner_radius(CornerRadius::ZERO);
     ui.add(btn).clicked()
 }
 
@@ -505,11 +505,11 @@ fn toggle_switch(ui: &mut egui::Ui, on: &mut bool, accent: Color32) -> egui::Res
             Color32::from_rgb(26, 28, 34)
         };
         let stroke = Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 28));
-        ui.painter().rect(rect, CornerRadius::same(10), bg_color, stroke, egui::StrokeKind::Inside);
+        ui.painter().rect(rect, CornerRadius::ZERO, bg_color, stroke, egui::StrokeKind::Inside);
         let knob_w = rect.height() - 4.0;
         let knob_x = egui::lerp((rect.left() + 2.0)..=(rect.right() - knob_w - 2.0), how_on);
         let knob_rect = egui::Rect::from_min_size(egui::pos2(knob_x, rect.top() + 2.0), egui::vec2(knob_w, knob_w));
-        ui.painter().rect_filled(knob_rect, CornerRadius::same(8), Color32::WHITE);
+        ui.painter().rect_filled(knob_rect, CornerRadius::ZERO, Color32::WHITE);
     }
     response
 }
@@ -642,7 +642,7 @@ fn draw_settings_icon(painter: &egui::Painter, center: egui::Pos2, radius: f32, 
             center + Vec2::new(x_off, y_off),
             Vec2::new(knob_w, knob_h),
         );
-        painter.rect_filled(knob_rect, CornerRadius::same(2), color);
+        painter.rect_filled(knob_rect, CornerRadius::ZERO, color);
     }
 }
 
@@ -672,12 +672,12 @@ fn render_action_card(
     // Elevated double-layer drop shadow
     painter.rect_filled(
         rect.translate(Vec2::new(0.0, 6.0)),
-        CornerRadius::same(12),
+        CornerRadius::ZERO,
         Color32::from_rgba_unmultiplied(0, 0, 0, 140),
     );
     painter.rect_filled(
         rect.translate(Vec2::new(0.0, 2.0)),
-        CornerRadius::same(12),
+        CornerRadius::ZERO,
         Color32::from_rgba_unmultiplied(0, 0, 0, 90),
     );
 
@@ -708,7 +708,7 @@ fn render_action_card(
         Color32::from_rgba_unmultiplied(255, 255, 255, 22)
     };
 
-    painter.rect(rect, CornerRadius::same(12), bg, Stroke::new(1.0_f32, border), egui::StrokeKind::Inside);
+    painter.rect(rect, CornerRadius::ZERO, bg, Stroke::new(1.0_f32, border), egui::StrokeKind::Inside);
 
     // Specular glass top highlight line (1px crisp inner reflection)
     let highlight_col = if dropdown_open || is_active {
@@ -720,8 +720,8 @@ fn render_action_card(
     };
     painter.line_segment(
         [
-            egui::pos2(rect.left() + 14.0, rect.top() + 1.0),
-            egui::pos2(rect.right() - 14.0, rect.top() + 1.0),
+            egui::pos2(rect.left() + 2.0, rect.top() + 1.0),
+            egui::pos2(rect.right() - 2.0, rect.top() + 1.0),
         ],
         Stroke::new(1.0_f32, highlight_col),
     );
@@ -729,10 +729,10 @@ fn render_action_card(
     // Active top accent pill indicator
     if is_active {
         let top_pill = egui::Rect::from_center_size(
-            egui::pos2(rect.center().x, rect.top() + 2.5),
-            Vec2::new(44.0, 2.0),
+            egui::pos2(rect.center().x, rect.top() + 2.0),
+            Vec2::new(48.0, 2.0),
         );
-        painter.rect_filled(top_pill, CornerRadius::same(1), accent);
+        painter.rect_filled(top_pill, CornerRadius::ZERO, accent);
     }
 
     // Card Title (clean modern sans typography)
@@ -787,7 +787,7 @@ fn render_dropdown_menu(
     egui::Frame::NONE
         .fill(Color32::from_rgba_unmultiplied(12, 13, 16, 252))
         .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 160)))
-        .corner_radius(CornerRadius::same(10))
+        .corner_radius(CornerRadius::ZERO)
         .inner_margin(Margin::symmetric(4_i8, 4_i8))
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing = Vec2::ZERO;
@@ -813,7 +813,7 @@ fn render_menu_item(ui: &mut egui::Ui, label: &str, accent: Color32, is_last: bo
         Color32::TRANSPARENT
     };
 
-    ui.painter().rect_filled(rect, CornerRadius::same(6), bg);
+    ui.painter().rect_filled(rect, CornerRadius::ZERO, bg);
 
     // Clean subtle 1px divider between items (not drawn on last item so it stays flush)
     if !is_last && !hovered {
@@ -845,7 +845,7 @@ fn render_section_card(ui: &mut egui::Ui, header: &str, accent: Color32, add_con
     egui::Frame::NONE
         .fill(Color32::from_rgba_unmultiplied(16, 17, 21, 240))
         .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 20)))
-        .corner_radius(CornerRadius::same(8))
+        .corner_radius(CornerRadius::ZERO)
         .inner_margin(Margin::symmetric(16_i8, 12_i8))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -1105,7 +1105,7 @@ impl ScytheOverlayApp {
                         egui::Frame::NONE
                             .fill(Color32::from_rgba_unmultiplied(12, 13, 16, 250))
                             .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 160)))
-                            .corner_radius(CornerRadius::same(8))
+                            .corner_radius(CornerRadius::ZERO)
                             .inner_margin(Margin::symmetric(14_i8, 7_i8))
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
@@ -1271,20 +1271,6 @@ impl ScytheOverlayApp {
                         }
                     });
                 });
-
-                ui.add_space(16.0);
-                egui::Frame::NONE
-                    .fill(Color32::from_rgba_unmultiplied(10, 11, 14, 240))
-                    .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 18)))
-                    .corner_radius(CornerRadius::same(12))
-                    .inner_margin(Margin::symmetric(14_i8, 5_i8))
-                    .show(ui, |ui| {
-                        ui.label(
-                            egui::RichText::new("ESC or click outside to close")
-                                .size(10.5)
-                                .color(Color32::from_rgba_unmultiplied(203, 213, 225, 150)),
-                        );
-                    });
             });
         });
     }
@@ -1304,7 +1290,7 @@ impl ScytheOverlayApp {
             egui::Frame::NONE
                 .fill(Color32::from_rgba_unmultiplied(11, 12, 15, 252))
                 .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 140)))
-                .corner_radius(CornerRadius::same(12))
+                .corner_radius(CornerRadius::ZERO)
                 .inner_margin(Margin::symmetric(24_i8, 20_i8))
                 .show(ui, |ui| {
                     ui.set_width(modal_w - 48.0);
@@ -1319,7 +1305,7 @@ impl ScytheOverlayApp {
                         )
                         .fill(Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 24))
                         .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 160)))
-                        .corner_radius(CornerRadius::same(6));
+                        .corner_radius(CornerRadius::ZERO);
 
                         if ui.add(back_btn).clicked() {
                             self.switch_view(ShadowPlayView::MainHud, ctx);
@@ -1338,7 +1324,7 @@ impl ScytheOverlayApp {
                             egui::Frame::NONE
                                 .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 12))
                                 .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 22)))
-                                .corner_radius(CornerRadius::same(6))
+                                .corner_radius(CornerRadius::ZERO)
                                 .inner_margin(Margin::symmetric(9_i8, 4_i8))
                                 .show(ui, |ui| {
                                     ui.label(
@@ -1734,7 +1720,7 @@ impl ScytheOverlayApp {
                                         )
                                         .fill(bg)
                                         .stroke(stroke)
-                                        .corner_radius(CornerRadius::same(6))
+                                        .corner_radius(CornerRadius::ZERO)
                                         .min_size(Vec2::new(140.0, 30.0));
 
                                         if ui.add(btn).clicked() {
@@ -1833,7 +1819,7 @@ impl ScytheOverlayApp {
                                 )
                                 .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 14))
                                 .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 28)))
-                                .corner_radius(CornerRadius::same(6))
+                                .corner_radius(CornerRadius::ZERO)
                                 .min_size(Vec2::new(135.0, 38.0));
 
                                 if ui.add(reset_btn).clicked() {
@@ -1863,7 +1849,7 @@ impl ScytheOverlayApp {
                                 )
                                 .fill(accent)
                                 .stroke(Stroke::NONE)
-                                .corner_radius(CornerRadius::same(6))
+                                .corner_radius(CornerRadius::ZERO)
                                 .min_size(Vec2::new(ui.available_width(), 38.0));
 
                                 if ui.add(apply_btn).clicked() {
@@ -1913,7 +1899,7 @@ impl ScytheOverlayApp {
             egui::Frame::NONE
                 .fill(Color32::from_rgba_unmultiplied(11, 12, 15, 252))
                 .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 140)))
-                .corner_radius(CornerRadius::same(12))
+                .corner_radius(CornerRadius::ZERO)
                 .inner_margin(Margin::symmetric(20_i8, 16_i8))
                 .show(ui, |ui| {
                     ui.set_width(modal_w - 40.0);
@@ -1928,7 +1914,7 @@ impl ScytheOverlayApp {
                         )
                         .fill(Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 24))
                         .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 160)))
-                        .corner_radius(CornerRadius::same(6));
+                        .corner_radius(CornerRadius::ZERO);
 
                         if ui.add(back_btn).clicked() {
                             self.switch_view(ShadowPlayView::Settings, ctx);
@@ -1961,7 +1947,7 @@ impl ScytheOverlayApp {
                             egui::Frame::NONE
                                 .fill(Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 25))
                                 .stroke(Stroke::new(1.0_f32, accent))
-                                .corner_radius(CornerRadius::same(6))
+                                .corner_radius(CornerRadius::ZERO)
                                 .inner_margin(Margin::symmetric(10_i8, 6_i8))
                                 .show(ui, |ui| {
                                     ui.label(
@@ -2005,7 +1991,7 @@ impl ScytheOverlayApp {
                                             let resp = egui::Frame::NONE
                                                 .fill(card_bg)
                                                 .stroke(border)
-                                                .corner_radius(CornerRadius::same(8))
+                                                .corner_radius(CornerRadius::ZERO)
                                                 .inner_margin(Margin::symmetric(8_i8, 6_i8))
                                                 .show(ui, |ui| {
                                                     ui.set_width(260.0);
@@ -2013,7 +1999,7 @@ impl ScytheOverlayApp {
                                                         let badge_col = if clip.is_replay { accent } else { Color32::from_rgb(239, 68, 68) };
                                                         let badge_txt = if clip.is_replay { "REPLAY" } else { "REC" };
                                                         let (b_rect, _) = ui.allocate_exact_size(Vec2::new(44.0, 16.0), egui::Sense::hover());
-                                                        ui.painter().rect_filled(b_rect, CornerRadius::same(4), badge_col);
+                                                        ui.painter().rect_filled(b_rect, CornerRadius::ZERO, badge_col);
                                                         ui.painter().text(b_rect.center(), egui::Align2::CENTER_CENTER, badge_txt, FontId::monospace(8.5), Color32::from_rgb(11, 18, 4));
 
                                                         ui.add_space(4.0);
@@ -2069,7 +2055,7 @@ impl ScytheOverlayApp {
                                             let play_btn = egui::Button::new(egui::RichText::new("PLAY VIDEO").size(11.0).strong().color(Color32::from_rgb(11, 18, 4)))
                                                 .fill(accent)
                                                 .stroke(Stroke::NONE)
-                                                .corner_radius(CornerRadius::same(6));
+                                                .corner_radius(CornerRadius::ZERO);
                                             if ui.add(play_btn).clicked() {
                                                 play_clip(&clip.path);
                                             }
@@ -2081,7 +2067,7 @@ impl ScytheOverlayApp {
                                             let del_btn = egui::Button::new(egui::RichText::new("DELETE").size(11.0).strong().color(Color32::from_rgb(239, 68, 68)))
                                                 .fill(Color32::from_rgba_unmultiplied(239, 68, 68, 20))
                                                 .stroke(Stroke::new(1.0_f32, Color32::from_rgb(239, 68, 68)))
-                                                .corner_radius(CornerRadius::same(6));
+                                                .corner_radius(CornerRadius::ZERO);
                                             if ui.add(del_btn).clicked() {
                                                 let _ = std::fs::remove_file(&clip.path);
                                                 self.trim_status_msg = Some((format!("Deleted {}", clip.filename), Instant::now()));
@@ -2123,7 +2109,7 @@ impl ScytheOverlayApp {
                                         let trim_btn = egui::Button::new(egui::RichText::new("TRIM & EXPORT COPY").size(11.5).strong().color(Color32::from_rgb(11, 18, 4)))
                                             .fill(accent)
                                             .stroke(Stroke::NONE)
-                                            .corner_radius(CornerRadius::same(6))
+                                            .corner_radius(CornerRadius::ZERO)
                                             .min_size(Vec2::new(ui.available_width(), 32.0));
 
                                         if ui.add(trim_btn).clicked() {
@@ -2189,14 +2175,14 @@ impl ScytheOverlayApp {
                 // Drop shadow
                 painter.rect_filled(
                     toast_rect.translate(Vec2::new(0.0, 4.0)),
-                    CornerRadius::same(10),
+                    CornerRadius::ZERO,
                     Color32::from_rgba_unmultiplied(0, 0, 0, 140),
                 );
 
                 // Modern sleek dark glass toast card
                 painter.rect(
                     toast_rect,
-                    CornerRadius::same(10),
+                    CornerRadius::ZERO,
                     Color32::from_rgba_unmultiplied(12, 13, 16, 252),
                     Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 30)),
                     egui::StrokeKind::Inside,
@@ -2209,7 +2195,7 @@ impl ScytheOverlayApp {
                     accent
                 };
                 let accent_line = egui::Rect::from_min_size(toast_rect.min + Vec2::new(1.0, 1.0), Vec2::new(3.5, toast_rect.height() - 2.0));
-                painter.rect_filled(accent_line, CornerRadius::same(2), line_color);
+                painter.rect_filled(accent_line, CornerRadius::ZERO, line_color);
 
                 // Left icon area (32x32 at center-left)
                 let icon_center = egui::pos2(toast_rect.left() + 24.0, toast_rect.center().y);
@@ -2398,11 +2384,11 @@ impl eframe::App for ScytheOverlayApp {
         let mut visuals = egui::Visuals::dark();
         visuals.panel_fill = Color32::TRANSPARENT;
         visuals.window_fill = Color32::TRANSPARENT;
-        visuals.widgets.noninteractive.corner_radius = CornerRadius::same(6);
-        visuals.widgets.inactive.corner_radius = CornerRadius::same(6);
-        visuals.widgets.hovered.corner_radius = CornerRadius::same(6);
-        visuals.widgets.active.corner_radius = CornerRadius::same(6);
-        visuals.widgets.open.corner_radius = CornerRadius::same(6);
+        visuals.widgets.noninteractive.corner_radius = CornerRadius::ZERO;
+        visuals.widgets.inactive.corner_radius = CornerRadius::ZERO;
+        visuals.widgets.hovered.corner_radius = CornerRadius::ZERO;
+        visuals.widgets.active.corner_radius = CornerRadius::ZERO;
+        visuals.widgets.open.corner_radius = CornerRadius::ZERO;
         visuals.selection.bg_fill = self.accent_color();
         ctx.set_visuals(visuals);
 
@@ -2674,14 +2660,14 @@ impl eframe::App for ShadowPlayToastApp {
                 // Drop shadow
                 painter.rect_filled(
                     rect.translate(Vec2::new(0.0, 4.0)),
-                    CornerRadius::same(10),
+                    CornerRadius::ZERO,
                     Color32::from_rgba_unmultiplied(0, 0, 0, 140),
                 );
 
                 // Modern sleek dark glass toast card
                 painter.rect(
                     rect,
-                    CornerRadius::same(10),
+                    CornerRadius::ZERO,
                     Color32::from_rgba_unmultiplied(12, 13, 16, 252),
                     Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 30)),
                     egui::StrokeKind::Inside,
@@ -2694,7 +2680,7 @@ impl eframe::App for ShadowPlayToastApp {
                     self.accent
                 };
                 let accent_line = egui::Rect::from_min_size(rect.min + Vec2::new(1.0, 1.0), Vec2::new(3.5, rect.height() - 2.0));
-                painter.rect_filled(accent_line, CornerRadius::same(2), line_color);
+                painter.rect_filled(accent_line, CornerRadius::ZERO, line_color);
 
                 // Left icon area (32x32 at center-left)
                 let icon_center = egui::pos2(rect.left() + 24.0, rect.center().y);
