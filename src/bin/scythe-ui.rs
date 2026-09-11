@@ -295,7 +295,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     if args.len() > 1 {
         match args[1].as_str() {
-            "--save" => {
+            "--save" | "--save-replay" => {
                 return handle_save_replay();
             }
             "--notify-save" => {
@@ -394,6 +394,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 println!("  scythe-ui --hotkeys      Run global hotkey manager in background");
                 println!("  scythe-ui --status       Query current daemon status");
                 println!("  scythe-ui --save         Save instant replay and show notification");
+                println!("  scythe-ui --save-replay  Alias for --save");
                 println!("  scythe-ui --notify-save  Show instant replay saved notification toast");
                 println!("  scythe-ui --notify-start Show recording started notification toast");
                 println!("  scythe-ui --notify-stop  Show recording saved notification toast");
