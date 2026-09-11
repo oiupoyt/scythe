@@ -189,10 +189,12 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
         let accent_name = cfg.accent_color.to_lowercase();
         let (accent_hex, accent_rgb): (&str, (f64, f64, f64)) = match accent_name.as_str() {
             "green" | "emerald" => ("#22c55e", (0.133, 0.773, 0.369)),
-            "cyan" | "ice" => ("#06b6d4", (0.024, 0.714, 0.831)),
-            "purple" | "violet" => ("#a855f7", (0.659, 0.333, 0.969)),
+            "lime" => ("#a3e635", (0.639, 0.902, 0.208)),
+            "yellow" | "solar" => ("#facc15", (0.980, 0.800, 0.082)),
             "amber" | "orange" => ("#f59e0b", (0.961, 0.620, 0.043)),
             "red" | "crimson" => ("#ef4444", (0.937, 0.267, 0.267)),
+            "pink" | "rose" => ("#f43f5e", (0.957, 0.247, 0.369)),
+            "purple" | "violet" => ("#a855f7", (0.659, 0.333, 0.969)),
             "blue" | "sapphire" => ("#38bdf8", (0.220, 0.741, 0.973)),
             _ => ("#38bdf8", (0.220, 0.741, 0.973)),
         };

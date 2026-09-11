@@ -412,10 +412,12 @@ fn render_keycap(ui: &mut egui::Ui, text: &str) {
 pub fn resolve_accent_color(accent: &str) -> Color32 {
     match accent.to_lowercase().as_str() {
         "green" | "emerald" => Color32::from_rgb(34, 197, 94),
-        "cyan" | "ice" => Color32::from_rgb(6, 182, 212),
-        "purple" | "violet" => Color32::from_rgb(168, 85, 247),
+        "lime" => Color32::from_rgb(163, 230, 53),
+        "yellow" | "solar" => Color32::from_rgb(250, 204, 21),
         "amber" | "orange" => Color32::from_rgb(245, 158, 11),
         "red" | "crimson" => Color32::from_rgb(239, 68, 68),
+        "pink" | "rose" => Color32::from_rgb(244, 63, 94),
+        "purple" | "violet" => Color32::from_rgb(168, 85, 247),
         "blue" | "sapphire" => Color32::from_rgb(56, 189, 248),
         _ => Color32::from_rgb(56, 189, 248),
     }
@@ -672,24 +674,18 @@ fn render_action_card(
 
     painter.rect_filled(rect, CornerRadius::ZERO, bg);
 
-    // ONLY the selected card gets the accent outline and revamped smooth glowing bloom
-    if dropdown_open {
-        let shadow = egui::Shadow {
-            offset: [0, 0],
-            blur: 24,
-            spread: 1,
-            color: Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 140),
-        };
-        painter.add(shadow.as_shape(rect, CornerRadius::ZERO));
+    // Clean, crisp outlines on cards: visible idle hairline, highlighted on hover/active, bold on selected
+    let stroke = if dropdown_open {
+        Stroke::new(1.5_f32, accent)
+    } else if hovered {
+        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 60))
+    } else if is_active {
+        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 120))
+    } else {
+        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 24))
+    };
 
-        // Crisp 1px core accent outline for the selected card
-        painter.rect_stroke(
-            rect,
-            CornerRadius::ZERO,
-            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 230)),
-            egui::StrokeKind::Inside,
-        );
-    }
+    painter.rect_stroke(rect, CornerRadius::ZERO, stroke, egui::StrokeKind::Inside);
 
     // Card Title (clean modern sans typography)
     painter.text(
@@ -733,16 +729,9 @@ fn render_dropdown_menu(
     add_contents: impl FnOnce(&mut egui::Ui),
 ) {
     ui.add_space(6.0);
-    let shadow = egui::Shadow {
-        offset: [0, 0],
-        blur: 20,
-        spread: 1,
-        color: Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 90),
-    };
     egui::Frame::NONE
         .fill(Color32::from_rgba_unmultiplied(10, 10, 10, 185))
-        .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 180)))
-        .shadow(shadow)
+        .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 140)))
         .corner_radius(CornerRadius::ZERO)
         .inner_margin(Margin::ZERO)
         .show(ui, |ui| {
@@ -1713,11 +1702,13 @@ impl ScytheOverlayApp {
                                 ui.horizontal_wrapped(|ui| {
                                     let palettes = [
                                         ("blue", "Charming Blue", Color32::from_rgb(56, 189, 248)),
-                                        ("cyan", "Cyber Cyan", Color32::from_rgb(6, 182, 212)),
                                         ("green", "Emerald Green", Color32::from_rgb(34, 197, 94)),
-                                        ("purple", "Royal Purple", Color32::from_rgb(168, 85, 247)),
+                                        ("lime", "Electric Lime", Color32::from_rgb(163, 230, 53)),
+                                        ("yellow", "Solar Yellow", Color32::from_rgb(250, 204, 21)),
                                         ("amber", "Sunset Amber", Color32::from_rgb(245, 158, 11)),
                                         ("red", "Crimson Red", Color32::from_rgb(239, 68, 68)),
+                                        ("pink", "Neon Pink", Color32::from_rgb(244, 63, 94)),
+                                        ("purple", "Royal Purple", Color32::from_rgb(168, 85, 247)),
                                     ];
 
                                     for (id, name, col) in palettes {
