@@ -524,19 +524,10 @@ fn draw_replay_icon(painter: &egui::Painter, center: egui::Pos2, radius: f32, is
         Color32::from_rgb(150, 150, 155)
     };
 
-    // 1. Sleek circular track ring with high-contrast active accent
-    let ring_r = radius * 0.94;
-    let track_alpha = if is_active { 190 } else { 110 };
-    let stroke = Stroke::new(
-        1.8_f32,
-        Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), track_alpha),
-    );
-    painter.circle_stroke(center, ring_r, stroke);
-
-    // 2. Dual Rewind Triangles ◀ ◀ (Iconic instant replay / rewind navigation)
-    let tri_h = radius * 0.46;
-    let tri_w = radius * 0.32;
-    let gap = radius * 0.08;
+    // Dual Rewind Triangles ◀ ◀ without outer circle (crisp, prominent, centered)
+    let tri_h = radius * 0.60;
+    let tri_w = radius * 0.42;
+    let gap = radius * 0.10;
 
     // Left triangle ◀ (pointing left)
     let t1_tip = center + Vec2::new(-tri_w - gap * 0.5, 0.0);
@@ -674,15 +665,15 @@ fn render_action_card(
 
     painter.rect_filled(rect, CornerRadius::ZERO, bg);
 
-    // Clean, crisp outlines on cards: visible idle hairline, highlighted on hover/active, bold on selected
+    // Clean, crisp outlines on cards: prominent accent on hover/selected, subtle accent when idle
     let stroke = if dropdown_open {
         Stroke::new(1.5_f32, accent)
     } else if hovered {
-        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 60))
+        Stroke::new(1.5_f32, accent)
     } else if is_active {
-        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 120))
+        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 160))
     } else {
-        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 24))
+        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 70))
     };
 
     painter.rect_stroke(rect, CornerRadius::ZERO, stroke, egui::StrokeKind::Inside);
