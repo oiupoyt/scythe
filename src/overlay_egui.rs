@@ -667,26 +667,73 @@ fn render_action_card(
         Vec2::new(width.round(), height.round()),
     );
     let hovered = response.hovered();
+    let painter = ui.painter();
 
+    // Elevated double-layer drop shadow
+    painter.rect_filled(
+        rect.translate(Vec2::new(0.0, 6.0)),
+        CornerRadius::same(12),
+        Color32::from_rgba_unmultiplied(0, 0, 0, 140),
+    );
+    painter.rect_filled(
+        rect.translate(Vec2::new(0.0, 2.0)),
+        CornerRadius::same(12),
+        Color32::from_rgba_unmultiplied(0, 0, 0, 90),
+    );
+
+    // Card background - Deep Obsidian / Jet Graphite with subtle active ambient warmth
     let bg = if dropdown_open {
-        Color32::from_rgba_unmultiplied(26, 30, 44, 245)
+        Color32::from_rgba_unmultiplied(18, 19, 23, 252)
     } else if hovered {
-        Color32::from_rgba_unmultiplied(22, 26, 38, 235)
+        Color32::from_rgba_unmultiplied(22, 23, 28, 252)
+    } else if is_active {
+        Color32::from_rgba_unmultiplied(
+            ((12.0 + accent.r() as f32 * 0.05).min(255.0)) as u8,
+            ((13.0 + accent.g() as f32 * 0.05).min(255.0)) as u8,
+            ((16.0 + accent.b() as f32 * 0.05).min(255.0)) as u8,
+            250,
+        )
     } else {
-        Color32::from_rgba_unmultiplied(16, 18, 25, 220)
+        Color32::from_rgba_unmultiplied(12, 13, 16, 250)
     };
 
+    // Crisp hairline border
     let border = if dropdown_open {
         accent
     } else if hovered {
-        Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 180)
+        Color32::from_rgba_unmultiplied(255, 255, 255, 55)
+    } else if is_active {
+        Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 140)
     } else {
-        Color32::from_rgba_unmultiplied(255, 255, 255, 24)
+        Color32::from_rgba_unmultiplied(255, 255, 255, 22)
     };
 
-    let painter = ui.painter();
-    // Card background - Modern Sleek Glass with rounded corners
     painter.rect(rect, CornerRadius::same(12), bg, Stroke::new(1.0_f32, border), egui::StrokeKind::Inside);
+
+    // Specular glass top highlight line (1px crisp inner reflection)
+    let highlight_col = if dropdown_open || is_active {
+        Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 160)
+    } else if hovered {
+        Color32::from_rgba_unmultiplied(255, 255, 255, 60)
+    } else {
+        Color32::from_rgba_unmultiplied(255, 255, 255, 28)
+    };
+    painter.line_segment(
+        [
+            egui::pos2(rect.left() + 14.0, rect.top() + 1.0),
+            egui::pos2(rect.right() - 14.0, rect.top() + 1.0),
+        ],
+        Stroke::new(1.0_f32, highlight_col),
+    );
+
+    // Active top accent pill indicator
+    if is_active {
+        let top_pill = egui::Rect::from_center_size(
+            egui::pos2(rect.center().x, rect.top() + 2.5),
+            Vec2::new(44.0, 2.0),
+        );
+        painter.rect_filled(top_pill, CornerRadius::same(1), accent);
+    }
 
     // Card Title (clean modern sans typography)
     painter.text(
@@ -697,8 +744,15 @@ fn render_action_card(
         if is_active { accent } else { Color32::WHITE },
     );
 
-    // Centered vector icon
+    // Centered vector icon with ambient circle glow when active
     let icon_center = egui::pos2(rect.center().x, rect.top() + 85.0);
+    if is_active {
+        painter.circle_filled(
+            icon_center,
+            30.0,
+            Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 22),
+        );
+    }
     draw_icon(painter, icon_center);
 
     // Status subtitle (e.g. "01:23" or "Not recording" / "Buffer 60s")
@@ -731,7 +785,7 @@ fn render_dropdown_menu(
 ) {
     ui.add_space(6.0);
     egui::Frame::NONE
-        .fill(Color32::from_rgba_unmultiplied(16, 19, 27, 245))
+        .fill(Color32::from_rgba_unmultiplied(12, 13, 16, 252))
         .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 160)))
         .corner_radius(CornerRadius::same(10))
         .inner_margin(Margin::symmetric(4_i8, 4_i8))
@@ -754,7 +808,7 @@ fn render_menu_item(ui: &mut egui::Ui, label: &str, accent: Color32, is_last: bo
     let hovered = response.hovered();
 
     let bg = if hovered {
-        Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 32)
+        Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 36)
     } else {
         Color32::TRANSPARENT
     };
@@ -789,8 +843,8 @@ fn render_menu_item(ui: &mut egui::Ui, label: &str, accent: Color32, is_last: bo
 // Section card helper for Settings view
 fn render_section_card(ui: &mut egui::Ui, header: &str, accent: Color32, add_contents: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::NONE
-        .fill(Color32::from_rgba_unmultiplied(18, 21, 28, 190))
-        .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 18)))
+        .fill(Color32::from_rgba_unmultiplied(16, 17, 21, 240))
+        .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 20)))
         .corner_radius(CornerRadius::same(8))
         .inner_margin(Margin::symmetric(16_i8, 12_i8))
         .show(ui, |ui| {
@@ -1049,7 +1103,7 @@ impl ScytheOverlayApp {
                 if let crate::updater::UpdateStatus::Available(ref info) = cur_update
                     && !self.update_dismissed {
                         egui::Frame::NONE
-                            .fill(Color32::from_rgba_unmultiplied(16, 19, 27, 220))
+                            .fill(Color32::from_rgba_unmultiplied(12, 13, 16, 250))
                             .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 160)))
                             .corner_radius(CornerRadius::same(8))
                             .inner_margin(Margin::symmetric(14_i8, 7_i8))
@@ -1220,7 +1274,7 @@ impl ScytheOverlayApp {
 
                 ui.add_space(16.0);
                 egui::Frame::NONE
-                    .fill(Color32::from_rgba_unmultiplied(12, 14, 20, 180))
+                    .fill(Color32::from_rgba_unmultiplied(10, 11, 14, 240))
                     .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 18)))
                     .corner_radius(CornerRadius::same(12))
                     .inner_margin(Margin::symmetric(14_i8, 5_i8))
@@ -1248,7 +1302,7 @@ impl ScytheOverlayApp {
 
         ui.allocate_new_ui(egui::UiBuilder::new().max_rect(modal_rect), |ui| {
             egui::Frame::NONE
-                .fill(Color32::from_rgba_unmultiplied(14, 16, 22, 240))
+                .fill(Color32::from_rgba_unmultiplied(11, 12, 15, 252))
                 .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 140)))
                 .corner_radius(CornerRadius::same(12))
                 .inner_margin(Margin::symmetric(24_i8, 20_i8))
@@ -1857,7 +1911,7 @@ impl ScytheOverlayApp {
 
         ui.allocate_new_ui(egui::UiBuilder::new().max_rect(modal_rect), |ui| {
             egui::Frame::NONE
-                .fill(Color32::from_rgba_unmultiplied(14, 16, 22, 240))
+                .fill(Color32::from_rgba_unmultiplied(11, 12, 15, 252))
                 .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 140)))
                 .corner_radius(CornerRadius::same(12))
                 .inner_margin(Margin::symmetric(20_i8, 16_i8))
@@ -2143,7 +2197,7 @@ impl ScytheOverlayApp {
                 painter.rect(
                     toast_rect,
                     CornerRadius::same(10),
-                    Color32::from_rgba_unmultiplied(16, 19, 27, 245),
+                    Color32::from_rgba_unmultiplied(12, 13, 16, 252),
                     Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 30)),
                     egui::StrokeKind::Inside,
                 );
@@ -2628,7 +2682,7 @@ impl eframe::App for ShadowPlayToastApp {
                 painter.rect(
                     rect,
                     CornerRadius::same(10),
-                    Color32::from_rgba_unmultiplied(16, 19, 27, 245),
+                    Color32::from_rgba_unmultiplied(12, 13, 16, 252),
                     Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 30)),
                     egui::StrokeKind::Inside,
                 );
