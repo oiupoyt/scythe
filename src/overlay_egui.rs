@@ -672,43 +672,24 @@ fn render_action_card(
 
     painter.rect_filled(rect, CornerRadius::ZERO, bg);
 
-    // Multi-pass smoothed glowing accent outline (radiating outwards softly)
-    let (glow_outer, glow_mid, glow_inner, core_alpha) = if hovered || dropdown_open {
-        (28, 62, 115, 235)
-    } else if is_active {
-        (20, 48, 88, 195)
-    } else {
-        (12, 26, 52, 125)
-    };
+    // ONLY the selected card gets the accent outline and revamped smooth glowing bloom
+    if dropdown_open {
+        let shadow = egui::Shadow {
+            offset: [0, 0],
+            blur: 24,
+            spread: 1,
+            color: Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 140),
+        };
+        painter.add(shadow.as_shape(rect, CornerRadius::ZERO));
 
-    // Layer 3: Outer softest diffusion
-    painter.rect_stroke(
-        rect.expand(2.5),
-        CornerRadius::ZERO,
-        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), glow_outer)),
-        egui::StrokeKind::Outside,
-    );
-    // Layer 2: Mid glow
-    painter.rect_stroke(
-        rect.expand(1.5),
-        CornerRadius::ZERO,
-        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), glow_mid)),
-        egui::StrokeKind::Outside,
-    );
-    // Layer 1: Inner halo
-    painter.rect_stroke(
-        rect.expand(0.5),
-        CornerRadius::ZERO,
-        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), glow_inner)),
-        egui::StrokeKind::Outside,
-    );
-    // Core sharp accent outline
-    painter.rect_stroke(
-        rect,
-        CornerRadius::ZERO,
-        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), core_alpha)),
-        egui::StrokeKind::Inside,
-    );
+        // Crisp 1px core accent outline for the selected card
+        painter.rect_stroke(
+            rect,
+            CornerRadius::ZERO,
+            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 230)),
+            egui::StrokeKind::Inside,
+        );
+    }
 
     // Card Title (clean modern sans typography)
     painter.text(
@@ -752,9 +733,16 @@ fn render_dropdown_menu(
     add_contents: impl FnOnce(&mut egui::Ui),
 ) {
     ui.add_space(6.0);
+    let shadow = egui::Shadow {
+        offset: [0, 0],
+        blur: 20,
+        spread: 1,
+        color: Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 90),
+    };
     egui::Frame::NONE
         .fill(Color32::from_rgba_unmultiplied(10, 10, 10, 185))
-        .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 130)))
+        .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 180)))
+        .shadow(shadow)
         .corner_radius(CornerRadius::ZERO)
         .inner_margin(Margin::ZERO)
         .show(ui, |ui| {
