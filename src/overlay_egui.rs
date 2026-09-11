@@ -681,58 +681,42 @@ fn render_action_card(
         Color32::from_rgba_unmultiplied(0, 0, 0, 90),
     );
 
-    // Card background - Deep Obsidian / Jet Graphite with subtle active ambient warmth
+    // Card background - Smooth Translucent Frosted Dark Slate (no harsh pitch black, no muddy wash)
     let bg = if dropdown_open {
-        Color32::from_rgba_unmultiplied(18, 19, 23, 252)
+        Color32::from_rgba_unmultiplied(22, 25, 35, 240)
     } else if hovered {
-        Color32::from_rgba_unmultiplied(22, 23, 28, 252)
+        Color32::from_rgba_unmultiplied(26, 30, 42, 230)
     } else if is_active {
         Color32::from_rgba_unmultiplied(
-            ((12.0 + accent.r() as f32 * 0.05).min(255.0)) as u8,
-            ((13.0 + accent.g() as f32 * 0.05).min(255.0)) as u8,
-            ((16.0 + accent.b() as f32 * 0.05).min(255.0)) as u8,
-            250,
+            ((16.0 + accent.r() as f32 * 0.08).min(255.0)) as u8,
+            ((18.0 + accent.g() as f32 * 0.08).min(255.0)) as u8,
+            ((25.0 + accent.b() as f32 * 0.08).min(255.0)) as u8,
+            225,
         )
     } else {
-        Color32::from_rgba_unmultiplied(12, 13, 16, 250)
+        Color32::from_rgba_unmultiplied(16, 18, 25, 210)
     };
 
     // Crisp hairline border
     let border = if dropdown_open {
         accent
     } else if hovered {
-        Color32::from_rgba_unmultiplied(255, 255, 255, 55)
+        Color32::from_rgba_unmultiplied(255, 255, 255, 50)
     } else if is_active {
-        Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 140)
+        Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 150)
     } else {
-        Color32::from_rgba_unmultiplied(255, 255, 255, 22)
+        Color32::from_rgba_unmultiplied(255, 255, 255, 20)
     };
 
     painter.rect(rect, CornerRadius::ZERO, bg, Stroke::new(1.0_f32, border), egui::StrokeKind::Inside);
 
-    // Specular glass top highlight line (1px crisp inner reflection)
-    let highlight_col = if dropdown_open || is_active {
-        Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 160)
-    } else if hovered {
-        Color32::from_rgba_unmultiplied(255, 255, 255, 60)
-    } else {
-        Color32::from_rgba_unmultiplied(255, 255, 255, 28)
-    };
-    painter.line_segment(
-        [
-            egui::pos2(rect.left() + 2.0, rect.top() + 1.0),
-            egui::pos2(rect.right() - 2.0, rect.top() + 1.0),
-        ],
-        Stroke::new(1.0_f32, highlight_col),
-    );
-
-    // Active top accent pill indicator
+    // Active top accent strip (flush top line indicator)
     if is_active {
-        let top_pill = egui::Rect::from_center_size(
-            egui::pos2(rect.center().x, rect.top() + 2.0),
-            Vec2::new(48.0, 2.0),
+        let top_strip = egui::Rect::from_min_size(
+            rect.min,
+            Vec2::new(rect.width(), 2.5),
         );
-        painter.rect_filled(top_pill, CornerRadius::ZERO, accent);
+        painter.rect_filled(top_strip, CornerRadius::ZERO, accent);
     }
 
     // Card Title (clean modern sans typography)
@@ -776,19 +760,19 @@ fn render_action_card(
     response.clicked()
 }
 
-// Modern Sleek Dropdown Action Menu Container
+// Modern Sleek Dropdown Action Menu Container - Pixel-Perfect Card Alignment
 fn render_dropdown_menu(
     ui: &mut egui::Ui,
     card_width: f32,
     accent: Color32,
     add_contents: impl FnOnce(&mut egui::Ui),
 ) {
-    ui.add_space(6.0);
+    ui.add_space(4.0);
     egui::Frame::NONE
-        .fill(Color32::from_rgba_unmultiplied(12, 13, 16, 252))
-        .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 160)))
+        .fill(Color32::from_rgba_unmultiplied(14, 16, 24, 240))
+        .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 140)))
         .corner_radius(CornerRadius::ZERO)
-        .inner_margin(Margin::symmetric(4_i8, 4_i8))
+        .inner_margin(Margin::ZERO)
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing = Vec2::ZERO;
             ui.set_width(card_width);
@@ -798,12 +782,20 @@ fn render_dropdown_menu(
         });
 }
 
-// Modern Sleek Dropdown Action Menu Item
-fn render_menu_item(ui: &mut egui::Ui, label: &str, accent: Color32, is_last: bool) -> bool {
-    let (raw_rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 35.0), egui::Sense::click());
+// Remade Dropdown Action Menu Item (Left-Aligned, Subtitles, Hotkey Badges, Left Indicator)
+fn render_menu_item(
+    ui: &mut egui::Ui,
+    title: &str,
+    subtitle: Option<&str>,
+    hotkey_hint: Option<&str>,
+    is_active: bool,
+    accent: Color32,
+    is_last: bool,
+) -> bool {
+    let (raw_rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 44.0), egui::Sense::click());
     let rect = egui::Rect::from_min_size(
         egui::pos2(raw_rect.left().round(), raw_rect.top().round()),
-        Vec2::new(raw_rect.width().round(), 35.0),
+        Vec2::new(raw_rect.width().round(), 44.0),
     );
     let hovered = response.hovered();
 
@@ -815,6 +807,68 @@ fn render_menu_item(ui: &mut egui::Ui, label: &str, accent: Color32, is_last: bo
 
     ui.painter().rect_filled(rect, CornerRadius::ZERO, bg);
 
+    // Left vertical accent indicator bar on hover
+    if hovered {
+        let left_bar = egui::Rect::from_min_size(rect.min, Vec2::new(3.0, rect.height()));
+        ui.painter().rect_filled(left_bar, CornerRadius::ZERO, accent);
+    }
+
+    // Left-aligned Title
+    let title_color = if hovered {
+        accent
+    } else if is_active {
+        Color32::WHITE
+    } else {
+        Color32::from_rgb(222, 226, 234)
+    };
+
+    let title_y = if subtitle.is_some() { rect.top() + 13.0 } else { rect.center().y };
+    ui.painter().text(
+        egui::pos2(rect.left() + 14.0, title_y),
+        egui::Align2::LEFT_CENTER,
+        title,
+        FontId::proportional(12.5),
+        title_color,
+    );
+
+    // Subtitle under Title
+    if let Some(sub) = subtitle {
+        ui.painter().text(
+            egui::pos2(rect.left() + 14.0, rect.bottom() - 12.0),
+            egui::Align2::LEFT_CENTER,
+            sub,
+            FontId::proportional(10.0),
+            Color32::from_rgb(135, 140, 150),
+        );
+    }
+
+    // Right-aligned Hotkey Badge (e.g. "Alt+F10")
+    if let Some(hk) = hotkey_hint {
+        let badge_size = Vec2::new(58.0, 18.0);
+        let badge_rect = egui::Rect::from_center_size(
+            egui::pos2(rect.right() - 38.0, rect.center().y),
+            badge_size,
+        );
+        ui.painter().rect_filled(
+            badge_rect,
+            CornerRadius::ZERO,
+            Color32::from_rgba_unmultiplied(255, 255, 255, 12),
+        );
+        ui.painter().rect_stroke(
+            badge_rect,
+            CornerRadius::ZERO,
+            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 20)),
+            egui::StrokeKind::Inside,
+        );
+        ui.painter().text(
+            badge_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            hk,
+            FontId::monospace(9.0),
+            if hovered { accent } else { Color32::from_rgb(175, 180, 190) },
+        );
+    }
+
     // Clean subtle 1px divider between items (not drawn on last item so it stays flush)
     if !is_last && !hovered {
         ui.painter().line_segment(
@@ -822,20 +876,6 @@ fn render_menu_item(ui: &mut egui::Ui, label: &str, accent: Color32, is_last: bo
             Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 14)),
         );
     }
-
-    let text_color = if hovered {
-        accent
-    } else {
-        Color32::from_rgb(220, 222, 228)
-    };
-
-    ui.painter().text(
-        rect.center(),
-        egui::Align2::CENTER_CENTER,
-        label,
-        FontId::proportional(12.0),
-        text_color,
-    );
 
     response.clicked()
 }
@@ -1166,8 +1206,9 @@ impl ScytheOverlayApp {
 
                         if self.replay_dropdown_open {
                             render_dropdown_menu(ui, card_w, accent, |ui| {
-                                let toggle_text = if is_replay_active { "Turn off" } else { "Turn on" };
-                                if render_menu_item(ui, toggle_text, accent, false) {
+                                let toggle_title = if is_replay_active { "Turn off" } else { "Turn on" };
+                                let toggle_sub = if is_replay_active { "Stop background buffer" } else { "Capture continuous replay" };
+                                if render_menu_item(ui, toggle_title, Some(toggle_sub), None, is_replay_active, accent, false) {
                                     let mut cfg = ScytheConfig::load();
                                     cfg.replay_enabled = !cfg.replay_enabled;
                                     let _ = cfg.save();
@@ -1176,7 +1217,7 @@ impl ScytheOverlayApp {
                                     self.status.is_replay_active = cfg.replay_enabled;
                                     self.replay_dropdown_open = false;
                                 }
-                                if render_menu_item(ui, "Save Replay", accent, true) {
+                                if render_menu_item(ui, "Save Replay", Some("Export buffer to file"), Some("Alt+F10"), false, accent, true) {
                                     if is_replay_active {
                                         async_send_command(Command::SaveReplay);
                                         self.show_hud_notification("INSTANT REPLAY", "Saved to Videos", crate::overlay::ToastIcon::Replay);
@@ -1227,8 +1268,9 @@ impl ScytheOverlayApp {
 
                         if self.record_dropdown_open {
                             render_dropdown_menu(ui, card_w, accent, |ui| {
-                                let rec_toggle_text = if is_recording { "Stop Recording" } else { "Start Recording" };
-                                if render_menu_item(ui, rec_toggle_text, accent, true) {
+                                let rec_toggle_title = if is_recording { "Stop Recording" } else { "Start Recording" };
+                                let rec_toggle_sub = if is_recording { "Finalize and save video" } else { "Capture video to disk" };
+                                if render_menu_item(ui, rec_toggle_title, Some(rec_toggle_sub), Some("Alt+F9"), is_recording, accent, true) {
                                     async_send_command(Command::ToggleRecording);
                                     if is_recording {
                                         self.show_hud_notification("RECORDING", "Recording saved", crate::overlay::ToastIcon::Save);
@@ -2392,9 +2434,9 @@ impl eframe::App for ScytheOverlayApp {
         visuals.selection.bg_fill = self.accent_color();
         ctx.set_visuals(visuals);
 
-        // Background screen darkening scrim (rgba 0, 0, 0, 115 gives ~45% dimming of background)
+        // Background screen darkening scrim (deep smooth slate tint letting compositor blur shine through)
         egui::CentralPanel::default()
-            .frame(egui::Frame::NONE.fill(Color32::from_rgba_unmultiplied(0, 0, 0, 115)))
+            .frame(egui::Frame::NONE.fill(Color32::from_rgba_unmultiplied(6, 8, 12, 130)))
             .show(ctx, |ui| {
                 match self.current_view {
                     ShadowPlayView::MainHud => self.render_main_hud(ctx, ui),
