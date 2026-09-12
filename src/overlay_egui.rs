@@ -662,18 +662,20 @@ fn render_action_card(
 
     painter.rect_filled(rect, CornerRadius::ZERO, bg);
 
-    // Clean, crisp outlines on cards: prominent accent on hover/selected, subtle accent when idle
-    let stroke = if dropdown_open {
-        Stroke::new(1.5_f32, accent)
-    } else if hovered {
-        Stroke::new(1.5_f32, accent)
-    } else if is_active {
-        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 160))
+    // Accent outline: ONLY shown when card is active (replay active or recording active)
+    let stroke = if is_active {
+        if hovered || dropdown_open {
+            Stroke::new(1.5_f32, accent)
+        } else {
+            Stroke::new(1.0_f32, accent)
+        }
     } else {
-        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 70))
+        Stroke::NONE
     };
 
-    painter.rect_stroke(rect, CornerRadius::ZERO, stroke, egui::StrokeKind::Inside);
+    if stroke != Stroke::NONE {
+        painter.rect_stroke(rect, CornerRadius::ZERO, stroke, egui::StrokeKind::Inside);
+    }
 
     // Card Title (clean modern sans typography)
     painter.text(
