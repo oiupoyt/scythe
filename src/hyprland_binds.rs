@@ -158,6 +158,7 @@ pub fn register_hyprland_binds(config: &ScytheConfig) {
         "float, class:^(scythe-toast)$",
         "pin, class:^(scythe-toast)$",
         "noborder, class:^(scythe-toast)$",
+        "move 100%-w 16, class:^(scythe-toast)$",
         "float, class:^(vrec-overlay)$",
         "move 0 0, class:^(vrec-overlay)$",
         "size 100% 100%, class:^(vrec-overlay)$",

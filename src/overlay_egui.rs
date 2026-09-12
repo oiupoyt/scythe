@@ -525,7 +525,7 @@ fn draw_replay_icon(painter: &egui::Painter, center: egui::Pos2, radius: f32, is
     };
 
     // Minimalist Line Chevrons (≪) - Crisp, high-tech stroked rewind glyph
-    let stroke_w = 2.4_f32;
+    let stroke_w = (radius * 0.10).clamp(1.7, 2.4);
     let stroke = Stroke::new(stroke_w, color);
     let chevron_h = radius * 0.62;
     let chevron_w = radius * 0.38;
@@ -2173,72 +2173,91 @@ impl ScytheOverlayApp {
                 let card_w = 320.0;
                 let card_h = 56.0;
                 let toast_rect = egui::Rect::from_min_size(
-                    egui::pos2(screen_w - card_w - 28.0 + slide_x, 28.0),
+                    egui::pos2(screen_w - card_w + slide_x, 16.0),
                     egui::vec2(card_w, card_h),
                 );
 
                 let painter = ui.painter();
 
-                // Drop shadow
+                // Sleek translucent neutral dark glass toast card (matching HUD cards)
                 painter.rect_filled(
-                    toast_rect.translate(Vec2::new(0.0, 4.0)),
-                    CornerRadius::ZERO,
-                    Color32::from_rgba_unmultiplied(0, 0, 0, 140),
-                );
-
-                // Modern sleek dark glass toast card
-                painter.rect(
                     toast_rect,
                     CornerRadius::ZERO,
-                    Color32::from_rgba_unmultiplied(12, 13, 16, 252),
-                    Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 30)),
+                    Color32::from_rgba_unmultiplied(10, 10, 10, 165),
+                );
+
+                // Refined subtle accent stroke framing the card
+                let stroke_color = if notif.icon == crate::overlay::ToastIcon::Record || notif.icon == crate::overlay::ToastIcon::Error {
+                    Color32::from_rgba_unmultiplied(239, 68, 68, 140)
+                } else {
+                    Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 140)
+                };
+                painter.rect_stroke(
+                    toast_rect,
+                    CornerRadius::ZERO,
+                    Stroke::new(1.0_f32, stroke_color),
                     egui::StrokeKind::Inside,
                 );
 
-                // Left vertical accent bar
-                let line_color = if notif.icon == crate::overlay::ToastIcon::Record {
-                    Color32::from_rgb(239, 68, 68)
-                } else {
-                    accent
-                };
-                let accent_line = egui::Rect::from_min_size(toast_rect.min + Vec2::new(1.0, 1.0), Vec2::new(3.5, toast_rect.height() - 2.0));
-                painter.rect_filled(accent_line, CornerRadius::ZERO, line_color);
-
-                // Left icon area (32x32 at center-left)
+                // Left icon area (centered vertically at x = 24.0)
                 let icon_center = egui::pos2(toast_rect.left() + 24.0, toast_rect.center().y);
                 match notif.icon {
                     crate::overlay::ToastIcon::Replay => {
-                        draw_replay_icon(painter, icon_center, 9.5, true, accent);
+                        draw_replay_icon(painter, icon_center, 12.0, true, accent);
                     }
                     crate::overlay::ToastIcon::Record => {
-                        painter.circle_filled(icon_center, 5.5, Color32::from_rgb(239, 68, 68));
-                        painter.circle_stroke(icon_center, 9.5, Stroke::new(1.2_f32, Color32::from_rgba_unmultiplied(239, 68, 68, 120)));
+                        let red_bright = Color32::from_rgb(239, 68, 68);
+                        let half = 8.5;
+                        let arm = 3.2;
+                        let stroke = Stroke::new(1.6_f32, red_bright);
+                        painter.line_segment([icon_center + Vec2::new(-half + arm, -half), icon_center + Vec2::new(-half, -half)], stroke);
+                        painter.line_segment([icon_center + Vec2::new(-half, -half), icon_center + Vec2::new(-half, -half + arm)], stroke);
+                        painter.line_segment([icon_center + Vec2::new(half - arm, -half), icon_center + Vec2::new(half, -half)], stroke);
+                        painter.line_segment([icon_center + Vec2::new(half, -half), icon_center + Vec2::new(half, -half + arm)], stroke);
+                        painter.line_segment([icon_center + Vec2::new(-half + arm, half), icon_center + Vec2::new(-half, half)], stroke);
+                        painter.line_segment([icon_center + Vec2::new(-half, half), icon_center + Vec2::new(-half, half - arm)], stroke);
+                        painter.line_segment([icon_center + Vec2::new(half - arm, half), icon_center + Vec2::new(half, half)], stroke);
+                        painter.line_segment([icon_center + Vec2::new(half, half), icon_center + Vec2::new(half, half - arm)], stroke);
+                        painter.circle_filled(icon_center, 3.5, red_bright);
                     }
                     crate::overlay::ToastIcon::Save => {
-                        let c = icon_center;
-                        let p1 = c + Vec2::new(-5.5, 0.0);
-                        let p2 = c + Vec2::new(-1.5, 4.0);
-                        let p3 = c + Vec2::new(5.5, -4.0);
-                        painter.line_segment([p1, p2], Stroke::new(2.2_f32, accent));
-                        painter.line_segment([p2, p3], Stroke::new(2.2_f32, accent));
+                        painter.add(egui::epaint::PathShape::line(
+                            vec![
+                                icon_center + Vec2::new(-6.0, 0.5),
+                                icon_center + Vec2::new(-2.0, 4.5),
+                                icon_center + Vec2::new(6.0, -4.5),
+                            ],
+                            Stroke::new(2.0_f32, accent),
+                        ));
                     }
                     crate::overlay::ToastIcon::Cursor => {
-                        let c = icon_center;
-                        painter.text(c, egui::Align2::CENTER_CENTER, "⯈", FontId::proportional(14.0), accent);
+                        painter.add(egui::epaint::PathShape::line(
+                            vec![
+                                icon_center + Vec2::new(-5.0, -7.0),
+                                icon_center + Vec2::new(-5.0, 5.0),
+                                icon_center + Vec2::new(-1.5, 2.0),
+                                icon_center + Vec2::new(1.5, 7.0),
+                                icon_center + Vec2::new(3.5, 6.0),
+                                icon_center + Vec2::new(0.5, 1.0),
+                                icon_center + Vec2::new(5.0, 1.0),
+                                icon_center + Vec2::new(-5.0, -7.0),
+                            ],
+                            Stroke::new(1.8_f32, accent),
+                        ));
                     }
                     crate::overlay::ToastIcon::Error => {
-                        let c = icon_center;
                         let red = Color32::from_rgb(239, 68, 68);
-                        painter.line_segment([c + Vec2::new(-4.0, -4.0), c + Vec2::new(4.0, 4.0)], Stroke::new(2.0_f32, red));
-                        painter.line_segment([c + Vec2::new(4.0, -4.0), c + Vec2::new(-4.0, 4.0)], Stroke::new(2.0_f32, red));
+                        let stroke = Stroke::new(2.0_f32, red);
+                        painter.line_segment([icon_center + Vec2::new(-5.0, -5.0), icon_center + Vec2::new(5.0, 5.0)], stroke);
+                        painter.line_segment([icon_center + Vec2::new(5.0, -5.0), icon_center + Vec2::new(-5.0, 5.0)], stroke);
                     }
                     crate::overlay::ToastIcon::Info => {
-                        painter.circle_filled(icon_center, 5.0, accent);
+                        painter.circle_filled(icon_center, 4.5, accent);
                     }
                 }
 
                 // Text stack (Title + Subtitle)
-                let text_left = toast_rect.left() + 48.0;
+                let text_left = toast_rect.left() + 46.0;
                 painter.text(
                     egui::pos2(text_left, toast_rect.top() + 19.0),
                     egui::Align2::LEFT_CENTER,
@@ -2251,7 +2270,7 @@ impl ScytheOverlayApp {
                     egui::Align2::LEFT_CENTER,
                     &notif.subtitle,
                     FontId::proportional(11.0),
-                    Color32::from_rgb(160, 160, 168),
+                    Color32::from_rgb(175, 180, 190),
                 );
             } else {
                 self.hud_notification = None;
@@ -2641,13 +2660,13 @@ impl eframe::App for ShadowPlayToastApp {
         let slide_x = if elapsed < 0.35 {
             let t = (elapsed / 0.35).min(1.0);
             let ease = 1.0 - (1.0 - t).powi(3);
-            (1.0 - ease) * 340.0
+            (1.0 - ease) * 320.0
         } else if elapsed < total_dur - 0.40 {
             0.0
         } else {
             let t = ((elapsed - (total_dur - 0.40)) / 0.40).min(1.0);
             let ease = t.powi(3);
-            ease * 340.0
+            ease * 320.0
         };
 
         let mut visuals = egui::Visuals::dark();
@@ -2659,71 +2678,90 @@ impl eframe::App for ShadowPlayToastApp {
             .frame(egui::Frame::NONE.fill(Color32::TRANSPARENT))
             .show(ctx, |ui| {
                 let rect = egui::Rect::from_min_size(
-                    egui::pos2(slide_x + 10.0, 4.0),
+                    egui::pos2(slide_x, 0.0),
                     Vec2::new(320.0, 56.0),
                 );
                 let painter = ui.painter();
 
-                // Drop shadow
+                // Sleek translucent neutral dark glass toast card (matching HUD cards)
                 painter.rect_filled(
-                    rect.translate(Vec2::new(0.0, 4.0)),
-                    CornerRadius::ZERO,
-                    Color32::from_rgba_unmultiplied(0, 0, 0, 140),
-                );
-
-                // Modern sleek dark glass toast card
-                painter.rect(
                     rect,
                     CornerRadius::ZERO,
-                    Color32::from_rgba_unmultiplied(12, 13, 16, 252),
-                    Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 30)),
+                    Color32::from_rgba_unmultiplied(10, 10, 10, 165),
+                );
+
+                // Refined subtle accent stroke framing the card
+                let stroke_color = if self.icon == crate::overlay::ToastIcon::Record || self.icon == crate::overlay::ToastIcon::Error {
+                    Color32::from_rgba_unmultiplied(239, 68, 68, 140)
+                } else {
+                    Color32::from_rgba_unmultiplied(self.accent.r(), self.accent.g(), self.accent.b(), 140)
+                };
+                painter.rect_stroke(
+                    rect,
+                    CornerRadius::ZERO,
+                    Stroke::new(1.0_f32, stroke_color),
                     egui::StrokeKind::Inside,
                 );
 
-                // Left accent line
-                let line_color = if self.icon == crate::overlay::ToastIcon::Record {
-                    Color32::from_rgb(239, 68, 68)
-                } else {
-                    self.accent
-                };
-                let accent_line = egui::Rect::from_min_size(rect.min + Vec2::new(1.0, 1.0), Vec2::new(3.5, rect.height() - 2.0));
-                painter.rect_filled(accent_line, CornerRadius::ZERO, line_color);
-
-                // Left icon area (32x32 at center-left)
+                // Left icon area (centered vertically at x = 24.0)
                 let icon_center = egui::pos2(rect.left() + 24.0, rect.center().y);
                 match self.icon {
                     crate::overlay::ToastIcon::Replay => {
-                        draw_replay_icon(painter, icon_center, 9.5, true, self.accent);
+                        draw_replay_icon(painter, icon_center, 12.0, true, self.accent);
                     }
                     crate::overlay::ToastIcon::Record => {
-                        painter.circle_filled(icon_center, 5.5, Color32::from_rgb(239, 68, 68));
-                        painter.circle_stroke(icon_center, 9.5, Stroke::new(1.2_f32, Color32::from_rgba_unmultiplied(239, 68, 68, 120)));
+                        let red_bright = Color32::from_rgb(239, 68, 68);
+                        let half = 8.5;
+                        let arm = 3.2;
+                        let stroke = Stroke::new(1.6_f32, red_bright);
+                        painter.line_segment([icon_center + Vec2::new(-half + arm, -half), icon_center + Vec2::new(-half, -half)], stroke);
+                        painter.line_segment([icon_center + Vec2::new(-half, -half), icon_center + Vec2::new(-half, -half + arm)], stroke);
+                        painter.line_segment([icon_center + Vec2::new(half - arm, -half), icon_center + Vec2::new(half, -half)], stroke);
+                        painter.line_segment([icon_center + Vec2::new(half, -half), icon_center + Vec2::new(half, -half + arm)], stroke);
+                        painter.line_segment([icon_center + Vec2::new(-half + arm, half), icon_center + Vec2::new(-half, half)], stroke);
+                        painter.line_segment([icon_center + Vec2::new(-half, half), icon_center + Vec2::new(-half, half - arm)], stroke);
+                        painter.line_segment([icon_center + Vec2::new(half - arm, half), icon_center + Vec2::new(half, half)], stroke);
+                        painter.line_segment([icon_center + Vec2::new(half, half), icon_center + Vec2::new(half, half - arm)], stroke);
+                        painter.circle_filled(icon_center, 3.5, red_bright);
                     }
                     crate::overlay::ToastIcon::Save => {
-                        let c = icon_center;
-                        let p1 = c + Vec2::new(-5.5, 0.0);
-                        let p2 = c + Vec2::new(-1.5, 4.0);
-                        let p3 = c + Vec2::new(5.5, -4.0);
-                        painter.line_segment([p1, p2], Stroke::new(2.2_f32, self.accent));
-                        painter.line_segment([p2, p3], Stroke::new(2.2_f32, self.accent));
+                        painter.add(egui::epaint::PathShape::line(
+                            vec![
+                                icon_center + Vec2::new(-6.0, 0.5),
+                                icon_center + Vec2::new(-2.0, 4.5),
+                                icon_center + Vec2::new(6.0, -4.5),
+                            ],
+                            Stroke::new(2.0_f32, self.accent),
+                        ));
                     }
                     crate::overlay::ToastIcon::Cursor => {
-                        let c = icon_center;
-                        painter.text(c, egui::Align2::CENTER_CENTER, "⯈", FontId::proportional(14.0), self.accent);
+                        painter.add(egui::epaint::PathShape::line(
+                            vec![
+                                icon_center + Vec2::new(-5.0, -7.0),
+                                icon_center + Vec2::new(-5.0, 5.0),
+                                icon_center + Vec2::new(-1.5, 2.0),
+                                icon_center + Vec2::new(1.5, 7.0),
+                                icon_center + Vec2::new(3.5, 6.0),
+                                icon_center + Vec2::new(0.5, 1.0),
+                                icon_center + Vec2::new(5.0, 1.0),
+                                icon_center + Vec2::new(-5.0, -7.0),
+                            ],
+                            Stroke::new(1.8_f32, self.accent),
+                        ));
                     }
                     crate::overlay::ToastIcon::Error => {
-                        let c = icon_center;
                         let red = Color32::from_rgb(239, 68, 68);
-                        painter.line_segment([c + Vec2::new(-4.0, -4.0), c + Vec2::new(4.0, 4.0)], Stroke::new(2.0_f32, red));
-                        painter.line_segment([c + Vec2::new(4.0, -4.0), c + Vec2::new(-4.0, 4.0)], Stroke::new(2.0_f32, red));
+                        let stroke = Stroke::new(2.0_f32, red);
+                        painter.line_segment([icon_center + Vec2::new(-5.0, -5.0), icon_center + Vec2::new(5.0, 5.0)], stroke);
+                        painter.line_segment([icon_center + Vec2::new(5.0, -5.0), icon_center + Vec2::new(-5.0, 5.0)], stroke);
                     }
                     crate::overlay::ToastIcon::Info => {
-                        painter.circle_filled(icon_center, 5.0, self.accent);
+                        painter.circle_filled(icon_center, 4.5, self.accent);
                     }
                 }
 
                 // Text stack (Title + Subtitle)
-                let text_left = rect.left() + 48.0;
+                let text_left = rect.left() + 46.0;
                 painter.text(
                     egui::pos2(text_left, rect.top() + 19.0),
                     egui::Align2::LEFT_CENTER,
@@ -2736,7 +2774,7 @@ impl eframe::App for ShadowPlayToastApp {
                     egui::Align2::LEFT_CENTER,
                     &self.subtitle,
                     FontId::proportional(11.0),
-                    Color32::from_rgb(160, 160, 168),
+                    Color32::from_rgb(175, 180, 190),
                 );
             });
     }
@@ -2746,8 +2784,8 @@ pub fn run_egui_toast(title: &str, subtitle: &str, icon: crate::overlay::ToastIc
     let cfg = ScytheConfig::load();
     let accent = resolve_accent_color(&cfg.accent_color);
 
-    let toast_w: f32 = 340.0;
-    let toast_h: f32 = 64.0;
+    let toast_w: f32 = 320.0;
+    let toast_h: f32 = 56.0;
 
     let toast_pid_path = crate::ipc::get_toast_pid_path();
     if let Ok(prev_pid_str) = std::fs::read_to_string(&toast_pid_path)
@@ -2778,8 +2816,8 @@ pub fn run_egui_toast(title: &str, subtitle: &str, icon: crate::overlay::ToastIc
     #[cfg(not(target_os = "windows"))]
     let (mon_x, _mon_y, screen_w, _screen_h) = query_focused_monitor_rect();
 
-    let pos_x = (mon_x + screen_w - toast_w - 28.0).max(10.0);
-    let pos_y = 28.0;
+    let pos_x = (mon_x + screen_w - toast_w).max(0.0);
+    let pos_y = 16.0;
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()

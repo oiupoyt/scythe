@@ -199,7 +199,7 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
             _ => ("#38bdf8", (0.220, 0.741, 0.973)),
         };
 
-        let (active_accent_hex, active_accent) = if icon == ToastIcon::Record {
+        let (_active_accent_hex, active_accent) = if icon == ToastIcon::Record {
             ("#ef4444", (0.937, 0.267, 0.267))
         } else {
             (accent_hex, accent_rgb)
@@ -229,8 +229,8 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
         app.connect_activate(move |app| {
             let window = ApplicationWindow::builder()
                 .application(app)
-                .default_width(360)
-                .default_height(64)
+                .default_width(320)
+                .default_height(56)
                 .build();
 
             #[cfg(target_os = "linux")]
@@ -250,8 +250,8 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
                 }
                 window.set_anchor(gtk_layer_shell::Edge::Top, true);
                 window.set_anchor(gtk_layer_shell::Edge::Right, true);
-                window.set_layer_shell_margin(gtk_layer_shell::Edge::Top, 28);
-                window.set_layer_shell_margin(gtk_layer_shell::Edge::Right, 28);
+                window.set_layer_shell_margin(gtk_layer_shell::Edge::Top, 16);
+                window.set_layer_shell_margin(gtk_layer_shell::Edge::Right, 0); // flush on screen right edge
                 window.set_keyboard_interactivity(false);
             } else {
                 window.set_decorated(false);
@@ -260,8 +260,8 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
                 window.set_accept_focus(false);
                 if let Some(ref mon) = active_monitor {
                     let geom = mon.geometry();
-                    let x = geom.x() + geom.width() - 360 - 28;
-                    let y = geom.y() + 28;
+                    let x = geom.x() + geom.width() - 320;
+                    let y = geom.y() + 16;
                     window.move_(x, y);
                 }
             }
@@ -289,14 +289,12 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
                     box-shadow: none;
                 }}
                 .toast-card {{
-                    background-color: rgba(14, 16, 21, 0.96);
-                    border: 1px solid rgba(255, 255, 255, 0.14);
-                    border-left: 4px solid {accent};
+                    background-color: rgba(10, 10, 10, 0.65);
+                    border: 1px solid rgba(255, 255, 255, 0.08);
                     border-radius: 0px;
-                    box-shadow: 0px 8px 24px rgba(0, 0, 0, 0.75);
+                    box-shadow: none;
                 }}
                 "#,
-                accent = active_accent_hex
             );
             let _ = css_provider.load_from_data(css.as_bytes());
             if let Some(screen) = gdk::Screen::default() {
@@ -316,30 +314,19 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
             hbox.connect_draw(move |widget, cr| {
                 let w = widget.allocated_width() as f64;
                 let h = widget.allocated_height() as f64;
-                let card_h = (h - 4.0).max(10.0);
 
                 cr.set_operator(gtk::cairo::Operator::Over);
 
-                // 1. Drop shadow (soft dark shadow offset down by 4px)
-                cr.set_source_rgba(0.0, 0.0, 0.0, 0.60);
-                cr.rectangle(0.0, 4.0, w, card_h);
+                // Sleek translucent neutral dark glass background (matching HUD cards)
+                cr.set_source_rgba(10.0 / 255.0, 10.0 / 255.0, 10.0 / 255.0, 0.65);
+                cr.rectangle(0.0, 0.0, w, h);
                 let _ = cr.fill();
 
-                // 2. Solid obsidian dark slate background (matching egui rgba(14, 16, 21, 0.96))
-                cr.set_source_rgba(14.0 / 255.0, 16.0 / 255.0, 21.0 / 255.0, 0.96);
-                cr.rectangle(0.0, 0.0, w, card_h);
-                let _ = cr.fill();
-
-                // 3. Subtle white border (1px inside)
-                cr.set_source_rgba(1.0, 1.0, 1.0, 0.14);
+                // Refined subtle accent stroke framing the card
+                cr.set_source_rgba(active_accent.0, active_accent.1, active_accent.2, 0.55);
                 cr.set_line_width(1.0);
-                cr.rectangle(0.5, 0.5, w - 1.0, card_h - 1.0);
+                cr.rectangle(0.5, 0.5, w - 1.0, h - 1.0);
                 let _ = cr.stroke();
-
-                // 4. Left accent bar (4.0px width)
-                cr.set_source_rgb(active_accent.0, active_accent.1, active_accent.2);
-                cr.rectangle(0.0, 0.0, 4.0, card_h);
-                let _ = cr.fill();
 
                 gtk::glib::Propagation::Proceed
             });
@@ -355,75 +342,75 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
                 let cy = 16.0;
                 match icon_type {
                     ToastIcon::Replay => {
-                        let r = 10.0;
                         cr.set_source_rgb(accent_rgb.0, accent_rgb.1, accent_rgb.2);
-                        cr.set_line_width(2.2);
-                        cr.arc(cx, cy, r, 0.25 * PI, 1.80 * PI);
-                        let _ = cr.stroke();
-
-                        let a_x = cx + r * (0.25 * PI).cos();
-                        let a_y = cy + r * (0.25 * PI).sin();
-                        cr.move_to(a_x, a_y);
-                        cr.line_to(a_x - 4.5, a_y + 0.5);
-                        cr.line_to(a_x - 0.5, a_y - 4.5);
-                        cr.close_path();
-                        let _ = cr.fill();
-
-                        let tri_r = 4.0;
-                        cr.move_to(cx + tri_r + 0.5, cy);
-                        cr.line_to(cx - tri_r * 0.6 + 0.5, cy - tri_r * 0.86);
-                        cr.line_to(cx - tri_r * 0.6 + 0.5, cy + tri_r * 0.86);
-                        cr.close_path();
-                        let _ = cr.fill();
+                        cr.set_line_width(1.8);
+                        cr.set_line_cap(gtk::cairo::LineCap::Round);
+                        cr.set_line_join(gtk::cairo::LineJoin::Round);
+                        let ch_h = 7.0;
+                        let ch_w = 4.4;
+                        let gap = 4.2;
+                        let start_x = cx - (ch_w + gap) * 0.5;
+                        for i in 0..2 {
+                            let tip_x = start_x + (i as f64) * gap;
+                            let base_x = tip_x + ch_w;
+                            cr.move_to(base_x, cy - ch_h);
+                            cr.line_to(tip_x, cy);
+                            cr.line_to(base_x, cy + ch_h);
+                            let _ = cr.stroke();
+                        }
                     }
                     ToastIcon::Record => {
-                        cr.set_source_rgba(0.937, 0.267, 0.267, 0.25);
-                        cr.arc(cx, cy, 13.0, 0.0, PI * 2.0);
-                        let _ = cr.fill();
-
-                        cr.set_source_rgb(0.937, 0.267, 0.267);
-                        cr.set_line_width(1.8);
-                        cr.arc(cx, cy, 10.0, 0.0, PI * 2.0);
+                        let red = (0.937, 0.267, 0.267);
+                        cr.set_source_rgb(red.0, red.1, red.2);
+                        cr.set_line_width(1.6);
+                        let half = 8.5;
+                        let arm = 3.2;
+                        cr.move_to(cx - half + arm, cy - half); cr.line_to(cx - half, cy - half); cr.line_to(cx - half, cy - half + arm);
+                        cr.move_to(cx + half - arm, cy - half); cr.line_to(cx + half, cy - half); cr.line_to(cx + half, cy - half + arm);
+                        cr.move_to(cx - half + arm, cy + half); cr.line_to(cx - half, cy + half); cr.line_to(cx - half, cy + half - arm);
+                        cr.move_to(cx + half - arm, cy + half); cr.line_to(cx + half, cy + half); cr.line_to(cx + half, cy + half - arm);
                         let _ = cr.stroke();
-
-                        cr.arc(cx, cy, 5.0, 0.0, PI * 2.0);
+                        cr.arc(cx, cy, 3.5, 0.0, PI * 2.0);
                         let _ = cr.fill();
                     }
                     ToastIcon::Save => {
                         cr.set_source_rgb(accent_rgb.0, accent_rgb.1, accent_rgb.2);
-                        cr.set_line_width(2.5);
+                        cr.set_line_width(2.0);
                         cr.set_line_cap(gtk::cairo::LineCap::Round);
                         cr.set_line_join(gtk::cairo::LineJoin::Round);
-                        cr.move_to(cx - 7.0, cy);
-                        cr.line_to(cx - 2.0, cy + 5.0);
-                        cr.line_to(cx + 7.0, cy - 5.0);
+                        cr.move_to(cx - 6.0, cy + 0.5);
+                        cr.line_to(cx - 2.0, cy + 4.5);
+                        cr.line_to(cx + 6.0, cy - 4.5);
                         let _ = cr.stroke();
                     }
                     ToastIcon::Cursor => {
                         cr.set_source_rgb(accent_rgb.0, accent_rgb.1, accent_rgb.2);
                         cr.set_line_width(1.8);
-                        cr.move_to(cx - 6.0, cy - 8.0);
-                        cr.line_to(cx + 6.0, cy - 1.0);
-                        cr.line_to(cx, cy + 1.0);
-                        cr.line_to(cx + 2.0, cy + 7.0);
-                        cr.line_to(cx - 1.0, cy + 8.0);
-                        cr.line_to(cx - 3.0, cy + 2.0);
-                        cr.line_to(cx - 6.0, cy + 4.0);
+                        cr.set_line_cap(gtk::cairo::LineCap::Round);
+                        cr.set_line_join(gtk::cairo::LineJoin::Round);
+                        cr.move_to(cx - 5.0, cy - 7.0);
+                        cr.line_to(cx - 5.0, cy + 5.0);
+                        cr.line_to(cx - 1.5, cy + 2.0);
+                        cr.line_to(cx + 1.5, cy + 7.0);
+                        cr.line_to(cx + 3.5, cy + 6.0);
+                        cr.line_to(cx + 0.5, cy + 1.0);
+                        cr.line_to(cx + 5.0, cy + 1.0);
                         cr.close_path();
-                        let _ = cr.fill();
+                        let _ = cr.stroke();
                     }
                     ToastIcon::Error => {
                         cr.set_source_rgb(0.937, 0.267, 0.267);
-                        cr.set_line_width(2.2);
-                        cr.move_to(cx - 6.0, cy - 6.0);
-                        cr.line_to(cx + 6.0, cy + 6.0);
-                        cr.move_to(cx + 6.0, cy - 6.0);
-                        cr.line_to(cx - 6.0, cy + 6.0);
+                        cr.set_line_width(2.0);
+                        cr.set_line_cap(gtk::cairo::LineCap::Round);
+                        cr.move_to(cx - 5.0, cy - 5.0);
+                        cr.line_to(cx + 5.0, cy + 5.0);
+                        cr.move_to(cx + 5.0, cy - 5.0);
+                        cr.line_to(cx - 5.0, cy + 5.0);
                         let _ = cr.stroke();
                     }
                     ToastIcon::Info => {
                         cr.set_source_rgb(accent_rgb.0, accent_rgb.1, accent_rgb.2);
-                        cr.arc(cx, cy, 6.0, 0.0, PI * 2.0);
+                        cr.arc(cx, cy, 4.5, 0.0, PI * 2.0);
                         let _ = cr.fill();
                     }
                 }
@@ -437,14 +424,14 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
 
             let title_lbl = Label::new(None);
             title_lbl.set_markup(&format!(
-                "<span font_desc='monospace bold 10.5' color='#ffffff'>{}</span>",
+                "<span font_desc='sans bold 10.5' color='#ffffff'>{}</span>",
                 gtk::glib::markup_escape_text(&title_text)
             ));
             title_lbl.set_halign(gtk::Align::Start);
 
             let sub_lbl = Label::new(None);
             sub_lbl.set_markup(&format!(
-                "<span font_desc='sans 9' color='#a1a1aa'>{}</span>",
+                "<span font_desc='sans 9.5' color='#b4b9c4'>{}</span>",
                 gtk::glib::markup_escape_text(&sub_text)
             ));
             sub_lbl.set_halign(gtk::Align::Start);
@@ -456,8 +443,8 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
             hbox.pack_start(&vbox, true, true, 0);
 
             let fixed = Fixed::new();
-            fixed.set_size_request(360, 64);
-            fixed.put(&hbox, 360, 4);
+            fixed.set_size_request(320, 56);
+            fixed.put(&hbox, 320, 0);
             window.add(&fixed);
             window.show_all();
 
@@ -476,17 +463,17 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
                 let slide_x = if elapsed < 0.35 {
                     let t = (elapsed / 0.35).min(1.0);
                     let ease = 1.0 - (1.0 - t).powi(3);
-                    (1.0 - ease) * 360.0
+                    (1.0 - ease) * 320.0
                 } else if elapsed < 2.40 {
                     0.0
                 } else {
                     let t = ((elapsed - 2.40) / 0.40).min(1.0);
                     let ease = t.powi(3);
-                    ease * 360.0
+                    ease * 320.0
                 };
 
-                let target_x = (slide_x + 14.0).round() as i32;
-                fixed_clone.move_(&hbox_clone, target_x, 4);
+                let target_x = slide_x.round() as i32;
+                fixed_clone.move_(&hbox_clone, target_x, 0);
                 window_clone.queue_draw();
                 gtk::glib::ControlFlow::Continue
             });
