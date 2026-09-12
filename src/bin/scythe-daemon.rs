@@ -690,13 +690,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 recv(ticker) -> _ => {
                     while ticker.try_recv().is_ok() {}
 
-                    if last_malloc_trim.elapsed().as_secs() >= 5 {
-                        last_malloc_trim = std::time::Instant::now();
-                        #[cfg(target_os = "linux")]
-                        unsafe { libc::malloc_trim(0); }
-                    }
-
                     if !normal_recording && !config.replay_enabled {
+                        if last_malloc_trim.elapsed().as_secs() >= 5 {
+                            last_malloc_trim = std::time::Instant::now();
+                            #[cfg(target_os = "linux")]
+                            unsafe { libc::malloc_trim(0); }
+                        }
                         has_new_frame = false;
                         continue;
                     }

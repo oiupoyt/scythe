@@ -75,6 +75,12 @@ impl VaapiEncoder {
             };
             (*codec_ctx).flags |= AV_CODEC_FLAG_GLOBAL_HEADER as libc::c_int;
 
+            // Rec.709 Color Space & MPEG Limited Range (Broadcast / Web standard, avoids yellow tint)
+            (*codec_ctx).colorspace = AVColorSpace::AVCOL_SPC_BT709;
+            (*codec_ctx).color_primaries = AVColorPrimaries::AVCOL_PRI_BT709;
+            (*codec_ctx).color_trc = AVColorTransferCharacteristic::AVCOL_TRC_BT709;
+            (*codec_ctx).color_range = AVColorRange::AVCOL_RANGE_MPEG;
+
             let mut hw_device_ctx: *mut AVBufferRef = ptr::null_mut();
             let ret = av_hwdevice_ctx_create(
                 &mut hw_device_ctx,
@@ -123,10 +129,18 @@ impl VaapiEncoder {
             (*staged_nv12).format = AVPixelFormat::AV_PIX_FMT_NV12 as i32;
             (*staged_nv12).width = width as i32;
             (*staged_nv12).height = height as i32;
+            (*staged_nv12).colorspace = AVColorSpace::AVCOL_SPC_BT709;
+            (*staged_nv12).color_primaries = AVColorPrimaries::AVCOL_PRI_BT709;
+            (*staged_nv12).color_trc = AVColorTransferCharacteristic::AVCOL_TRC_BT709;
+            (*staged_nv12).color_range = AVColorRange::AVCOL_RANGE_MPEG;
             av_frame_get_buffer(staged_nv12, 32);
 
             let hw_frame = av_frame_alloc();
             (*hw_frame).format = AVPixelFormat::AV_PIX_FMT_VAAPI as i32;
+            (*hw_frame).colorspace = AVColorSpace::AVCOL_SPC_BT709;
+            (*hw_frame).color_primaries = AVColorPrimaries::AVCOL_PRI_BT709;
+            (*hw_frame).color_trc = AVColorTransferCharacteristic::AVCOL_TRC_BT709;
+            (*hw_frame).color_range = AVColorRange::AVCOL_RANGE_MPEG;
 
             let sws_ctx = sws_getContext(
                 width as i32,
@@ -135,11 +149,27 @@ impl VaapiEncoder {
                 width as i32,
                 height as i32,
                 AVPixelFormat::AV_PIX_FMT_NV12,
-                1,
+                (SwsFlags::SWS_BICUBIC as libc::c_int) | (SwsFlags::SWS_ACCURATE_RND as libc::c_int),
                 ptr::null_mut(),
                 ptr::null_mut(),
                 ptr::null_mut(),
             );
+
+            if !sws_ctx.is_null() {
+                let coeffs = sws_getCoefficients(SWS_CS_ITU709);
+                if !coeffs.is_null() {
+                    sws_setColorspaceDetails(
+                        sws_ctx,
+                        coeffs,
+                        1, // srcRange: 1 (sRGB full range 0-255)
+                        coeffs,
+                        0, // dstRange: 0 (MPEG limited range 16-235)
+                        0,
+                        1 << 16,
+                        1 << 16,
+                    );
+                }
+            }
 
             Ok(Self {
                 codec_ctx,
@@ -291,9 +321,11 @@ impl VaapiEncoder {
                                         0,
                                     );
                                     if p != libc::MAP_FAILED {
-                                        if self.dma_mmap_cache.len() >= 4 {
-                                            for (_, (old_p, old_size)) in self.dma_mmap_cache.drain() {
-                                                libc::munmap(old_p, old_size);
+                                        if self.dma_mmap_cache.len() >= 16 {
+                                            if let Some(old_fd) = self.dma_mmap_cache.keys().next().copied() {
+                                                if let Some((old_p, old_size)) = self.dma_mmap_cache.remove(&old_fd) {
+                                                    libc::munmap(old_p, old_size);
+                                                }
                                             }
                                         }
                                         self.dma_mmap_cache.insert(*fd, (p, mmap_size));

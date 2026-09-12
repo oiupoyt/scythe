@@ -354,22 +354,42 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
                 cr.rectangle(0.5, 0.5, w - 1.0, h - 1.0);
                 let _ = cr.stroke();
 
-                // 5. Animated countdown timer line on bottom edge (high visibility)
+                // 5. Animated countdown timer line on bottom edge (vibrant accent glow)
                 let progress = 1.0 - (elapsed / total_dur).clamp(0.0, 1.0);
                 let bar_h = 3.5;
-                cr.set_source_rgba(1.0, 1.0, 1.0, 0.15 * alpha);
+                let bar_w = (w * progress).max(0.0);
+
+                // Track: glowing tinted accent baseline
+                cr.set_source_rgba(active_accent.0, active_accent.1, active_accent.2, 0.22 * alpha);
                 cr.rectangle(0.0, h - bar_h, w, bar_h);
                 let _ = cr.fill();
 
-                let bar_w = (w * progress).max(0.0);
-                cr.set_source_rgba(active_accent.0, active_accent.1, active_accent.2, 0.95 * alpha);
+                // Ambient vibrant glow above bar
+                let glow_h = 3.0;
+                cr.set_source_rgba(active_accent.0, active_accent.1, active_accent.2, 0.28 * alpha);
+                cr.rectangle(0.0, h - bar_h - glow_h, bar_w, glow_h);
+                let _ = cr.fill();
+
+                // Solid vibrant core bar
+                cr.set_source_rgba(active_accent.0, active_accent.1, active_accent.2, 1.0 * alpha);
                 cr.rectangle(0.0, h - bar_h, bar_w, bar_h);
                 let _ = cr.fill();
 
+                // Top neon specular edge highlight
+                let high_r = (active_accent.0 + 0.35).min(1.0);
+                let high_g = (active_accent.1 + 0.35).min(1.0);
+                let high_b = (active_accent.2 + 0.35).min(1.0);
+                cr.set_source_rgba(high_r, high_g, high_b, 0.90 * alpha);
+                cr.set_line_width(1.0);
+                cr.move_to(0.0, h - bar_h);
+                cr.line_to(bar_w, h - bar_h);
+                let _ = cr.stroke();
+
+                // Laser-sharp white leading tip indicator
                 if bar_w > 2.0 {
-                    cr.set_source_rgba(1.0, 1.0, 1.0, 0.85 * alpha);
-                    cr.set_line_width(1.5);
-                    cr.move_to(bar_w, h - bar_h);
+                    cr.set_source_rgba(1.0, 1.0, 1.0, 1.0 * alpha);
+                    cr.set_line_width(2.0);
+                    cr.move_to(bar_w, h - bar_h - 1.0);
                     cr.line_to(bar_w, h);
                     let _ = cr.stroke();
                 }
