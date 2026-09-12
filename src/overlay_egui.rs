@@ -524,23 +524,25 @@ fn draw_replay_icon(painter: &egui::Painter, center: egui::Pos2, radius: f32, is
         Color32::from_rgb(150, 150, 155)
     };
 
-    // 3 Rewind Triangles ◀ ◀ ◀ without outer circle (crisp, prominent, centered)
-    let tri_h = radius * 0.52;
-    let tri_w = radius * 0.30;
-    let gap = radius * 0.08;
-    let total_w = 3.0 * tri_w + 2.0 * gap;
-    let start_x = center.x - total_w * 0.5;
+    // Minimalist Line Chevrons (≪) - Crisp, high-tech stroked rewind glyph
+    let stroke_w = 2.4_f32;
+    let stroke = Stroke::new(stroke_w, color);
+    let chevron_h = radius * 0.62;
+    let chevron_w = radius * 0.38;
+    let gap = radius * 0.36;
+    let total_w = chevron_w + gap;
+    let left_x = center.x - total_w * 0.5;
 
-    for i in 0..3 {
-        let left = start_x + i as f32 * (tri_w + gap);
-        let right = left + tri_w;
-        let tip = egui::pos2(left, center.y);
-        let top = egui::pos2(right, center.y - tri_h);
-        let bot = egui::pos2(right, center.y + tri_h);
-        painter.add(egui::Shape::convex_polygon(
-            vec![tip, top, bot],
-            color,
-            Stroke::NONE,
+    for i in 0..2 {
+        let tip_x = left_x + i as f32 * gap;
+        let base_x = tip_x + chevron_w;
+        let top = egui::pos2(base_x, center.y - chevron_h);
+        let tip = egui::pos2(tip_x, center.y);
+        let bot = egui::pos2(base_x, center.y + chevron_h);
+
+        painter.add(egui::epaint::PathShape::line(
+            vec![top, tip, bot],
+            stroke,
         ));
     }
 }
