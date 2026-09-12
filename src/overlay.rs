@@ -306,27 +306,63 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
             }
             window.style_context().add_provider(&css_provider, gtk::STYLE_PROVIDER_PRIORITY_USER);
 
+            let start_time = Instant::now();
+
             let hbox = Box::new(Orientation::Horizontal, 10);
             hbox.style_context().add_class("toast-card");
             hbox.set_size_request(320, 56);
             hbox.set_app_paintable(true);
 
+            let start_time_draw = start_time;
             hbox.connect_draw(move |widget, cr| {
                 let w = widget.allocated_width() as f64;
                 let h = widget.allocated_height() as f64;
+                let elapsed = start_time_draw.elapsed().as_secs_f64();
+                let total_dur = 2.80_f64;
+
+                // Dynamic fade transition
+                let fade_in = (elapsed / 0.22).min(1.0);
+                let fade_out = ((total_dur - elapsed) / 0.32).clamp(0.0, 1.0);
+                let alpha = fade_in.min(fade_out);
 
                 cr.set_operator(gtk::cairo::Operator::Over);
 
-                // Sleek translucent neutral dark glass background (matching HUD cards)
-                cr.set_source_rgba(10.0 / 255.0, 10.0 / 255.0, 10.0 / 255.0, 0.65);
+                // 1. Entrance accent bloom (first 0.55s)
+                let bloom = if elapsed < 0.55 { (1.0 - elapsed / 0.55).powi(2) } else { 0.0 };
+                if bloom > 0.01 {
+                    cr.set_source_rgba(active_accent.0, active_accent.1, active_accent.2, 0.35 * bloom * alpha);
+                    cr.set_line_width(2.0);
+                    cr.rectangle(1.0, 1.0, w - 2.0, h - 2.0);
+                    let _ = cr.stroke();
+                }
+
+                // 2. Sleek translucent neutral dark glass background (matching HUD cards)
+                cr.set_source_rgba(10.0 / 255.0, 10.0 / 255.0, 10.0 / 255.0, 0.68 * alpha);
                 cr.rectangle(0.0, 0.0, w, h);
                 let _ = cr.fill();
 
-                // Refined subtle accent stroke framing the card
-                cr.set_source_rgba(active_accent.0, active_accent.1, active_accent.2, 0.55);
+                // 3. Top specular frost highlight
+                cr.set_source_rgba(1.0, 1.0, 1.0, 0.15 * alpha);
+                cr.set_line_width(1.0);
+                cr.move_to(1.0, 0.5);
+                cr.line_to(w - 1.0, 0.5);
+                let _ = cr.stroke();
+
+                // 4. Refined subtle accent stroke framing the card
+                cr.set_source_rgba(active_accent.0, active_accent.1, active_accent.2, 0.55 * alpha);
                 cr.set_line_width(1.0);
                 cr.rectangle(0.5, 0.5, w - 1.0, h - 1.0);
                 let _ = cr.stroke();
+
+                // 5. Animated countdown timer line on bottom edge
+                let progress = 1.0 - (elapsed / total_dur).clamp(0.0, 1.0);
+                cr.set_source_rgba(1.0, 1.0, 1.0, 0.08 * alpha);
+                cr.rectangle(0.0, h - 2.0, w, 2.0);
+                let _ = cr.fill();
+
+                cr.set_source_rgba(active_accent.0, active_accent.1, active_accent.2, 0.75 * alpha);
+                cr.rectangle(0.0, h - 2.0, w * progress, 2.0);
+                let _ = cr.fill();
 
                 gtk::glib::Propagation::Proceed
             });
@@ -337,18 +373,21 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
             icon_area.set_margin_start(14);
             icon_area.set_valign(gtk::Align::Center);
             let icon_type = icon;
+            let start_time_icon = start_time;
             icon_area.connect_draw(move |_, cr| {
                 let cx = 16.0;
                 let cy = 16.0;
+                let elapsed = start_time_icon.elapsed().as_secs_f64();
                 match icon_type {
                     ToastIcon::Replay => {
+                        let scale = if elapsed < 0.35 { 0.85 + 0.15 * (elapsed / 0.35) } else { 1.0 };
                         cr.set_source_rgb(accent_rgb.0, accent_rgb.1, accent_rgb.2);
                         cr.set_line_width(1.8);
                         cr.set_line_cap(gtk::cairo::LineCap::Round);
                         cr.set_line_join(gtk::cairo::LineJoin::Round);
-                        let ch_h = 7.0;
-                        let ch_w = 4.4;
-                        let gap = 4.2;
+                        let ch_h = 7.0 * scale;
+                        let ch_w = 4.4 * scale;
+                        let gap = 4.2 * scale;
                         let start_x = cx - (ch_w + gap) * 0.5;
                         for i in 0..2 {
                             let tip_x = start_x + (i as f64) * gap;
@@ -360,6 +399,7 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
                         }
                     }
                     ToastIcon::Record => {
+                        let pulse = ((elapsed * 5.0).sin() * 0.5 + 0.5) * 0.35 + 0.65;
                         let red = (0.937, 0.267, 0.267);
                         cr.set_source_rgb(red.0, red.1, red.2);
                         cr.set_line_width(1.6);
@@ -370,7 +410,7 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
                         cr.move_to(cx - half + arm, cy + half); cr.line_to(cx - half, cy + half); cr.line_to(cx - half, cy + half - arm);
                         cr.move_to(cx + half - arm, cy + half); cr.line_to(cx + half, cy + half); cr.line_to(cx + half, cy + half - arm);
                         let _ = cr.stroke();
-                        cr.arc(cx, cy, 3.5, 0.0, PI * 2.0);
+                        cr.arc(cx, cy, 3.5 * pulse, 0.0, PI * 2.0);
                         let _ = cr.fill();
                     }
                     ToastIcon::Save => {
@@ -451,7 +491,6 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
             let window_clone = window.clone();
             let hbox_clone = hbox.clone();
             let fixed_clone = fixed.clone();
-            let start_time = Instant::now();
 
             gtk::glib::timeout_add_local(Duration::from_millis(16), move || {
                 let elapsed = start_time.elapsed().as_secs_f32();
@@ -460,14 +499,14 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
                     return gtk::glib::ControlFlow::Break;
                 }
 
-                let slide_x = if elapsed < 0.35 {
-                    let t = (elapsed / 0.35).min(1.0);
-                    let ease = 1.0 - (1.0 - t).powi(3);
+                let slide_x = if elapsed < 0.38 {
+                    let t = (elapsed / 0.38).min(1.0);
+                    let ease = 1.0 - (1.0 - t).powi(4);
                     (1.0 - ease) * 320.0
-                } else if elapsed < 2.40 {
+                } else if elapsed < 2.45 {
                     0.0
                 } else {
-                    let t = ((elapsed - 2.40) / 0.40).min(1.0);
+                    let t = ((elapsed - 2.45) / 0.35).min(1.0);
                     let ease = t.powi(3);
                     ease * 320.0
                 };

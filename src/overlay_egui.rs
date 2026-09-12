@@ -2154,20 +2154,27 @@ impl ScytheOverlayApp {
         let accent = self.accent_color();
         if let Some(notif) = &self.hud_notification {
             let elapsed = notif.start_time.elapsed().as_secs_f32();
-            if elapsed < notif.duration_secs {
+            let total_dur = notif.duration_secs;
+            if elapsed < total_dur {
                 ctx.request_repaint(); // 60 FPS animation
 
-                let slide_x = if elapsed < 0.35 {
-                    let t = (elapsed / 0.35).min(1.0);
-                    let ease = 1.0 - (1.0 - t).powi(3);
-                    (1.0 - ease) * 360.0
-                } else if elapsed < notif.duration_secs - 0.40 {
+                // Silky smooth quintic decel entrance & cubic exit slide
+                let slide_x = if elapsed < 0.38 {
+                    let t = (elapsed / 0.38).min(1.0);
+                    let ease = 1.0 - (1.0 - t).powi(4);
+                    (1.0 - ease) * 320.0
+                } else if elapsed < total_dur - 0.35 {
                     0.0
                 } else {
-                    let t = ((elapsed - (notif.duration_secs - 0.40)) / 0.40).min(1.0);
+                    let t = ((elapsed - (total_dur - 0.35)) / 0.35).min(1.0);
                     let ease = t.powi(3);
-                    ease * 360.0
+                    ease * 320.0
                 };
+
+                // Dynamic fade transition
+                let fade_in = (elapsed / 0.22).clamp(0.0, 1.0);
+                let fade_out = ((total_dur - elapsed) / 0.32).clamp(0.0, 1.0);
+                let anim_alpha = fade_in.min(fade_out);
 
                 let screen_w = ui.available_width();
                 let card_w = 320.0;
@@ -2179,34 +2186,70 @@ impl ScytheOverlayApp {
 
                 let painter = ui.painter();
 
-                // Sleek translucent neutral dark glass toast card (matching HUD cards)
+                let active_color = if notif.icon == crate::overlay::ToastIcon::Record || notif.icon == crate::overlay::ToastIcon::Error {
+                    Color32::from_rgb(239, 68, 68)
+                } else {
+                    accent
+                };
+
+                // 1. Entrance accent bloom / gleam pulse (first 0.55s)
+                let bloom = if elapsed < 0.55 { (1.0 - elapsed / 0.55).powi(2) } else { 0.0 };
+                if bloom > 0.01 {
+                    painter.rect_stroke(
+                        toast_rect.expand(2.0),
+                        CornerRadius::ZERO,
+                        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(active_color.r(), active_color.g(), active_color.b(), (bloom * 90.0 * anim_alpha) as u8)),
+                        egui::StrokeKind::Outside,
+                    );
+                }
+
+                // 2. Sleek translucent neutral dark glass toast card fill
                 painter.rect_filled(
                     toast_rect,
                     CornerRadius::ZERO,
-                    Color32::from_rgba_unmultiplied(10, 10, 10, 165),
+                    Color32::from_rgba_unmultiplied(10, 10, 10, (170.0 * anim_alpha) as u8),
                 );
 
-                // Refined subtle accent stroke framing the card
-                let stroke_color = if notif.icon == crate::overlay::ToastIcon::Record || notif.icon == crate::overlay::ToastIcon::Error {
-                    Color32::from_rgba_unmultiplied(239, 68, 68, 140)
-                } else {
-                    Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 140)
-                };
+                // 3. Top subtle specular frost highlight
+                painter.line_segment(
+                    [toast_rect.left_top() + Vec2::new(1.0, 0.5), toast_rect.right_top() + Vec2::new(-1.0, 0.5)],
+                    Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, (38.0 * anim_alpha) as u8)),
+                );
+
+                // 4. Refined accent stroke framing the card
                 painter.rect_stroke(
                     toast_rect,
                     CornerRadius::ZERO,
-                    Stroke::new(1.0_f32, stroke_color),
+                    Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(active_color.r(), active_color.g(), active_color.b(), (140.0 * anim_alpha) as u8)),
                     egui::StrokeKind::Inside,
                 );
 
+                // 5. Animated Countdown Timer Line (bottom edge)
+                let progress = 1.0 - (elapsed / total_dur).clamp(0.0, 1.0);
+                let bar_track = egui::Rect::from_min_size(egui::pos2(toast_rect.left(), toast_rect.bottom() - 2.0), egui::vec2(card_w, 2.0));
+                painter.rect_filled(bar_track, CornerRadius::ZERO, Color32::from_rgba_unmultiplied(255, 255, 255, (16.0 * anim_alpha) as u8));
+                let bar_rect = egui::Rect::from_min_size(egui::pos2(toast_rect.left(), toast_rect.bottom() - 2.0), egui::vec2(card_w * progress, 2.0));
+                painter.rect_filled(bar_rect, CornerRadius::ZERO, Color32::from_rgba_unmultiplied(active_color.r(), active_color.g(), active_color.b(), (190.0 * anim_alpha) as u8));
+
                 // Left icon area (centered vertically at x = 24.0)
                 let icon_center = egui::pos2(toast_rect.left() + 24.0, toast_rect.center().y);
+                if bloom > 0.01 {
+                    painter.circle_filled(
+                        icon_center,
+                        12.0,
+                        Color32::from_rgba_unmultiplied(active_color.r(), active_color.g(), active_color.b(), (bloom * 40.0 * anim_alpha) as u8),
+                    );
+                }
+
+                let icon_tint = Color32::from_rgba_unmultiplied(active_color.r(), active_color.g(), active_color.b(), (255.0 * anim_alpha) as u8);
                 match notif.icon {
                     crate::overlay::ToastIcon::Replay => {
-                        draw_replay_icon(painter, icon_center, 12.0, true, accent);
+                        let scale = if elapsed < 0.35 { 0.85 + 0.15 * (elapsed / 0.35) } else { 1.0 };
+                        draw_replay_icon(painter, icon_center, 12.0 * scale, true, icon_tint);
                     }
                     crate::overlay::ToastIcon::Record => {
-                        let red_bright = Color32::from_rgb(239, 68, 68);
+                        let pulse = ((elapsed * 5.0).sin() * 0.5 + 0.5) * 0.35 + 0.65;
+                        let red_bright = Color32::from_rgba_unmultiplied(239, 68, 68, (255.0 * anim_alpha) as u8);
                         let half = 8.5;
                         let arm = 3.2;
                         let stroke = Stroke::new(1.6_f32, red_bright);
@@ -2218,7 +2261,7 @@ impl ScytheOverlayApp {
                         painter.line_segment([icon_center + Vec2::new(-half, half), icon_center + Vec2::new(-half, half - arm)], stroke);
                         painter.line_segment([icon_center + Vec2::new(half - arm, half), icon_center + Vec2::new(half, half)], stroke);
                         painter.line_segment([icon_center + Vec2::new(half, half), icon_center + Vec2::new(half, half - arm)], stroke);
-                        painter.circle_filled(icon_center, 3.5, red_bright);
+                        painter.circle_filled(icon_center, 3.2 * pulse, red_bright);
                     }
                     crate::overlay::ToastIcon::Save => {
                         painter.add(egui::epaint::PathShape::line(
@@ -2227,7 +2270,7 @@ impl ScytheOverlayApp {
                                 icon_center + Vec2::new(-2.0, 4.5),
                                 icon_center + Vec2::new(6.0, -4.5),
                             ],
-                            Stroke::new(2.0_f32, accent),
+                            Stroke::new(2.0_f32, icon_tint),
                         ));
                     }
                     crate::overlay::ToastIcon::Cursor => {
@@ -2242,35 +2285,34 @@ impl ScytheOverlayApp {
                                 icon_center + Vec2::new(5.0, 1.0),
                                 icon_center + Vec2::new(-5.0, -7.0),
                             ],
-                            Stroke::new(1.8_f32, accent),
+                            Stroke::new(1.8_f32, icon_tint),
                         ));
                     }
                     crate::overlay::ToastIcon::Error => {
-                        let red = Color32::from_rgb(239, 68, 68);
-                        let stroke = Stroke::new(2.0_f32, red);
+                        let stroke = Stroke::new(2.0_f32, icon_tint);
                         painter.line_segment([icon_center + Vec2::new(-5.0, -5.0), icon_center + Vec2::new(5.0, 5.0)], stroke);
                         painter.line_segment([icon_center + Vec2::new(5.0, -5.0), icon_center + Vec2::new(-5.0, 5.0)], stroke);
                     }
                     crate::overlay::ToastIcon::Info => {
-                        painter.circle_filled(icon_center, 4.5, accent);
+                        painter.circle_filled(icon_center, 4.5, icon_tint);
                     }
                 }
 
                 // Text stack (Title + Subtitle)
                 let text_left = toast_rect.left() + 46.0;
                 painter.text(
-                    egui::pos2(text_left, toast_rect.top() + 19.0),
+                    egui::pos2(text_left, toast_rect.top() + 18.0),
                     egui::Align2::LEFT_CENTER,
                     &notif.title,
                     FontId::proportional(12.5),
-                    Color32::WHITE,
+                    Color32::from_rgba_unmultiplied(255, 255, 255, (255.0 * anim_alpha) as u8),
                 );
                 painter.text(
-                    egui::pos2(text_left, toast_rect.top() + 37.0),
+                    egui::pos2(text_left, toast_rect.top() + 36.0),
                     egui::Align2::LEFT_CENTER,
                     &notif.subtitle,
                     FontId::proportional(11.0),
-                    Color32::from_rgb(175, 180, 190),
+                    Color32::from_rgba_unmultiplied(175, 180, 190, (230.0 * anim_alpha) as u8),
                 );
             } else {
                 self.hud_notification = None;
@@ -2657,17 +2699,22 @@ impl eframe::App for ShadowPlayToastApp {
         }
         ctx.request_repaint_after(Duration::from_millis(16));
 
-        let slide_x = if elapsed < 0.35 {
-            let t = (elapsed / 0.35).min(1.0);
-            let ease = 1.0 - (1.0 - t).powi(3);
+        let slide_x = if elapsed < 0.38 {
+            let t = (elapsed / 0.38).min(1.0);
+            let ease = 1.0 - (1.0 - t).powi(4);
             (1.0 - ease) * 320.0
-        } else if elapsed < total_dur - 0.40 {
+        } else if elapsed < total_dur - 0.35 {
             0.0
         } else {
-            let t = ((elapsed - (total_dur - 0.40)) / 0.40).min(1.0);
+            let t = ((elapsed - (total_dur - 0.35)) / 0.35).min(1.0);
             let ease = t.powi(3);
             ease * 320.0
         };
+
+        // Dynamic fade transition
+        let fade_in = (elapsed / 0.22).clamp(0.0, 1.0);
+        let fade_out = ((total_dur - elapsed) / 0.32).clamp(0.0, 1.0);
+        let anim_alpha = fade_in.min(fade_out);
 
         let mut visuals = egui::Visuals::dark();
         visuals.panel_fill = Color32::TRANSPARENT;
@@ -2683,34 +2730,70 @@ impl eframe::App for ShadowPlayToastApp {
                 );
                 let painter = ui.painter();
 
-                // Sleek translucent neutral dark glass toast card (matching HUD cards)
+                let active_color = if self.icon == crate::overlay::ToastIcon::Record || self.icon == crate::overlay::ToastIcon::Error {
+                    Color32::from_rgb(239, 68, 68)
+                } else {
+                    self.accent
+                };
+
+                // 1. Entrance accent bloom / gleam pulse (first 0.55s)
+                let bloom = if elapsed < 0.55 { (1.0 - elapsed / 0.55).powi(2) } else { 0.0 };
+                if bloom > 0.01 {
+                    painter.rect_stroke(
+                        rect.expand(2.0),
+                        CornerRadius::ZERO,
+                        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(active_color.r(), active_color.g(), active_color.b(), (bloom * 90.0 * anim_alpha) as u8)),
+                        egui::StrokeKind::Outside,
+                    );
+                }
+
+                // 2. Sleek translucent neutral dark glass toast card fill
                 painter.rect_filled(
                     rect,
                     CornerRadius::ZERO,
-                    Color32::from_rgba_unmultiplied(10, 10, 10, 165),
+                    Color32::from_rgba_unmultiplied(10, 10, 10, (170.0 * anim_alpha) as u8),
                 );
 
-                // Refined subtle accent stroke framing the card
-                let stroke_color = if self.icon == crate::overlay::ToastIcon::Record || self.icon == crate::overlay::ToastIcon::Error {
-                    Color32::from_rgba_unmultiplied(239, 68, 68, 140)
-                } else {
-                    Color32::from_rgba_unmultiplied(self.accent.r(), self.accent.g(), self.accent.b(), 140)
-                };
+                // 3. Top subtle specular frost highlight
+                painter.line_segment(
+                    [rect.left_top() + Vec2::new(1.0, 0.5), rect.right_top() + Vec2::new(-1.0, 0.5)],
+                    Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, (38.0 * anim_alpha) as u8)),
+                );
+
+                // 4. Refined accent stroke framing the card
                 painter.rect_stroke(
                     rect,
                     CornerRadius::ZERO,
-                    Stroke::new(1.0_f32, stroke_color),
+                    Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(active_color.r(), active_color.g(), active_color.b(), (140.0 * anim_alpha) as u8)),
                     egui::StrokeKind::Inside,
                 );
 
+                // 5. Animated Countdown Timer Line (bottom edge)
+                let progress = 1.0 - (elapsed / total_dur).clamp(0.0, 1.0);
+                let bar_track = egui::Rect::from_min_size(egui::pos2(rect.left(), rect.bottom() - 2.0), egui::vec2(320.0, 2.0));
+                painter.rect_filled(bar_track, CornerRadius::ZERO, Color32::from_rgba_unmultiplied(255, 255, 255, (16.0 * anim_alpha) as u8));
+                let bar_rect = egui::Rect::from_min_size(egui::pos2(rect.left(), rect.bottom() - 2.0), egui::vec2(320.0 * progress, 2.0));
+                painter.rect_filled(bar_rect, CornerRadius::ZERO, Color32::from_rgba_unmultiplied(active_color.r(), active_color.g(), active_color.b(), (190.0 * anim_alpha) as u8));
+
                 // Left icon area (centered vertically at x = 24.0)
                 let icon_center = egui::pos2(rect.left() + 24.0, rect.center().y);
+                if bloom > 0.01 {
+                    painter.circle_filled(
+                        icon_center,
+                        12.0,
+                        Color32::from_rgba_unmultiplied(active_color.r(), active_color.g(), active_color.b(), (bloom * 40.0 * anim_alpha) as u8),
+                    );
+                }
+
+                let icon_tint = Color32::from_rgba_unmultiplied(active_color.r(), active_color.g(), active_color.b(), (255.0 * anim_alpha) as u8);
                 match self.icon {
                     crate::overlay::ToastIcon::Replay => {
-                        draw_replay_icon(painter, icon_center, 12.0, true, self.accent);
+                        let scale = if elapsed < 0.35 { 0.85 + 0.15 * (elapsed / 0.35) } else { 1.0 };
+                        draw_replay_icon(painter, icon_center, 12.0 * scale, true, icon_tint);
                     }
                     crate::overlay::ToastIcon::Record => {
-                        let red_bright = Color32::from_rgb(239, 68, 68);
+                        let pulse = ((elapsed * 5.0).sin() * 0.5 + 0.5) * 0.35 + 0.65;
+                        let red_bright = Color32::from_rgba_unmultiplied(239, 68, 68, (255.0 * anim_alpha) as u8);
                         let half = 8.5;
                         let arm = 3.2;
                         let stroke = Stroke::new(1.6_f32, red_bright);
@@ -2722,7 +2805,7 @@ impl eframe::App for ShadowPlayToastApp {
                         painter.line_segment([icon_center + Vec2::new(-half, half), icon_center + Vec2::new(-half, half - arm)], stroke);
                         painter.line_segment([icon_center + Vec2::new(half - arm, half), icon_center + Vec2::new(half, half)], stroke);
                         painter.line_segment([icon_center + Vec2::new(half, half), icon_center + Vec2::new(half, half - arm)], stroke);
-                        painter.circle_filled(icon_center, 3.5, red_bright);
+                        painter.circle_filled(icon_center, 3.2 * pulse, red_bright);
                     }
                     crate::overlay::ToastIcon::Save => {
                         painter.add(egui::epaint::PathShape::line(
@@ -2731,7 +2814,7 @@ impl eframe::App for ShadowPlayToastApp {
                                 icon_center + Vec2::new(-2.0, 4.5),
                                 icon_center + Vec2::new(6.0, -4.5),
                             ],
-                            Stroke::new(2.0_f32, self.accent),
+                            Stroke::new(2.0_f32, icon_tint),
                         ));
                     }
                     crate::overlay::ToastIcon::Cursor => {
@@ -2746,35 +2829,34 @@ impl eframe::App for ShadowPlayToastApp {
                                 icon_center + Vec2::new(5.0, 1.0),
                                 icon_center + Vec2::new(-5.0, -7.0),
                             ],
-                            Stroke::new(1.8_f32, self.accent),
+                            Stroke::new(1.8_f32, icon_tint),
                         ));
                     }
                     crate::overlay::ToastIcon::Error => {
-                        let red = Color32::from_rgb(239, 68, 68);
-                        let stroke = Stroke::new(2.0_f32, red);
+                        let stroke = Stroke::new(2.0_f32, icon_tint);
                         painter.line_segment([icon_center + Vec2::new(-5.0, -5.0), icon_center + Vec2::new(5.0, 5.0)], stroke);
                         painter.line_segment([icon_center + Vec2::new(5.0, -5.0), icon_center + Vec2::new(-5.0, 5.0)], stroke);
                     }
                     crate::overlay::ToastIcon::Info => {
-                        painter.circle_filled(icon_center, 4.5, self.accent);
+                        painter.circle_filled(icon_center, 4.5, icon_tint);
                     }
                 }
 
                 // Text stack (Title + Subtitle)
                 let text_left = rect.left() + 46.0;
                 painter.text(
-                    egui::pos2(text_left, rect.top() + 19.0),
+                    egui::pos2(text_left, rect.top() + 18.0),
                     egui::Align2::LEFT_CENTER,
                     &self.title,
                     FontId::proportional(12.5),
-                    Color32::WHITE,
+                    Color32::from_rgba_unmultiplied(255, 255, 255, (255.0 * anim_alpha) as u8),
                 );
                 painter.text(
-                    egui::pos2(text_left, rect.top() + 37.0),
+                    egui::pos2(text_left, rect.top() + 36.0),
                     egui::Align2::LEFT_CENTER,
                     &self.subtitle,
                     FontId::proportional(11.0),
-                    Color32::from_rgb(175, 180, 190),
+                    Color32::from_rgba_unmultiplied(175, 180, 190, (230.0 * anim_alpha) as u8),
                 );
             });
     }
