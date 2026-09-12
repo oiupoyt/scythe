@@ -58,7 +58,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     scythe::hyprland_binds::register_hyprland_binds(&initial_config);
     scythe::hyprland_binds::spawn_hyprland_reload_watcher();
 
-    let (frame_tx, frame_rx) = bounded::<Frame>(5);
+    let (frame_tx, frame_rx) = bounded::<Frame>(2);
     let (cmd_tx, cmd_rx) = bounded::<Command>(32);
     let (mux_tx, mux_rx) = bounded::<Vec<Packet>>(4);
     let (audio_tx, audio_rx) = bounded::<Vec<f32>>(500);
@@ -372,7 +372,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let video_time_base = unsafe { (*(codec_ctx_ptr as *mut ffmpeg_next::ffi::AVCodecContext)).time_base };
         let audio_time_base = audio_codec_ctx_ptr.map(|p| unsafe { (*(p as *mut ffmpeg_next::ffi::AVCodecContext)).time_base });
 
-        let mut ring = HeapRb::<Packet>::new((config.replay_duration_sec as usize) * (config.fps as usize + 60) + 120);
+        let ring_capacity = if config.replay_enabled {
+            (config.replay_duration_sec as usize) * (config.fps as usize + 50) + 60
+        } else {
+            1
+        };
+        let mut ring = HeapRb::<Packet>::new(ring_capacity);
         let mut normal_muxer: Option<Muxer> = None;
         let mut normal_recording = false;
         let mut normal_waiting_keyframe = false;
@@ -474,6 +479,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                             eprintln!("Error finalizing replay muxer: {}", e);
                         } else {
                             println!("Replay saved to {}!", full_path);
+                            #[cfg(target_os = "linux")]
+                            unsafe { libc::malloc_trim(0); }
                         }
                     }
                     Err(e) => {
@@ -489,6 +496,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut latest_frame: Option<Frame> = None;
         let mut has_new_frame = false;
         let mut last_encoded_raw_ptr: usize = 0;
+        let mut last_malloc_trim = std::time::Instant::now();
 
         loop {
             crossbeam_channel::select! {
@@ -521,10 +529,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                 replay_state_clone.store(config.replay_enabled, Ordering::SeqCst);
                                 audio_muted_clone.store(config.audio_mode == "muted", Ordering::SeqCst);
                                 println!("Daemon config reloaded! Audio mode: {}", config.audio_mode);
-                                let new_capacity = (config.replay_duration_sec as usize) * (config.fps as usize + 60) + 120;
+                                let new_capacity = if config.replay_enabled {
+                                    (config.replay_duration_sec as usize) * (config.fps as usize + 50) + 60
+                                } else {
+                                    1
+                                };
                                 if ring.capacity().get() != new_capacity {
                                     ring = HeapRb::<Packet>::new(new_capacity);
                                     println!("Replay buffer resized to {} packets.", new_capacity);
+                                    #[cfg(target_os = "linux")]
+                                    unsafe { libc::malloc_trim(0); }
                                 }
                                 scythe::hyprland_binds::register_hyprland_binds(&config);
                                 audio_capture = match scythe::capture::audio::AudioCapture::new_with_device_mode_volumes_and_levels(
@@ -581,6 +595,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                 rec_base_audio_pts = -1;
                                 rec_state_clone.store(false, Ordering::SeqCst);
                                 rec_start_clone.store(0, Ordering::SeqCst);
+                                #[cfg(target_os = "linux")]
+                                unsafe { libc::malloc_trim(0); }
                             },
                             Command::ToggleRecording => {
                                 if normal_recording {
@@ -594,6 +610,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                     rec_base_audio_pts = -1;
                                     rec_state_clone.store(false, Ordering::SeqCst);
                                     rec_start_clone.store(0, Ordering::SeqCst);
+                                    #[cfg(target_os = "linux")]
+                                    unsafe { libc::malloc_trim(0); }
                                 } else {
                                     normal_recording = true;
                                     normal_waiting_keyframe = true;
@@ -671,6 +689,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 },
                 recv(ticker) -> _ => {
                     while ticker.try_recv().is_ok() {}
+
+                    if last_malloc_trim.elapsed().as_secs() >= 5 {
+                        last_malloc_trim = std::time::Instant::now();
+                        #[cfg(target_os = "linux")]
+                        unsafe { libc::malloc_trim(0); }
+                    }
 
                     if !normal_recording && !config.replay_enabled {
                         has_new_frame = false;

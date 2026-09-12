@@ -354,15 +354,25 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
                 cr.rectangle(0.5, 0.5, w - 1.0, h - 1.0);
                 let _ = cr.stroke();
 
-                // 5. Animated countdown timer line on bottom edge
+                // 5. Animated countdown timer line on bottom edge (high visibility)
                 let progress = 1.0 - (elapsed / total_dur).clamp(0.0, 1.0);
-                cr.set_source_rgba(1.0, 1.0, 1.0, 0.08 * alpha);
-                cr.rectangle(0.0, h - 2.0, w, 2.0);
+                let bar_h = 3.5;
+                cr.set_source_rgba(1.0, 1.0, 1.0, 0.15 * alpha);
+                cr.rectangle(0.0, h - bar_h, w, bar_h);
                 let _ = cr.fill();
 
-                cr.set_source_rgba(active_accent.0, active_accent.1, active_accent.2, 0.75 * alpha);
-                cr.rectangle(0.0, h - 2.0, w * progress, 2.0);
+                let bar_w = (w * progress).max(0.0);
+                cr.set_source_rgba(active_accent.0, active_accent.1, active_accent.2, 0.95 * alpha);
+                cr.rectangle(0.0, h - bar_h, bar_w, bar_h);
                 let _ = cr.fill();
+
+                if bar_w > 2.0 {
+                    cr.set_source_rgba(1.0, 1.0, 1.0, 0.85 * alpha);
+                    cr.set_line_width(1.5);
+                    cr.move_to(bar_w, h - bar_h);
+                    cr.line_to(bar_w, h);
+                    let _ = cr.stroke();
+                }
 
                 gtk::glib::Propagation::Proceed
             });

@@ -99,7 +99,7 @@ impl VaapiEncoder {
             (*frames_ctx).sw_format = AVPixelFormat::AV_PIX_FMT_NV12; 
             (*frames_ctx).width = width as i32;
             (*frames_ctx).height = height as i32;
-            (*frames_ctx).initial_pool_size = 20;
+            (*frames_ctx).initial_pool_size = 6;
 
             let ret = av_hwframe_ctx_init(hw_frames_ref);
             if ret < 0 {
@@ -291,7 +291,7 @@ impl VaapiEncoder {
                                         0,
                                     );
                                     if p != libc::MAP_FAILED {
-                                        if self.dma_mmap_cache.len() >= 16 {
+                                        if self.dma_mmap_cache.len() >= 4 {
                                             for (_, (old_p, old_size)) in self.dma_mmap_cache.drain() {
                                                 libc::munmap(old_p, old_size);
                                             }

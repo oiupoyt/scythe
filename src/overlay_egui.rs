@@ -2224,12 +2224,20 @@ impl ScytheOverlayApp {
                     egui::StrokeKind::Inside,
                 );
 
-                // 5. Animated Countdown Timer Line (bottom edge)
+                // 5. Animated Countdown Timer Line (bottom edge - high visibility)
                 let progress = 1.0 - (elapsed / total_dur).clamp(0.0, 1.0);
-                let bar_track = egui::Rect::from_min_size(egui::pos2(toast_rect.left(), toast_rect.bottom() - 2.0), egui::vec2(card_w, 2.0));
-                painter.rect_filled(bar_track, CornerRadius::ZERO, Color32::from_rgba_unmultiplied(255, 255, 255, (16.0 * anim_alpha) as u8));
-                let bar_rect = egui::Rect::from_min_size(egui::pos2(toast_rect.left(), toast_rect.bottom() - 2.0), egui::vec2(card_w * progress, 2.0));
-                painter.rect_filled(bar_rect, CornerRadius::ZERO, Color32::from_rgba_unmultiplied(active_color.r(), active_color.g(), active_color.b(), (190.0 * anim_alpha) as u8));
+                let bar_h = 3.5_f32;
+                let bar_track = egui::Rect::from_min_size(egui::pos2(toast_rect.left(), toast_rect.bottom() - bar_h), egui::vec2(card_w, bar_h));
+                painter.rect_filled(bar_track, CornerRadius::ZERO, Color32::from_rgba_unmultiplied(255, 255, 255, (30.0 * anim_alpha) as u8));
+                let bar_w = (card_w * progress).max(0.0);
+                let bar_rect = egui::Rect::from_min_size(egui::pos2(toast_rect.left(), toast_rect.bottom() - bar_h), egui::vec2(bar_w, bar_h));
+                painter.rect_filled(bar_rect, CornerRadius::ZERO, Color32::from_rgba_unmultiplied(active_color.r(), active_color.g(), active_color.b(), (255.0 * anim_alpha) as u8));
+                if bar_w > 2.0 {
+                    painter.line_segment(
+                        [egui::pos2(toast_rect.left() + bar_w, toast_rect.bottom() - bar_h), egui::pos2(toast_rect.left() + bar_w, toast_rect.bottom())],
+                        Stroke::new(1.5_f32, Color32::from_rgba_unmultiplied(255, 255, 255, (220.0 * anim_alpha) as u8)),
+                    );
+                }
 
                 // Left icon area (centered vertically at x = 24.0)
                 let icon_center = egui::pos2(toast_rect.left() + 24.0, toast_rect.center().y);
@@ -2768,12 +2776,20 @@ impl eframe::App for ShadowPlayToastApp {
                     egui::StrokeKind::Inside,
                 );
 
-                // 5. Animated Countdown Timer Line (bottom edge)
+                // 5. Animated Countdown Timer Line (bottom edge - high visibility)
                 let progress = 1.0 - (elapsed / total_dur).clamp(0.0, 1.0);
-                let bar_track = egui::Rect::from_min_size(egui::pos2(rect.left(), rect.bottom() - 2.0), egui::vec2(320.0, 2.0));
-                painter.rect_filled(bar_track, CornerRadius::ZERO, Color32::from_rgba_unmultiplied(255, 255, 255, (16.0 * anim_alpha) as u8));
-                let bar_rect = egui::Rect::from_min_size(egui::pos2(rect.left(), rect.bottom() - 2.0), egui::vec2(320.0 * progress, 2.0));
-                painter.rect_filled(bar_rect, CornerRadius::ZERO, Color32::from_rgba_unmultiplied(active_color.r(), active_color.g(), active_color.b(), (190.0 * anim_alpha) as u8));
+                let bar_h = 3.5_f32;
+                let bar_track = egui::Rect::from_min_size(egui::pos2(rect.left(), rect.bottom() - bar_h), egui::vec2(320.0, bar_h));
+                painter.rect_filled(bar_track, CornerRadius::ZERO, Color32::from_rgba_unmultiplied(255, 255, 255, (30.0 * anim_alpha) as u8));
+                let bar_w = (320.0 * progress).max(0.0);
+                let bar_rect = egui::Rect::from_min_size(egui::pos2(rect.left(), rect.bottom() - bar_h), egui::vec2(bar_w, bar_h));
+                painter.rect_filled(bar_rect, CornerRadius::ZERO, Color32::from_rgba_unmultiplied(active_color.r(), active_color.g(), active_color.b(), (255.0 * anim_alpha) as u8));
+                if bar_w > 2.0 {
+                    painter.line_segment(
+                        [egui::pos2(rect.left() + bar_w, rect.bottom() - bar_h), egui::pos2(rect.left() + bar_w, rect.bottom())],
+                        Stroke::new(1.5_f32, Color32::from_rgba_unmultiplied(255, 255, 255, (220.0 * anim_alpha) as u8)),
+                    );
+                }
 
                 // Left icon area (centered vertically at x = 24.0)
                 let icon_center = egui::pos2(rect.left() + 24.0, rect.center().y);

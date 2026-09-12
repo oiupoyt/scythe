@@ -16,7 +16,7 @@ pub struct PipeWireStream {
 
 impl PipeWireStream {
     pub fn new(node_id: u32, fd: OwnedFd) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let (tx, rx) = bounded(5);
+        let (tx, rx) = bounded(2);
         
         std::thread::spawn(move || {
             pw::init();
