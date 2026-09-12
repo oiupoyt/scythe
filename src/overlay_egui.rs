@@ -524,30 +524,25 @@ fn draw_replay_icon(painter: &egui::Painter, center: egui::Pos2, radius: f32, is
         Color32::from_rgb(150, 150, 155)
     };
 
-    // Dual Rewind Triangles ◀ ◀ without outer circle (crisp, prominent, centered)
-    let tri_h = radius * 0.60;
-    let tri_w = radius * 0.42;
-    let gap = radius * 0.10;
+    // 3 Rewind Triangles ◀ ◀ ◀ without outer circle (crisp, prominent, centered)
+    let tri_h = radius * 0.52;
+    let tri_w = radius * 0.30;
+    let gap = radius * 0.08;
+    let total_w = 3.0 * tri_w + 2.0 * gap;
+    let start_x = center.x - total_w * 0.5;
 
-    // Left triangle ◀ (pointing left)
-    let t1_tip = center + Vec2::new(-tri_w - gap * 0.5, 0.0);
-    let t1_top = center + Vec2::new(-gap * 0.5, -tri_h);
-    let t1_bot = center + Vec2::new(-gap * 0.5, tri_h);
-    painter.add(egui::Shape::convex_polygon(
-        vec![t1_tip, t1_top, t1_bot],
-        color,
-        Stroke::NONE,
-    ));
-
-    // Right triangle ◀ (pointing left)
-    let t2_tip = center + Vec2::new(gap * 0.5, 0.0);
-    let t2_top = center + Vec2::new(tri_w + gap * 0.5, -tri_h);
-    let t2_bot = center + Vec2::new(tri_w + gap * 0.5, tri_h);
-    painter.add(egui::Shape::convex_polygon(
-        vec![t2_tip, t2_top, t2_bot],
-        color,
-        Stroke::NONE,
-    ));
+    for i in 0..3 {
+        let left = start_x + i as f32 * (tri_w + gap);
+        let right = left + tri_w;
+        let tip = egui::pos2(left, center.y);
+        let top = egui::pos2(right, center.y - tri_h);
+        let bot = egui::pos2(right, center.y + tri_h);
+        painter.add(egui::Shape::convex_polygon(
+            vec![tip, top, bot],
+            color,
+            Stroke::NONE,
+        ));
+    }
 }
 
 fn draw_record_icon(painter: &egui::Painter, center: egui::Pos2, radius: f32, is_recording: bool, _anim_time: f32) {
@@ -712,7 +707,7 @@ fn render_action_card(
     response.clicked()
 }
 
-// Modern Sleek Translucent Dropdown Action Menu Container
+// Modern Sleek Translucent Dropdown Action Menu Container - Exact Pixel Alignment
 fn render_dropdown_menu(
     ui: &mut egui::Ui,
     card_width: f32,
@@ -720,16 +715,18 @@ fn render_dropdown_menu(
     add_contents: impl FnOnce(&mut egui::Ui),
 ) {
     ui.add_space(6.0);
+    let stroke_width = 1.0_f32;
+    let inner_w = (card_width - 2.0 * stroke_width).round();
     egui::Frame::NONE
         .fill(Color32::from_rgba_unmultiplied(10, 10, 10, 185))
-        .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 140)))
+        .stroke(Stroke::new(stroke_width, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 140)))
         .corner_radius(CornerRadius::ZERO)
         .inner_margin(Margin::ZERO)
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing = Vec2::ZERO;
-            ui.set_width(card_width);
-            ui.set_min_width(card_width);
-            ui.set_max_width(card_width);
+            ui.set_width(inner_w);
+            ui.set_min_width(inner_w);
+            ui.set_max_width(inner_w);
             add_contents(ui);
         });
 }
@@ -1089,39 +1086,45 @@ impl ScytheOverlayApp {
         self.panel_rect = hud_rect;
 
         ui.allocate_new_ui(egui::UiBuilder::new().max_rect(hud_rect), |ui| {
-            ui.vertical_centered(|ui| {
+            ui.vertical(|ui| {
+                ui.set_width(total_cards_w);
+                ui.set_min_width(total_cards_w);
+                ui.set_max_width(total_cards_w);
+
                 // Voluntary, non-intrusive Update Notification Banner
                 let cur_update = self.update_status.lock().ok().map(|g| g.clone()).unwrap_or_default();
                 if let crate::updater::UpdateStatus::Available(ref info) = cur_update
                     && !self.update_dismissed {
-                        egui::Frame::NONE
-                            .fill(Color32::from_rgba_unmultiplied(12, 13, 16, 250))
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 160)))
-                            .corner_radius(CornerRadius::ZERO)
-                            .inner_margin(Margin::symmetric(14_i8, 7_i8))
-                            .show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.label(
-                                        egui::RichText::new(format!("UPDATE: v{}", info.version))
-                                            .size(11.5)
-                                            .strong()
-                                            .color(accent),
-                                    );
-                                    ui.label(
-                                        egui::RichText::new(format!("(Installed: v{})", crate::updater::CURRENT_VERSION))
-                                            .size(10.5)
-                                            .color(Color32::from_rgb(150, 150, 155)),
-                                    );
-                                    ui.add_space(8.0);
-                                    if squared_button(ui, "DOWNLOAD", true, accent) {
-                                        crate::updater::open_browser_url(&info.html_url);
-                                    }
-                                    ui.add_space(4.0);
-                                    if squared_button(ui, "DISMISS", false, accent) {
-                                        self.update_dismissed = true;
-                                    }
+                        ui.vertical_centered(|ui| {
+                            egui::Frame::NONE
+                                .fill(Color32::from_rgba_unmultiplied(12, 13, 16, 250))
+                                .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 160)))
+                                .corner_radius(CornerRadius::ZERO)
+                                .inner_margin(Margin::symmetric(14_i8, 7_i8))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label(
+                                            egui::RichText::new(format!("UPDATE: v{}", info.version))
+                                                .size(11.5)
+                                                .strong()
+                                                .color(accent),
+                                        );
+                                        ui.label(
+                                            egui::RichText::new(format!("(Installed: v{})", crate::updater::CURRENT_VERSION))
+                                                .size(10.5)
+                                                .color(Color32::from_rgb(150, 150, 155)),
+                                        );
+                                        ui.add_space(8.0);
+                                        if squared_button(ui, "DOWNLOAD", true, accent) {
+                                            crate::updater::open_browser_url(&info.html_url);
+                                        }
+                                        ui.add_space(4.0);
+                                        if squared_button(ui, "DISMISS", false, accent) {
+                                            self.update_dismissed = true;
+                                        }
+                                    });
                                 });
-                            });
+                        });
                         ui.add_space(8.0);
                     }
 
