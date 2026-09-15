@@ -30,6 +30,7 @@ cpal = "0.18.2"
 rubato = "5.0.0"
 eframe = "0.31"
 egui = "0.31"
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ashpd = { version = "0.13.13", features = ["screencast"] }

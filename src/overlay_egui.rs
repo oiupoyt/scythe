@@ -11,8 +11,56 @@ use crate::ipc::{self, Command, DaemonStatus};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShadowPlayView {
     MainHud,
-    Settings,
+    ReplaySettings,
+    RecordSettings,
+    StreamSettings,
+    GlobalSettings,
+    ScreenshotSettings,
     Gallery,
+}
+
+#[derive(Clone)]
+pub struct OverlayTextures {
+    pub logo: egui::TextureHandle,
+    pub replay: egui::TextureHandle,
+    pub record: egui::TextureHandle,
+    pub stream: egui::TextureHandle,
+    pub screenshot: egui::TextureHandle,
+    pub settings_small: egui::TextureHandle,
+    pub settings_extra_small: egui::TextureHandle,
+    pub cross: egui::TextureHandle,
+    pub play: egui::TextureHandle,
+    pub pause: egui::TextureHandle,
+    pub stop: egui::TextureHandle,
+    pub save: egui::TextureHandle,
+    pub settings_large: egui::TextureHandle,
+}
+
+fn load_embedded_png(ctx: &egui::Context, name: &str, bytes: &[u8]) -> egui::TextureHandle {
+    let img = image::load_from_memory(bytes).expect("Embedded PNG must be valid").to_rgba8();
+    let size = [img.width() as usize, img.height() as usize];
+    let pixels = img.as_raw();
+    let color_image = egui::ColorImage::from_rgba_unmultiplied(size, pixels);
+    ctx.load_texture(name, color_image, egui::TextureOptions::LINEAR)
+}
+
+fn draw_texture_centered(
+    painter: &egui::Painter,
+    texture: &egui::TextureHandle,
+    center: egui::Pos2,
+    target_height: f32,
+    tint: Color32,
+) {
+    let [w, h] = texture.size();
+    let aspect = w as f32 / h.max(1) as f32;
+    let target_width = target_height * aspect;
+    let rect = egui::Rect::from_center_size(center, Vec2::new(target_width, target_height));
+    painter.image(
+        texture.id(),
+        rect,
+        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+        tint,
+    );
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -410,16 +458,26 @@ fn render_keycap(ui: &mut egui::Ui, text: &str) {
 }
 
 pub fn resolve_accent_color(accent: &str) -> Color32 {
-    match accent.to_lowercase().as_str() {
-        "green" | "emerald" => Color32::from_rgb(34, 197, 94),
+    let trimmed = accent.trim();
+    if trimmed.starts_with('#') && trimmed.len() == 7 {
+        if let (Ok(r), Ok(g), Ok(b)) = (
+            u8::from_str_radix(&trimmed[1..3], 16),
+            u8::from_str_radix(&trimmed[3..5], 16),
+            u8::from_str_radix(&trimmed[5..7], 16),
+        ) {
+            return Color32::from_rgb(r, g, b);
+        }
+    }
+    match trimmed.to_lowercase().as_str() {
+        "amd" | "red" | "crimson" => Color32::from_rgb(221, 0, 49),
+        "nvidia" | "green" | "emerald" => Color32::from_rgb(118, 185, 0),
+        "intel" | "blue" | "sapphire" => Color32::from_rgb(8, 109, 183),
         "lime" => Color32::from_rgb(163, 230, 53),
         "yellow" | "solar" => Color32::from_rgb(250, 204, 21),
         "amber" | "orange" => Color32::from_rgb(245, 158, 11),
-        "red" | "crimson" => Color32::from_rgb(239, 68, 68),
         "pink" | "rose" => Color32::from_rgb(244, 63, 94),
         "purple" | "violet" => Color32::from_rgb(168, 85, 247),
-        "blue" | "sapphire" => Color32::from_rgb(56, 189, 248),
-        _ => Color32::from_rgb(56, 189, 248),
+        _ => Color32::from_rgb(221, 0, 49),
     }
 }
 
@@ -629,208 +687,129 @@ fn draw_settings_icon(painter: &egui::Painter, center: egui::Pos2, radius: f32, 
     }
 }
 
-// Modern Sleek Action Card Renderer
+// GPU Screen Recorder 1:1 Action Card Renderer
 #[allow(clippy::too_many_arguments)]
-fn render_action_card(
+fn render_gsr_card(
     ui: &mut egui::Ui,
-    width: f32,
-    height: f32,
+    rect: egui::Rect,
     title: &str,
+    icon_tex: Option<&egui::TextureHandle>,
+    fallback_icon: impl FnOnce(&egui::Painter, egui::Pos2),
+    status_text: &str,
     is_active: bool,
     dropdown_open: bool,
-    draw_icon: impl FnOnce(&egui::Painter, egui::Pos2),
-    status_text: &str,
-    status_color: Color32,
-    sub_text: &str,
     accent: Color32,
 ) -> bool {
-    let (raw_rect, response) = ui.allocate_exact_size(Vec2::new(width, height), egui::Sense::click());
-    let rect = egui::Rect::from_min_size(
-        egui::pos2(raw_rect.left().round(), raw_rect.top().round()),
-        Vec2::new(width.round(), height.round()),
-    );
-    let hovered = response.hovered();
+    let resp = ui.allocate_rect(rect, egui::Sense::click());
+    let hovered = resp.hovered();
     let painter = ui.painter();
-    // Neutral translucent black card fill (pure black, zero blue hue, zero accent fill)
-    let bg = if dropdown_open {
-        Color32::from_rgba_unmultiplied(18, 18, 18, 175)
+
+    // 1. Background fill & outlines
+    if dropdown_open {
+        // Solid pitch black + vibrant top accent bar (3px)
+        painter.rect_filled(rect, CornerRadius::ZERO, Color32::from_rgb(0, 0, 0));
+        let top_bar = egui::Rect::from_min_size(rect.min, Vec2::new(rect.width(), 3.0));
+        painter.rect_filled(top_bar, CornerRadius::ZERO, accent);
     } else if hovered {
-        Color32::from_rgba_unmultiplied(22, 22, 22, 180)
+        // Solid pitch black + full card rectangular accent outline (2px)
+        painter.rect_filled(rect, CornerRadius::ZERO, Color32::from_rgb(0, 0, 0));
+        painter.rect_stroke(rect, CornerRadius::ZERO, Stroke::new(2.0_f32, accent), egui::StrokeKind::Inside);
     } else {
-        Color32::from_rgba_unmultiplied(10, 10, 10, 155)
-    };
-
-    painter.rect_filled(rect, CornerRadius::ZERO, bg);
-
-    // Accent outline: ONLY shown when card is active (replay active or recording active)
-    let stroke = if is_active {
-        if hovered || dropdown_open {
-            Stroke::new(1.5_f32, accent)
-        } else {
-            Stroke::new(1.0_f32, accent)
-        }
-    } else {
-        Stroke::NONE
-    };
-
-    if stroke != Stroke::NONE {
-        painter.rect_stroke(rect, CornerRadius::ZERO, stroke, egui::StrokeKind::Inside);
+        // Translucent dark background (Color(0, 0, 0, 180))
+        painter.rect_filled(rect, CornerRadius::ZERO, Color32::from_rgba_unmultiplied(0, 0, 0, 180));
     }
 
-    // Card Title (clean modern sans typography)
+    // 2. Title text (top margin ~18px, bold sans, white)
+    let title_pos = egui::pos2(rect.center().x, rect.top() + rect.height() * 0.085 + 4.0);
     painter.text(
-        egui::pos2(rect.center().x, rect.top() + 25.0),
+        title_pos,
         egui::Align2::CENTER_CENTER,
         title,
-        FontId::proportional(14.0),
-        if is_active { accent } else { Color32::WHITE },
+        FontId::proportional(14.5),
+        Color32::WHITE,
     );
 
-    // Centered vector icon (no ambient fill circle)
-    let icon_center = egui::pos2(rect.center().x, rect.top() + 85.0);
-    draw_icon(painter, icon_center);
+    // 3. Center Icon (height ~88px, tinted to accent if active, else white)
+    let icon_tint = if is_active { accent } else { Color32::WHITE };
+    if let Some(tex) = icon_tex {
+        draw_texture_centered(painter, tex, rect.center(), rect.height() * 0.42, icon_tint);
+    } else {
+        fallback_icon(painter, rect.center());
+    }
 
-    // Status subtitle (e.g. "01:23" or "Not recording" / "Buffer 60s")
+    // 4. Description/Status text (bottom margin ~18px, accent if active, else #969696)
+    let status_pos = egui::pos2(rect.center().x, rect.bottom() - rect.height() * 0.085 - 4.0);
+    let status_color = if is_active { accent } else { Color32::from_rgb(150, 150, 150) };
     painter.text(
-        egui::pos2(rect.center().x, rect.bottom() - 32.0),
+        status_pos,
         egui::Align2::CENTER_CENTER,
         status_text,
-        FontId::proportional(11.5),
+        FontId::proportional(12.5),
         status_color,
     );
 
-    // Secondary hint
-    painter.text(
-        egui::pos2(rect.center().x, rect.bottom() - 14.0),
-        egui::Align2::CENTER_CENTER,
-        sub_text,
-        FontId::proportional(10.0),
-        Color32::from_rgb(130, 135, 145),
-    );
-
-    response.clicked()
+    resp.clicked()
 }
 
-// Modern Sleek Translucent Dropdown Action Menu Container - Exact Pixel Alignment
-fn render_dropdown_menu(
+// GPU Screen Recorder 1:1 Dropdown Menu Item Renderer
+fn render_dropdown_item(
     ui: &mut egui::Ui,
-    card_width: f32,
-    accent: Color32,
-    add_contents: impl FnOnce(&mut egui::Ui),
-) {
-    ui.add_space(6.0);
-    let stroke_width = 1.0_f32;
-    let inner_w = (card_width - 2.0 * stroke_width).round();
-    egui::Frame::NONE
-        .fill(Color32::from_rgba_unmultiplied(10, 10, 10, 185))
-        .stroke(Stroke::new(stroke_width, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 140)))
-        .corner_radius(CornerRadius::ZERO)
-        .inner_margin(Margin::ZERO)
-        .show(ui, |ui| {
-            ui.spacing_mut().item_spacing = Vec2::ZERO;
-            ui.set_width(inner_w);
-            ui.set_min_width(inner_w);
-            ui.set_max_width(inner_w);
-            add_contents(ui);
-        });
-}
-
-// Remade Dropdown Action Menu Item (Left-Aligned, Subtitles, Hotkey Badges, Left Indicator)
-fn render_menu_item(
-    ui: &mut egui::Ui,
+    rect: egui::Rect,
     title: &str,
-    subtitle: Option<&str>,
-    hotkey_hint: Option<&str>,
-    is_active: bool,
+    hotkey: Option<&str>,
+    icon_tex: Option<&egui::TextureHandle>,
     accent: Color32,
     is_last: bool,
 ) -> bool {
-    let (raw_rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 44.0), egui::Sense::click());
-    let rect = egui::Rect::from_min_size(
-        egui::pos2(raw_rect.left().round(), raw_rect.top().round()),
-        Vec2::new(raw_rect.width().round(), 44.0),
-    );
-    let hovered = response.hovered();
+    let resp = ui.allocate_rect(rect, egui::Sense::click());
+    let hovered = resp.hovered();
+    let painter = ui.painter();
 
-    let bg = if hovered {
-        Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 36)
-    } else {
-        Color32::TRANSPARENT
-    };
+    // Background: solid black
+    painter.rect_filled(rect, CornerRadius::ZERO, Color32::from_rgb(0, 0, 0));
 
-    ui.painter().rect_filled(rect, CornerRadius::ZERO, bg);
-
-    // Left vertical accent indicator bar on hover
+    // Hover outline
     if hovered {
-        let left_bar = egui::Rect::from_min_size(rect.min, Vec2::new(3.0, rect.height()));
-        ui.painter().rect_filled(left_bar, CornerRadius::ZERO, accent);
+        painter.rect_stroke(rect, CornerRadius::ZERO, Stroke::new(2.0_f32, accent), egui::StrokeKind::Inside);
     }
 
-    // Left-aligned Title
-    let title_color = if hovered {
-        accent
-    } else if is_active {
-        Color32::WHITE
-    } else {
-        Color32::from_rgb(222, 226, 234)
-    };
+    // Left Icon
+    let mut text_x = rect.left() + 16.0;
+    if let Some(tex) = icon_tex {
+        let icon_center = egui::pos2(rect.left() + 24.0, rect.center().y);
+        draw_texture_centered(painter, tex, icon_center, 18.0, if hovered { accent } else { Color32::WHITE });
+        text_x = rect.left() + 44.0;
+    }
 
-    let title_y = if subtitle.is_some() { rect.top() + 13.0 } else { rect.center().y };
-    ui.painter().text(
-        egui::pos2(rect.left() + 14.0, title_y),
+    // Title
+    painter.text(
+        egui::pos2(text_x, rect.center().y),
         egui::Align2::LEFT_CENTER,
         title,
         FontId::proportional(12.5),
-        title_color,
+        if hovered { accent } else { Color32::WHITE },
     );
 
-    // Subtitle under Title
-    if let Some(sub) = subtitle {
-        ui.painter().text(
-            egui::pos2(rect.left() + 14.0, rect.bottom() - 12.0),
-            egui::Align2::LEFT_CENTER,
-            sub,
-            FontId::proportional(10.0),
-            Color32::from_rgb(135, 140, 150),
-        );
-    }
-
-    // Right-aligned Hotkey Badge (dynamically sized to fit user-configured hotkeys)
-    if let Some(hk) = hotkey_hint {
-        let badge_w = (hk.len() as f32 * 6.5 + 14.0).max(52.0);
-        let badge_rect = egui::Rect::from_center_size(
-            egui::pos2(rect.right() - badge_w / 2.0 - 10.0, rect.center().y),
-            Vec2::new(badge_w, 18.0),
-        );
-        ui.painter().rect_filled(
-            badge_rect,
-            CornerRadius::ZERO,
-            Color32::from_rgba_unmultiplied(255, 255, 255, 14),
-        );
-        ui.painter().rect_stroke(
-            badge_rect,
-            CornerRadius::ZERO,
-            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 22)),
-            egui::StrokeKind::Inside,
-        );
-        ui.painter().text(
-            badge_rect.center(),
-            egui::Align2::CENTER_CENTER,
+    // Right Hotkey
+    if let Some(hk) = hotkey && !hk.trim().is_empty() {
+        painter.text(
+            egui::pos2(rect.right() - 14.0, rect.center().y),
+            egui::Align2::RIGHT_CENTER,
             hk,
-            FontId::monospace(9.0),
-            if hovered { accent } else { Color32::from_rgb(180, 185, 195) },
+            FontId::proportional(11.0),
+            if hovered { accent } else { Color32::from_rgba_unmultiplied(255, 255, 255, 140) },
         );
     }
 
-    // Clean subtle 1px divider between items (not drawn on last item so it stays flush)
+    // 1px divider
     if !is_last && !hovered {
-        ui.painter().line_segment(
-            [egui::pos2(rect.left() + 8.0, rect.bottom()), egui::pos2(rect.right() - 8.0, rect.bottom())],
-            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 14)),
+        painter.line_segment(
+            [egui::pos2(rect.left(), rect.bottom()), egui::pos2(rect.right(), rect.bottom())],
+            Stroke::new(1.0_f32, Color32::from_rgb(32, 32, 36)),
         );
     }
 
-    response.clicked()
+    resp.clicked()
 }
 
 // Section card helper for Settings view
@@ -860,6 +839,11 @@ pub struct ScytheOverlayApp {
     current_view: ShadowPlayView,
     replay_dropdown_open: bool,
     record_dropdown_open: bool,
+    stream_dropdown_open: bool,
+    stream_service_idx: usize,
+    stream_key: String,
+    stream_url: String,
+    textures: Option<OverlayTextures>,
     output_dir: String,
     replay_sec: u32,
     bitrate_mbps: u32,
@@ -964,6 +948,11 @@ impl ScytheOverlayApp {
             current_view: ShadowPlayView::MainHud,
             replay_dropdown_open: false,
             record_dropdown_open: false,
+            stream_dropdown_open: false,
+            stream_service_idx: 0,
+            stream_key: String::new(),
+            stream_url: "rtmp://live.twitch.tv/app/".to_string(),
+            textures: None,
             output_dir,
             replay_sec,
             bitrate_mbps,
@@ -1058,835 +1047,1288 @@ impl ScytheOverlayApp {
         // Fullscreen surface handles internal layout dynamically without window resize jitter
     }
 
+    pub fn ensure_textures(&mut self, ctx: &egui::Context) {
+        if self.textures.is_none() {
+            self.textures = Some(OverlayTextures {
+                logo: load_embedded_png(ctx, "gsr_logo", include_bytes!("../assets/images/gpu_screen_recorder_logo.png")),
+                replay: load_embedded_png(ctx, "gsr_replay", include_bytes!("../assets/images/replay.png")),
+                record: load_embedded_png(ctx, "gsr_record", include_bytes!("../assets/images/record.png")),
+                stream: load_embedded_png(ctx, "gsr_stream", include_bytes!("../assets/images/stream.png")),
+                screenshot: load_embedded_png(ctx, "gsr_screenshot", include_bytes!("../assets/images/screenshot.png")),
+                settings_small: load_embedded_png(ctx, "gsr_settings_small", include_bytes!("../assets/images/settings_small.png")),
+                settings_extra_small: load_embedded_png(ctx, "gsr_settings_extra_small", include_bytes!("../assets/images/settings_extra_small.png")),
+                cross: load_embedded_png(ctx, "gsr_cross", include_bytes!("../assets/images/cross.png")),
+                play: load_embedded_png(ctx, "gsr_play", include_bytes!("../assets/images/play.png")),
+                pause: load_embedded_png(ctx, "gsr_pause", include_bytes!("../assets/images/pause.png")),
+                stop: load_embedded_png(ctx, "gsr_stop", include_bytes!("../assets/images/stop.png")),
+                save: load_embedded_png(ctx, "gsr_save", include_bytes!("../assets/images/save.png")),
+                settings_large: load_embedded_png(ctx, "gsr_settings_large", include_bytes!("../assets/images/settings.png")),
+            });
+        }
+    }
+
     pub fn switch_view(&mut self, view: ShadowPlayView, _ctx: &egui::Context) {
         self.current_view = view;
         self.listening_keybind = None;
         self.replay_dropdown_open = false;
         self.record_dropdown_open = false;
+        self.stream_dropdown_open = false;
+    }
+
+    fn render_top_bar(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
+        let screen_w = ui.available_width();
+        let bar_h = 48.0_f32;
+        let bar_rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), Vec2::new(screen_w, bar_h));
+        let accent = self.accent_color();
+
+        // Top bar background: translucent dark (Color(0, 0, 0, 190))
+        ui.painter().rect_filled(bar_rect, CornerRadius::ZERO, Color32::from_rgba_unmultiplied(0, 0, 0, 190));
+
+        // Left side: Logo on MainHud, or Back button on Subpage
+        match self.current_view {
+            ShadowPlayView::MainHud => {
+                if let Some(tex) = &self.textures {
+                    let logo_center = egui::pos2(24.0, 24.0);
+                    draw_texture_centered(ui.painter(), &tex.logo, logo_center, 30.0, Color32::WHITE);
+                }
+            }
+            _ => {
+                let back_rect = egui::Rect::from_min_size(egui::pos2(12.0, 10.0), Vec2::new(88.0, 28.0));
+                let back_resp = ui.allocate_rect(back_rect, egui::Sense::click());
+                let back_hov = back_resp.hovered();
+
+                let bg = if back_hov {
+                    Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 32)
+                } else {
+                    Color32::from_rgba_unmultiplied(20, 20, 24, 200)
+                };
+                let stroke = if back_hov {
+                    Stroke::new(1.5_f32, accent)
+                } else {
+                    Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 30))
+                };
+                let painter = ui.painter();
+                painter.rect(back_rect, CornerRadius::ZERO, bg, stroke, egui::StrokeKind::Inside);
+                painter.text(
+                    back_rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    "< BACK",
+                    FontId::proportional(11.5),
+                    if back_hov { accent } else { Color32::WHITE },
+                );
+
+                if back_resp.clicked() {
+                    self.switch_view(ShadowPlayView::MainHud, ctx);
+                }
+            }
+        }
+
+        // Center Title
+        let title_text = match self.current_view {
+            ShadowPlayView::MainHud => "GPU Screen Recorder",
+            ShadowPlayView::ReplaySettings => "Instant Replay",
+            ShadowPlayView::RecordSettings => "Record",
+            ShadowPlayView::StreamSettings => "Livestream",
+            ShadowPlayView::GlobalSettings => "Settings",
+            ShadowPlayView::ScreenshotSettings => "Screenshot",
+            ShadowPlayView::Gallery => "Recordings Gallery",
+        };
+        ui.painter().text(
+            egui::pos2(screen_w * 0.5, 24.0),
+            egui::Align2::CENTER_CENTER,
+            title_text,
+            FontId::proportional(15.5),
+            Color32::WHITE,
+        );
+
+        // Right side: Square close 'X' button
+        let close_size = 32.0_f32;
+        let close_rect = egui::Rect::from_min_size(
+            egui::pos2(screen_w - close_size - 12.0, (bar_h - close_size) * 0.5),
+            Vec2::new(close_size, close_size),
+        );
+        let close_resp = ui.allocate_rect(close_rect, egui::Sense::click());
+        let close_hov = close_resp.hovered();
+
+        let painter = ui.painter();
+        if close_hov {
+            painter.rect_filled(close_rect, CornerRadius::ZERO, Color32::from_rgb(0, 0, 0));
+            painter.rect_stroke(close_rect, CornerRadius::ZERO, Stroke::new(1.5_f32, accent), egui::StrokeKind::Inside);
+        }
+
+        if let Some(tex) = &self.textures {
+            draw_texture_centered(painter, &tex.cross, close_rect.center(), 14.0, if close_hov { accent } else { Color32::WHITE });
+        } else {
+            let half = 6.0;
+            let c = close_rect.center();
+            let stroke = Stroke::new(1.8_f32, if close_hov { accent } else { Color32::WHITE });
+            painter.line_segment([c + Vec2::new(-half, -half), c + Vec2::new(half, half)], stroke);
+            painter.line_segment([c + Vec2::new(half, -half), c + Vec2::new(-half, half)], stroke);
+        }
+
+        if close_resp.clicked() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            crate::ipc::clean_overlay_pid();
+            std::process::exit(0);
+        }
     }
 
     fn render_main_hud(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
-        let anim_time = self.anim_time;
         let is_recording = self.status.is_recording;
         let rec_dur = self.status.recording_duration_sec;
         let is_replay_active = self.status.is_replay_active;
         let accent = self.accent_color();
 
         let screen_w = ui.available_width();
-        let card_w = 210.0;
-        let card_h = 185.0;
-        let card_gap = 14.0;
-        let total_cards_w = 3.0 * card_w + 2.0 * card_gap;
+        let screen_h = ui.available_height();
+        let card_w = 210.0_f32;
+        let card_h = 210.0_f32;
+        let total_cards_w = 3.0 * card_w; // 630.0, spacing = 0.0!
         let left_pad = ((screen_w - total_cards_w) / 2.0).max(10.0);
-        let top_pad = 70.0;
+        let top_pad = ((screen_h * 0.25) - card_h * 0.5).max(64.0);
 
-        let hud_rect = egui::Rect::from_min_size(
+        let aux_size = 70.0_f32;
+        let aux_gap = 23.0_f32;
+        let aux_x = left_pad + total_cards_w + aux_gap;
+
+        let any_dropdown_open = self.replay_dropdown_open || self.record_dropdown_open || self.stream_dropdown_open;
+        let hud_rect = egui::Rect::from_min_max(
             egui::pos2(left_pad, top_pad),
-            egui::vec2(
-                total_cards_w,
-                card_h + 120.0,
-            ),
+            egui::pos2(aux_x + aux_size, top_pad + card_h + if any_dropdown_open { 230.0 } else { 0.0 }),
         );
         self.panel_rect = hud_rect;
 
-        ui.allocate_new_ui(egui::UiBuilder::new().max_rect(hud_rect), |ui| {
-            ui.vertical(|ui| {
-                ui.set_width(total_cards_w);
-                ui.set_min_width(total_cards_w);
-                ui.set_max_width(total_cards_w);
+        // The 3 seamlessly touching square cards
+        let card0_rect = egui::Rect::from_min_size(egui::pos2(left_pad, top_pad), Vec2::new(card_w, card_h));
+        let card1_rect = egui::Rect::from_min_size(egui::pos2(left_pad + card_w, top_pad), Vec2::new(card_w, card_h));
+        let card2_rect = egui::Rect::from_min_size(egui::pos2(left_pad + card_w * 2.0, top_pad), Vec2::new(card_w, card_h));
 
-                // Voluntary, non-intrusive Update Notification Banner
-                let cur_update = self.update_status.lock().ok().map(|g| g.clone()).unwrap_or_default();
-                if let crate::updater::UpdateStatus::Available(ref info) = cur_update
-                    && !self.update_dismissed {
-                        ui.vertical_centered(|ui| {
-                            egui::Frame::NONE
-                                .fill(Color32::from_rgba_unmultiplied(12, 13, 16, 250))
-                                .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 160)))
-                                .corner_radius(CornerRadius::ZERO)
-                                .inner_margin(Margin::symmetric(14_i8, 7_i8))
-                                .show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.label(
-                                            egui::RichText::new(format!("UPDATE: v{}", info.version))
-                                                .size(11.5)
-                                                .strong()
-                                                .color(accent),
-                                        );
-                                        ui.label(
-                                            egui::RichText::new(format!("(Installed: v{})", crate::updater::CURRENT_VERSION))
-                                                .size(10.5)
-                                                .color(Color32::from_rgb(150, 150, 155)),
-                                        );
-                                        ui.add_space(8.0);
-                                        if squared_button(ui, "DOWNLOAD", true, accent) {
-                                            crate::updater::open_browser_url(&info.html_url);
-                                        }
-                                        ui.add_space(4.0);
-                                        if squared_button(ui, "DISMISS", false, accent) {
-                                            self.update_dismissed = true;
-                                        }
-                                    });
-                                });
-                        });
-                        ui.add_space(8.0);
-                    }
+        let textures = self.textures.clone();
+        let tex_replay = textures.as_ref().map(|t| &t.replay);
+        let tex_record = textures.as_ref().map(|t| &t.record);
+        let tex_stream = textures.as_ref().map(|t| &t.stream);
+        let tex_screenshot = textures.as_ref().map(|t| &t.screenshot);
+        let tex_settings_small = textures.as_ref().map(|t| &t.settings_small);
+        let tex_settings_xs = textures.as_ref().map(|t| &t.settings_extra_small);
+        let tex_play = textures.as_ref().map(|t| &t.play);
+        let tex_pause = textures.as_ref().map(|t| &t.pause);
+        let tex_stop = textures.as_ref().map(|t| &t.stop);
+        let tex_save = textures.as_ref().map(|t| &t.save);
 
-                ui.horizontal_top(|ui| {
-                    ui.spacing_mut().item_spacing = Vec2::new(card_gap, 0.0);
+        // Card 0: Instant Replay
+        let c0_clicked = render_gsr_card(
+            ui,
+            card0_rect,
+            "Instant Replay",
+            tex_replay,
+            |painter, center| {
+                draw_replay_icon(painter, center, 24.0, is_replay_active, accent);
+            },
+            if is_replay_active { "Turned on" } else { "Off" },
+            is_replay_active,
+            self.replay_dropdown_open,
+            accent,
+        );
+        if c0_clicked {
+            self.replay_dropdown_open = !self.replay_dropdown_open;
+            self.record_dropdown_open = false;
+            self.stream_dropdown_open = false;
+        }
 
-                    // =========================================================================
-                    // CARD 1: INSTANT REPLAY
-                    // =========================================================================
-                    ui.vertical(|ui| {
-                        ui.set_width(card_w);
-                        ui.set_min_width(card_w);
-                        ui.set_max_width(card_w);
-                        let card1_clicked = render_action_card(
-                            ui,
-                            card_w,
-                            card_h,
-                            "INSTANT REPLAY",
-                            is_replay_active,
-                            self.replay_dropdown_open,
-                            |painter, center| {
-                                draw_replay_icon(painter, center, 24.0, is_replay_active, accent);
-                            },
-                            if is_replay_active { "Turned on" } else { "Turned off" },
-                            if is_replay_active { accent } else { Color32::from_rgb(150, 150, 155) },
-                            "(Click for menu)",
-                            accent,
-                        );
+        // Card 1: Record
+        let rec_status_str = if is_recording {
+            let mins = rec_dur / 60;
+            let secs = rec_dur % 60;
+            format!("Recording {:02}:{:02}", mins, secs)
+        } else {
+            "Not recording".to_string()
+        };
+        let c1_clicked = render_gsr_card(
+            ui,
+            card1_rect,
+            "Record",
+            tex_record,
+            |painter, center| {
+                draw_record_icon(painter, center, 24.0, is_recording, self.anim_time);
+            },
+            &rec_status_str,
+            is_recording,
+            self.record_dropdown_open,
+            accent,
+        );
+        if c1_clicked {
+            self.record_dropdown_open = !self.record_dropdown_open;
+            self.replay_dropdown_open = false;
+            self.stream_dropdown_open = false;
+        }
 
-                        if card1_clicked {
-                            self.replay_dropdown_open = !self.replay_dropdown_open;
-                            self.record_dropdown_open = false;
-                        }
+        // Card 2: Livestream
+        let c2_clicked = render_gsr_card(
+            ui,
+            card2_rect,
+            "Livestream",
+            tex_stream,
+            |painter, center| {
+                draw_settings_icon(painter, center, 24.0, Color32::WHITE);
+            },
+            "Not streaming",
+            false,
+            self.stream_dropdown_open,
+            accent,
+        );
+        if c2_clicked {
+            self.stream_dropdown_open = !self.stream_dropdown_open;
+            self.replay_dropdown_open = false;
+            self.record_dropdown_open = false;
+        }
 
-                        if self.replay_dropdown_open {
-                            render_dropdown_menu(ui, card_w, accent, |ui| {
-                                let toggle_title = if is_replay_active { "Turn off" } else { "Turn on" };
-                                let toggle_sub = if is_replay_active { "Stop background buffer" } else { "Capture continuous replay" };
-                                if render_menu_item(ui, toggle_title, Some(toggle_sub), None, is_replay_active, accent, false) {
-                                    let mut cfg = ScytheConfig::load();
-                                    cfg.replay_enabled = !cfg.replay_enabled;
-                                    let _ = cfg.save();
-                                    ScytheConfig::notify_daemon_reload();
-                                    self.config.replay_enabled = cfg.replay_enabled;
-                                    self.status.is_replay_active = cfg.replay_enabled;
-                                    self.replay_dropdown_open = false;
-                                }
-                                let save_hk = self.config.save_hotkey.trim();
-                                let save_hk_opt = if save_hk.is_empty() { None } else { Some(save_hk) };
-                                if render_menu_item(ui, "Save Replay", Some("Export buffer to file"), save_hk_opt, false, accent, true) {
-                                    if is_replay_active {
-                                        async_send_command(Command::SaveReplay);
-                                        self.show_hud_notification("INSTANT REPLAY", "Saved to Videos", crate::overlay::ToastIcon::Replay);
-                                    } else {
-                                        self.show_hud_notification("INSTANT REPLAY", "Replay is turned off", crate::overlay::ToastIcon::Error);
-                                    }
-                                    self.replay_dropdown_open = false;
-                                }
-                            });
-                        }
-                    });
+        // Auxiliary buttons (Screenshot & Settings)
+        let aux_top_y = top_pad + (card_h - 2.0 * aux_size - 10.0) * 0.5;
+        let aux_screenshot_rect = egui::Rect::from_min_size(egui::pos2(aux_x, aux_top_y), Vec2::new(aux_size, aux_size));
+        let aux_settings_rect = egui::Rect::from_min_size(egui::pos2(aux_x, aux_top_y + aux_size + 10.0), Vec2::new(aux_size, aux_size));
 
-                    // =========================================================================
-                    // CARD 2: RECORD
-                    // =========================================================================
-                    ui.vertical(|ui| {
-                        ui.set_width(card_w);
-                        ui.set_min_width(card_w);
-                        ui.set_max_width(card_w);
-                        let rec_status_str = if is_recording {
-                            let mins = rec_dur / 60;
-                            let secs = rec_dur % 60;
-                            format!("Recording {:02}:{:02}", mins, secs)
-                        } else {
-                            "Not recording".to_string()
-                        };
+        // Screenshot auxiliary button
+        let sc_resp = ui.allocate_rect(aux_screenshot_rect, egui::Sense::click());
+        let sc_hov = sc_resp.hovered();
+        let set_resp = ui.allocate_rect(aux_settings_rect, egui::Sense::click());
+        let set_hov = set_resp.hovered();
 
-                        let card2_clicked = render_action_card(
-                            ui,
-                            card_w,
-                            card_h,
-                            "RECORD",
-                            is_recording,
-                            self.record_dropdown_open,
-                            |painter, center| {
-                                draw_record_icon(painter, center, 24.0, is_recording, anim_time);
-                            },
-                            &rec_status_str,
-                            if is_recording { Color32::from_rgb(239, 68, 68) } else { Color32::from_rgb(150, 150, 155) },
-                            "(Click for menu)",
-                            accent,
-                        );
+        let p = ui.painter();
+        if sc_hov {
+            p.rect_filled(aux_screenshot_rect, CornerRadius::ZERO, Color32::from_rgb(0, 0, 0));
+            p.rect_stroke(aux_screenshot_rect, CornerRadius::ZERO, Stroke::new(2.0_f32, accent), egui::StrokeKind::Inside);
+        } else {
+            p.rect_filled(aux_screenshot_rect, CornerRadius::ZERO, Color32::from_rgba_unmultiplied(0, 0, 0, 180));
+        }
+        if let Some(tex) = tex_screenshot {
+            draw_texture_centered(p, tex, aux_screenshot_rect.center(), 32.0, if sc_hov { accent } else { Color32::WHITE });
+        }
 
-                        if card2_clicked {
-                            self.record_dropdown_open = !self.record_dropdown_open;
-                            self.replay_dropdown_open = false;
-                        }
+        if set_hov {
+            p.rect_filled(aux_settings_rect, CornerRadius::ZERO, Color32::from_rgb(0, 0, 0));
+            p.rect_stroke(aux_settings_rect, CornerRadius::ZERO, Stroke::new(2.0_f32, accent), egui::StrokeKind::Inside);
+        } else {
+            p.rect_filled(aux_settings_rect, CornerRadius::ZERO, Color32::from_rgba_unmultiplied(0, 0, 0, 180));
+        }
+        if let Some(tex) = tex_settings_small {
+            draw_texture_centered(p, tex, aux_settings_rect.center(), 32.0, if set_hov { accent } else { Color32::WHITE });
+        }
 
-                        if self.record_dropdown_open {
-                            render_dropdown_menu(ui, card_w, accent, |ui| {
-                                let rec_toggle_title = if is_recording { "Stop Recording" } else { "Start Recording" };
-                                let rec_toggle_sub = if is_recording { "Finalize and save video" } else { "Capture video to disk" };
-                                let rec_hk = self.config.record_hotkey.trim();
-                                let rec_hk_opt = if rec_hk.is_empty() { None } else { Some(rec_hk) };
-                                if render_menu_item(ui, rec_toggle_title, Some(rec_toggle_sub), rec_hk_opt, is_recording, accent, true) {
-                                    async_send_command(Command::ToggleRecording);
-                                    if is_recording {
-                                        self.show_hud_notification("RECORDING", "Recording saved", crate::overlay::ToastIcon::Save);
-                                    } else {
-                                        self.show_hud_notification("RECORDING", "Recording started", crate::overlay::ToastIcon::Record);
-                                    }
-                                    self.record_dropdown_open = false;
-                                }
-                            });
-                        }
-                    });
+        if sc_resp.clicked() {
+            let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_secs();
+            let fname = format!("Screenshot_{}.png", now);
+            let out_path = PathBuf::from(&self.output_dir).join(&fname);
+            let _ = std::process::Command::new("grim").arg(&out_path).spawn();
+            self.show_hud_notification("SCREENSHOT", &format!("Saved to {}", fname), crate::overlay::ToastIcon::Screenshot);
+        }
 
-                    // =========================================================================
-                    // CARD 3: SETTINGS
-                    // =========================================================================
-                    ui.vertical(|ui| {
-                        ui.set_width(card_w);
-                        ui.set_min_width(card_w);
-                        ui.set_max_width(card_w);
-                        let card3_clicked = render_action_card(
-                            ui,
-                            card_w,
-                            card_h,
-                            "SETTINGS",
-                            false,
-                            false,
-                            |painter, center| {
-                                draw_settings_icon(painter, center, 24.0, Color32::from_rgb(150, 150, 155));
-                            },
-                            "Hardware & Tuning",
-                            Color32::from_rgb(150, 150, 155),
-                            "(Click to open)",
-                            accent,
-                        );
+        if set_resp.clicked() {
+            self.replay_dropdown_open = false;
+            self.record_dropdown_open = false;
+            self.stream_dropdown_open = false;
+            self.switch_view(ShadowPlayView::GlobalSettings, ctx);
+        }
 
-                        if card3_clicked {
-                            self.replay_dropdown_open = false;
-                            self.record_dropdown_open = false;
-                            self.switch_view(ShadowPlayView::Settings, ctx);
-                        }
-                    });
-                });
-            });
-        });
+        // Dropdown menus flush beneath cards
+        let item_h = 44.0_f32;
+
+        // Instant Replay dropdown
+        if self.replay_dropdown_open {
+            let drop_y = card0_rect.bottom();
+            let r0 = egui::Rect::from_min_size(egui::pos2(card0_rect.left(), drop_y), Vec2::new(card_w, item_h));
+            let r1 = egui::Rect::from_min_size(egui::pos2(card0_rect.left(), drop_y + item_h), Vec2::new(card_w, item_h));
+            let r2 = egui::Rect::from_min_size(egui::pos2(card0_rect.left(), drop_y + item_h * 2.0), Vec2::new(card_w, item_h));
+            let r3 = egui::Rect::from_min_size(egui::pos2(card0_rect.left(), drop_y + item_h * 3.0), Vec2::new(card_w, item_h));
+            let r4 = egui::Rect::from_min_size(egui::pos2(card0_rect.left(), drop_y + item_h * 4.0), Vec2::new(card_w, item_h));
+
+            let toggle_title = if is_replay_active { "Turn off" } else { "Turn on" };
+            let toggle_icon = if is_replay_active { tex_stop } else { tex_play };
+            if render_dropdown_item(ui, r0, toggle_title, None, toggle_icon, accent, false) {
+                let mut cfg = ScytheConfig::load();
+                cfg.replay_enabled = !cfg.replay_enabled;
+                let _ = cfg.save();
+                ScytheConfig::notify_daemon_reload();
+                self.config.replay_enabled = cfg.replay_enabled;
+                self.status.is_replay_active = cfg.replay_enabled;
+                self.replay_dropdown_open = false;
+            }
+
+            let save_hk = self.config.save_hotkey.trim();
+            let save_hk_opt = if save_hk.is_empty() { None } else { Some(save_hk) };
+            if render_dropdown_item(ui, r1, "Save", save_hk_opt, tex_save, accent, false) {
+                if is_replay_active {
+                    async_send_command(Command::SaveReplay);
+                    self.show_hud_notification("INSTANT REPLAY", "Saved to Videos", crate::overlay::ToastIcon::Replay);
+                } else {
+                    self.show_hud_notification("INSTANT REPLAY", "Replay is turned off", crate::overlay::ToastIcon::Error);
+                }
+                self.replay_dropdown_open = false;
+            }
+
+            if render_dropdown_item(ui, r2, "Save 1 min", None, tex_save, accent, false) {
+                if is_replay_active {
+                    async_send_command(Command::SaveReplay);
+                    self.show_hud_notification("INSTANT REPLAY", "Saved 1 min replay", crate::overlay::ToastIcon::Replay);
+                } else {
+                    self.show_hud_notification("INSTANT REPLAY", "Replay is turned off", crate::overlay::ToastIcon::Error);
+                }
+                self.replay_dropdown_open = false;
+            }
+
+            if render_dropdown_item(ui, r3, "Save 10 min", None, tex_save, accent, false) {
+                if is_replay_active {
+                    async_send_command(Command::SaveReplay);
+                    self.show_hud_notification("INSTANT REPLAY", "Saved 10 min replay", crate::overlay::ToastIcon::Replay);
+                } else {
+                    self.show_hud_notification("INSTANT REPLAY", "Replay is turned off", crate::overlay::ToastIcon::Error);
+                }
+                self.replay_dropdown_open = false;
+            }
+
+            if render_dropdown_item(ui, r4, "Settings", None, tex_settings_xs, accent, true) {
+                self.switch_view(ShadowPlayView::ReplaySettings, ctx);
+            }
+        }
+
+        // Record dropdown
+        if self.record_dropdown_open {
+            let drop_y = card1_rect.bottom();
+            let r0 = egui::Rect::from_min_size(egui::pos2(card1_rect.left(), drop_y), Vec2::new(card_w, item_h));
+            let r1 = egui::Rect::from_min_size(egui::pos2(card1_rect.left(), drop_y + item_h), Vec2::new(card_w, item_h));
+            let r2 = egui::Rect::from_min_size(egui::pos2(card1_rect.left(), drop_y + item_h * 2.0), Vec2::new(card_w, item_h));
+
+            let rec_toggle_title = if is_recording { "Stop Recording" } else { "Start Recording" };
+            let rec_toggle_icon = if is_recording { tex_stop } else { tex_play };
+            let rec_hk = self.config.record_hotkey.trim();
+            let rec_hk_opt = if rec_hk.is_empty() { None } else { Some(rec_hk) };
+            if render_dropdown_item(ui, r0, rec_toggle_title, rec_hk_opt, rec_toggle_icon, accent, false) {
+                async_send_command(Command::ToggleRecording);
+                if is_recording {
+                    self.show_hud_notification("RECORDING", "Recording saved", crate::overlay::ToastIcon::Save);
+                } else {
+                    self.show_hud_notification("RECORDING", "Recording started", crate::overlay::ToastIcon::Record);
+                }
+                self.record_dropdown_open = false;
+            }
+
+            let pause_hk_opt: Option<&str> = None;
+            if render_dropdown_item(ui, r1, "Pause", pause_hk_opt, tex_pause, accent, false) {
+                self.record_dropdown_open = false;
+            }
+
+            if render_dropdown_item(ui, r2, "Settings", None, tex_settings_xs, accent, true) {
+                self.switch_view(ShadowPlayView::RecordSettings, ctx);
+            }
+        }
+
+        // Livestream dropdown
+        if self.stream_dropdown_open {
+            let drop_y = card2_rect.bottom();
+            let r0 = egui::Rect::from_min_size(egui::pos2(card2_rect.left(), drop_y), Vec2::new(card_w, item_h));
+            let r1 = egui::Rect::from_min_size(egui::pos2(card2_rect.left(), drop_y + item_h), Vec2::new(card_w, item_h));
+
+            if render_dropdown_item(ui, r0, "Start Streaming", None, tex_play, accent, false) {
+                self.show_hud_notification("LIVESTREAM", "Streaming not configured", crate::overlay::ToastIcon::Info);
+                self.stream_dropdown_open = false;
+            }
+
+            if render_dropdown_item(ui, r1, "Settings", None, tex_settings_xs, accent, true) {
+                self.switch_view(ShadowPlayView::StreamSettings, ctx);
+            }
+        }
     }
     fn render_settings_view(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
         let screen_w = ui.available_width();
         let screen_h = ui.available_height();
-        let modal_w = 680.0_f32;
-        let modal_h = (screen_h - 40.0).clamp(660.0, 920.0);
+        let modal_w = 700.0_f32.min(screen_w - 40.0);
+        let modal_h = (screen_h - 90.0).clamp(560.0, 920.0);
         let left_pad = ((screen_w - modal_w) / 2.0).max(10.0);
-        let top_pad = ((screen_h - modal_h) / 2.0).max(15.0);
+        let top_pad = 58.0_f32;
         let accent = self.accent_color();
 
         let modal_rect = egui::Rect::from_min_size(egui::pos2(left_pad, top_pad), egui::vec2(modal_w, modal_h));
         self.panel_rect = modal_rect;
 
+        let textures = self.textures.clone();
+        let (cat_title, cat_desc, cat_tex) = match self.current_view {
+            ShadowPlayView::ReplaySettings => (
+                "INSTANT REPLAY",
+                "Save a video clip of your gameplay that just happened.",
+                textures.as_ref().map(|t| t.replay.clone()),
+            ),
+            ShadowPlayView::RecordSettings => (
+                "RECORD",
+                "Record video of your desktop or games to a file.",
+                textures.as_ref().map(|t| t.record.clone()),
+            ),
+            ShadowPlayView::StreamSettings => (
+                "LIVESTREAM",
+                "Broadcast live to Twitch, YouTube, or custom RTMP.",
+                textures.as_ref().map(|t| t.stream.clone()),
+            ),
+            ShadowPlayView::GlobalSettings => (
+                "SETTINGS",
+                "Configure general application settings, hotkeys, and appearance.",
+                textures.as_ref().map(|t| t.settings_large.clone()),
+            ),
+            ShadowPlayView::ScreenshotSettings => (
+                "SCREENSHOT",
+                "Capture high-resolution screenshots of your desktop.",
+                textures.as_ref().map(|t| t.screenshot.clone()),
+            ),
+            _ => (
+                "SETTINGS",
+                "Configure application settings.",
+                textures.as_ref().map(|t| t.settings_large.clone()),
+            ),
+        };
+
         ui.allocate_new_ui(egui::UiBuilder::new().max_rect(modal_rect), |ui| {
             egui::Frame::NONE
-                .fill(Color32::from_rgba_unmultiplied(11, 12, 15, 252))
-                .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 140)))
+                .fill(Color32::from_rgba_unmultiplied(10, 11, 14, 252))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 120)))
                 .corner_radius(CornerRadius::ZERO)
-                .inner_margin(Margin::symmetric(24_i8, 20_i8))
+                .inner_margin(Margin::symmetric(24_i8, 18_i8))
                 .show(ui, |ui| {
                     ui.set_width(modal_w - 48.0);
 
-                    // Portrait Header: Back Button, Title, Close Hint (No X button)
-                    ui.horizontal(|ui| {
-                        let back_btn = egui::Button::new(
-                            egui::RichText::new("< BACK")
-                                .size(11.5)
-                                .strong()
-                                .color(accent),
-                        )
-                        .fill(Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 24))
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 160)))
-                        .corner_radius(CornerRadius::ZERO);
+                    // 3.0px top accent line matching GPU Screen Recorder Page design
+                    let top_line_rect = egui::Rect::from_min_size(
+                        egui::pos2(modal_rect.left(), modal_rect.top()),
+                        Vec2::new(modal_w, 3.0),
+                    );
+                    ui.painter().rect_filled(top_line_rect, CornerRadius::ZERO, accent);
 
-                        if ui.add(back_btn).clicked() {
-                            self.switch_view(ShadowPlayView::MainHud, ctx);
-                            return;
+                    // Page Header with Left Icon Badge (74x74), Title + Description, and Right Back Button
+                    ui.horizontal(|ui| {
+                        let badge_size = 72.0_f32;
+                        let (badge_rect, _) = ui.allocate_exact_size(Vec2::new(badge_size, badge_size), egui::Sense::hover());
+                        ui.painter().rect_filled(badge_rect, CornerRadius::ZERO, Color32::from_rgb(0, 0, 0));
+                        ui.painter().rect_stroke(badge_rect, CornerRadius::ZERO, Stroke::new(1.5_f32, accent), egui::StrokeKind::Inside);
+                        if let Some(tex) = &cat_tex {
+                            draw_texture_centered(ui.painter(), tex, badge_rect.center(), 40.0, accent);
                         }
 
                         ui.add_space(14.0);
-                        ui.label(
-                            egui::RichText::new("SETTINGS")
-                                .font(FontId::proportional(15.0))
-                                .strong()
-                                .color(Color32::WHITE),
-                        );
+                        ui.vertical(|ui| {
+                            ui.add_space(6.0);
+                            ui.label(
+                                egui::RichText::new(cat_title)
+                                    .font(FontId::proportional(17.0))
+                                    .strong()
+                                    .color(accent),
+                            );
+                            ui.add_space(4.0);
+                            ui.label(
+                                egui::RichText::new(cat_desc)
+                                    .size(11.5)
+                                    .color(Color32::from_rgb(180, 180, 188)),
+                            );
+                        });
 
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            egui::Frame::NONE
-                                .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 12))
-                                .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 22)))
-                                .corner_radius(CornerRadius::ZERO)
-                                .inner_margin(Margin::symmetric(9_i8, 4_i8))
-                                .show(ui, |ui| {
-                                    ui.label(
-                                        egui::RichText::new("ESC TO CLOSE")
-                                            .size(10.5)
-                                            .strong()
-                                            .color(Color32::from_rgb(160, 160, 168)),
-                                    );
-                                });
+                            let back_btn = egui::Button::new(
+                                egui::RichText::new("< BACK")
+                                    .size(12.0)
+                                    .strong()
+                                    .color(accent),
+                            )
+                            .fill(Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 24))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 160)))
+                            .corner_radius(CornerRadius::ZERO)
+                            .min_size(Vec2::new(96.0, 34.0));
+
+                            if ui.add(back_btn).clicked() {
+                                self.switch_view(ShadowPlayView::MainHud, ctx);
+                                return;
+                            }
                         });
                     });
 
-                    ui.add_space(14.0);
+                    ui.add_space(12.0);
+                    ui.separator();
+                    ui.add_space(8.0);
 
-                    let scroll_h = modal_h - 115.0;
+                    let scroll_h = modal_h - 170.0;
                     egui::ScrollArea::vertical()
                         .max_height(scroll_h)
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
-                            // -----------------------------------------------------------------
-                            // SECTION 1: SYSTEM & STARTUP
-                            // -----------------------------------------------------------------
-                            render_section_card(ui, "SYSTEM & STARTUP", accent, |ui| {
-                                // Autostart Instant Replay
-                                ui.horizontal(|ui| {
-                                    ui.vertical(|ui| {
-                                        ui.label(egui::RichText::new("Autostart Instant Replay").size(12.5).strong().color(Color32::WHITE));
-                                        ui.label(egui::RichText::new("Automatically launch the background recording engine on login so replay is always ready.").size(10.5).color(Color32::from_rgb(150, 150, 155)));
-                                    });
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        let mut ar = self.autostart_replay;
-                                        if toggle_switch(ui, &mut ar, accent).changed() {
-                                            self.autostart_replay = ar;
-                                            self.config.autostart_replay = ar;
-                                            self.config.autostart = ar;
-                                            let _ = self.config.save();
-                                            if ar {
-                                                spawn_daemon_process();
-                                            }
-                                            self.show_hud_notification(
-                                                "AUTOSTART REPLAY",
-                                                if ar { "Enabled: Starts on login" } else { "Disabled" },
-                                                crate::overlay::ToastIcon::Info,
+                            match self.current_view {
+                                ShadowPlayView::ReplaySettings => {
+                                    // 1. Replay Buffer & Autostart
+                                    render_section_card(ui, "INSTANT REPLAY BUFFER", accent, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.vertical(|ui| {
+                                                ui.label(egui::RichText::new("Autostart Instant Replay").size(12.5).strong().color(Color32::WHITE));
+                                                ui.label(egui::RichText::new("Automatically launch recording engine on login so instant replay is always active.").size(10.5).color(Color32::from_rgb(150, 150, 155)));
+                                            });
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                let mut ar = self.autostart_replay;
+                                                if toggle_switch(ui, &mut ar, accent).changed() {
+                                                    self.autostart_replay = ar;
+                                                    self.config.autostart_replay = ar;
+                                                    self.config.autostart = ar;
+                                                    let _ = self.config.save();
+                                                    if ar {
+                                                        spawn_daemon_process();
+                                                    }
+                                                    self.show_hud_notification(
+                                                        "AUTOSTART REPLAY",
+                                                        if ar { "Enabled: Starts on login" } else { "Disabled" },
+                                                        crate::overlay::ToastIcon::Info,
+                                                    );
+                                                }
+                                            });
+                                        });
+
+                                        ui.add_space(8.0);
+                                        ui.separator();
+                                        ui.add_space(8.0);
+
+                                        ui.label(egui::RichText::new("Replay Buffer Duration:").size(12.0).strong().color(Color32::WHITE));
+                                        ui.add_space(4.0);
+                                        ui.horizontal(|ui| {
+                                            ui.label(egui::RichText::new("Custom (sec):").size(11.0).color(Color32::from_rgb(150, 150, 155)));
+                                            let edit_resp = ui.add(
+                                                egui::TextEdit::singleline(&mut self.replay_sec_input_str)
+                                                    .desired_width(55.0)
+                                                    .font(FontId::monospace(11.5))
                                             );
-                                        }
-                                    });
-                                });
+                                            if edit_resp.changed()
+                                                && let Ok(parsed) = self.replay_sec_input_str.trim().parse::<u32>()
+                                                    && (5..=1800).contains(&parsed) {
+                                                        self.replay_sec = parsed;
+                                                    }
+                                            ui.label(egui::RichText::new("sec").size(10.5).color(Color32::from_rgb(150, 150, 155)));
 
-                                ui.add_space(8.0);
-                                ui.separator();
-                                ui.add_space(8.0);
-
-                                // Autostart HUD Overlay
-                                ui.horizontal(|ui| {
-                                    ui.vertical(|ui| {
-                                        ui.label(egui::RichText::new("Autostart HUD Overlay").size(12.5).strong().color(Color32::WHITE));
-                                        ui.label(egui::RichText::new("Automatically open the HUD overlay menu when logging into your desktop session.").size(10.5).color(Color32::from_rgb(150, 150, 155)));
-                                    });
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        let mut ao = self.autostart_overlay;
-                                        if toggle_switch(ui, &mut ao, accent).changed() {
-                                            self.autostart_overlay = ao;
-                                            self.config.autostart_overlay = ao;
-                                            let _ = self.config.save();
-                                            self.show_hud_notification(
-                                                "AUTOSTART OVERLAY",
-                                                if ao { "Enabled: Opens on login" } else { "Disabled" },
-                                                crate::overlay::ToastIcon::Info,
-                                            );
-                                        }
-                                    });
-                                });
-                            });
-
-                            ui.add_space(10.0);
-
-                            // -----------------------------------------------------------------
-                            // SECTION 2: DISPLAY & CAPTURE
-                            // -----------------------------------------------------------------
-                            render_section_card(ui, "DISPLAY & CAPTURE", accent, |ui| {
-                                // Record Mouse Cursor
-                                ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new("Record Mouse Cursor").size(12.0).strong().color(Color32::WHITE));
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        let mut cur = self.show_cursor;
-                                        if toggle_switch(ui, &mut cur, accent).changed() {
-                                            self.show_cursor = cur;
-                                            self.config.show_cursor = cur;
-                                            let _ = self.config.save();
-                                            async_send_command(Command::ToggleCursor);
-                                            self.show_hud_notification(
-                                                "MOUSE CURSOR",
-                                                if cur { "Visible in recording" } else { "Hidden from recording" },
-                                                crate::overlay::ToastIcon::Cursor,
-                                            );
-                                        }
-                                    });
-                                });
-
-                                ui.add_space(8.0);
-                                ui.separator();
-                                ui.add_space(8.0);
-
-                                // Framerate (FPS) with direct input and presets
-                                ui.label(egui::RichText::new("Target Framerate (FPS):").size(12.0).strong().color(Color32::WHITE));
-                                ui.add_space(4.0);
-                                ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new("Custom:").size(11.0).color(Color32::from_rgb(150, 150, 155)));
-                                    let edit_resp = ui.add(
-                                        egui::TextEdit::singleline(&mut self.fps_input_str)
-                                            .desired_width(55.0)
-                                            .font(FontId::monospace(11.5))
-                                    );
-                                    if edit_resp.changed()
-                                        && let Ok(parsed) = self.fps_input_str.trim().parse::<u32>()
-                                            && (15..=360).contains(&parsed) {
-                                                self.target_fps = parsed;
-                                            }
-
-                                    ui.add_space(8.0);
-                                    for fps in [30, 60, 120, 144, 240] {
-                                        if squared_button(ui, &fps.to_string(), self.target_fps == fps, accent) {
-                                            self.target_fps = fps;
-                                            self.fps_input_str = fps.to_string();
-                                        }
-                                    }
-                                });
-
-                                ui.add_space(8.0);
-
-                                // Video Bitrate (Mbps) with direct input, presets, and slider
-                                ui.label(egui::RichText::new("Video Bitrate:").size(12.0).strong().color(Color32::WHITE));
-                                ui.add_space(4.0);
-                                ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new("Custom:").size(11.0).color(Color32::from_rgb(150, 150, 155)));
-                                    let edit_resp = ui.add(
-                                        egui::TextEdit::singleline(&mut self.bitrate_input_str)
-                                            .desired_width(55.0)
-                                            .font(FontId::monospace(11.5))
-                                    );
-                                    if edit_resp.changed()
-                                        && let Ok(parsed) = self.bitrate_input_str.trim().parse::<u32>()
-                                            && (1..=300).contains(&parsed) {
-                                                self.bitrate_mbps = parsed;
-                                            }
-                                    ui.label(egui::RichText::new("Mbps").size(10.5).color(Color32::from_rgb(150, 150, 155)));
-
-                                    ui.add_space(8.0);
-                                    for mbps in [10, 20, 35, 50, 80] {
-                                        if squared_button(ui, &format!("{}M", mbps), self.bitrate_mbps == mbps, accent) {
-                                            self.bitrate_mbps = mbps;
-                                            self.bitrate_input_str = mbps.to_string();
-                                        }
-                                    }
-                                    ui.add_space(6.0);
-                                    let mut br = self.bitrate_mbps;
-                                    if ui.add(egui::Slider::new(&mut br, 5..=150).suffix(" Mbps").step_by(5.0)).changed() {
-                                        self.bitrate_mbps = br;
-                                        self.bitrate_input_str = br.to_string();
-                                    }
-                                });
-
-                                ui.add_space(8.0);
-
-                                // Instant Replay Buffer Duration with direct input and presets
-                                ui.label(egui::RichText::new("Instant Replay Buffer Duration:").size(12.0).strong().color(Color32::WHITE));
-                                ui.add_space(4.0);
-                                ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new("Custom (sec):").size(11.0).color(Color32::from_rgb(150, 150, 155)));
-                                    let edit_resp = ui.add(
-                                        egui::TextEdit::singleline(&mut self.replay_sec_input_str)
-                                            .desired_width(55.0)
-                                            .font(FontId::monospace(11.5))
-                                    );
-                                    if edit_resp.changed()
-                                        && let Ok(parsed) = self.replay_sec_input_str.trim().parse::<u32>()
-                                            && (5..=1800).contains(&parsed) {
-                                                self.replay_sec = parsed;
-                                            }
-                                    ui.label(egui::RichText::new("sec").size(10.5).color(Color32::from_rgb(150, 150, 155)));
-
-                                    ui.add_space(8.0);
-                                    for sec in [15, 30, 60, 120, 300] {
-                                        let label = if sec >= 60 { format!("{}m", sec / 60) } else { format!("{}s", sec) };
-                                        if squared_button(ui, &label, self.replay_sec == sec, accent) {
-                                            self.replay_sec = sec;
-                                            self.replay_sec_input_str = sec.to_string();
-                                        }
-                                    }
-                                });
-
-                                ui.add_space(8.0);
-
-                                // Encoder Codec
-                                ui.label(egui::RichText::new("Encoder Codec:").size(12.0).strong().color(Color32::WHITE));
-                                ui.add_space(4.0);
-                                ui.horizontal(|ui| {
-                                    for (codec_key, label) in [("h264", "H.264"), ("hevc", "HEVC / H.265"), ("av1", "AV1")] {
-                                        if squared_button(ui, label, self.video_codec == codec_key, accent) {
-                                            self.video_codec = codec_key.to_string();
-                                        }
-                                    }
-                                });
-                            });
-
-                            ui.add_space(10.0);
-
-                            // -----------------------------------------------------------------
-                            // SECTION 2: AUDIO CONFIGURATION
-                            // -----------------------------------------------------------------
-                            render_section_card(ui, "AUDIO CONFIGURATION", accent, |ui| {
-                                ui.label(egui::RichText::new("Audio Source:").size(12.0).strong().color(Color32::WHITE));
-                                ui.add_space(4.0);
-                                ui.horizontal(|ui| {
-                                    let modes = [("system", "System"), ("mic", "Microphone"), ("both", "Both"), ("muted", "Muted")];
-                                    for (idx, (_, m_label)) in modes.iter().enumerate() {
-                                        if squared_button(ui, m_label, self.audio_mode_idx == idx, accent) {
-                                            self.audio_mode_idx = idx;
-                                        }
-                                    }
-                                });
-
-                                ui.add_space(8.0);
-
-                                // Mic Volume + VU
-                                ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new("Mic Vol:").size(12.0).strong().color(Color32::WHITE));
-                                    let mut mv = self.mic_volume_pct;
-                                    if ui.add(egui::Slider::new(&mut mv, 0..=200).suffix("%")).changed() {
-                                        self.mic_volume_pct = mv;
-                                    }
-                                    ui.add_space(6.0);
-                                    render_vu_meter(ui, self.mic_vu, 65.0, 18.0, "MIC");
-                                });
-
-                                ui.add_space(8.0);
-
-                                // System Audio Volume + VU
-                                ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new("Sys Vol:").size(12.0).strong().color(Color32::WHITE));
-                                    let mut sv = self.system_volume_pct;
-                                    if ui.add(egui::Slider::new(&mut sv, 0..=200).suffix("%")).changed() {
-                                        self.system_volume_pct = sv;
-                                    }
-                                    ui.add_space(6.0);
-                                    render_vu_meter(ui, self.sys_vu, 65.0, 18.0, "SYS");
-                                });
-                            });
-
-                            ui.add_space(10.0);
-
-                            // -----------------------------------------------------------------
-                            // SECTION 3: KEYBOARD SHORTCUTS (INTERACTIVE REBINDING)
-                            // -----------------------------------------------------------------
-                            render_section_card(ui, "KEYBOARD SHORTCUTS (CLICK TO REBIND)", accent, |ui| {
-                                let binds = [
-                                    (KeybindAction::Menu, "Menu Overlay", &self.config.menu_hotkey),
-                                    (KeybindAction::SaveReplay, "Save Instant Replay", &self.config.save_hotkey),
-                                    (KeybindAction::ToggleRecord, "Start / Stop Record", &self.config.record_hotkey),
-                                    (KeybindAction::ToggleCursor, "Toggle Mouse Cursor", &self.config.cursor_hotkey),
-                                ];
-
-                                for (action, label, current_hotkey) in binds {
-                                    let is_listening = self.listening_keybind == Some(action);
-                                    ui.horizontal(|ui| {
-                                        ui.label(
-                                            egui::RichText::new(label)
-                                                .size(12.0)
-                                                .color(if is_listening { accent } else { Color32::from_rgb(203, 213, 225) }),
-                                        );
-
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            if render_keycap_button(ui, current_hotkey, is_listening, accent) {
-                                                if is_listening {
-                                                    self.listening_keybind = None;
-                                                } else {
-                                                    self.listening_keybind = Some(action);
+                                            ui.add_space(8.0);
+                                            for sec in [15, 30, 60, 120, 300, 600] {
+                                                let label = if sec >= 60 { format!("{}m", sec / 60) } else { format!("{}s", sec) };
+                                                if squared_button(ui, &label, self.replay_sec == sec, accent) {
+                                                    self.replay_sec = sec;
+                                                    self.replay_sec_input_str = sec.to_string();
                                                 }
                                             }
                                         });
                                     });
-                                    ui.add_space(6.0);
-                                }
 
-                                if self.listening_keybind.is_some() {
-                                    ui.add_space(4.0);
-                                    ui.label(
-                                        egui::RichText::new("Listening... Press your desired key combination or Esc to cancel.")
-                                            .size(11.0)
-                                            .strong()
-                                            .color(accent),
-                                    );
-                                }
-
-                                ui.add_space(4.0);
-                                ui.horizontal(|ui| {
-                                    if squared_button(ui, "Reset Hotkeys to Defaults", false, accent) {
-                                        let old_menu = self.config.menu_hotkey.clone();
-                                        let old_save = self.config.save_hotkey.clone();
-                                        let old_rec = self.config.record_hotkey.clone();
-                                        let old_cur = self.config.cursor_hotkey.clone();
-                                        crate::hyprland_binds::unbind_hotkey_async(&old_menu);
-                                        crate::hyprland_binds::unbind_hotkey_async(&old_save);
-                                        crate::hyprland_binds::unbind_hotkey_async(&old_rec);
-                                        crate::hyprland_binds::unbind_hotkey_async(&old_cur);
-                                        self.config.menu_hotkey = "Alt+Z".to_string();
-                                        self.config.save_hotkey = "Ctrl+Shift+R".to_string();
-                                        self.config.record_hotkey = "Ctrl+Shift+F9".to_string();
-                                        self.config.cursor_hotkey = "Ctrl+Shift+F10".to_string();
-                                        let _ = self.config.save();
-                                        crate::hyprland_binds::register_hyprland_binds_async(&self.config);
-                                        crate::config::ScytheConfig::notify_daemon_reload();
-                                        self.show_hud_notification("KEYBINDS", "Restored default hotkeys", crate::overlay::ToastIcon::Info);
-                                    }
-                                });
-                            });
-
-                            ui.add_space(10.0);
-
-                            // -----------------------------------------------------------------
-                            // SECTION 5: STORAGE & FILE NAMING
-                            // -----------------------------------------------------------------
-                            render_section_card(ui, "STORAGE & FILE NAMING", accent, |ui| {
-                                ui.label(egui::RichText::new("Save Folder:").size(12.0).strong().color(Color32::WHITE));
-                                ui.add_space(3.0);
-                                ui.horizontal(|ui| {
-                                    ui.add(egui::TextEdit::singleline(&mut self.output_dir).desired_width(340.0));
-                                    if squared_button(ui, "Change", false, accent) {
-                                        pick_folder(&self.output_dir, self.folder_tx.clone(), self.folder_picking_active.clone());
-                                    }
-                                    if squared_button(ui, "Open", false, accent) {
-                                        open_folder(&ScytheConfig::expand_tilde(&self.output_dir));
-                                    }
-                                });
-
-                                ui.add_space(8.0);
-                                ui.separator();
-                                ui.add_space(8.0);
-
-                                ui.label(egui::RichText::new("Default File Naming Format:").size(12.0).strong().color(Color32::WHITE));
-                                ui.add_space(3.0);
-                                let sample_replay = ScytheConfig::format_video_filename("Replay", "mp4");
-                                let sample_record = ScytheConfig::format_video_filename("Recording", "mp4");
-                                ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new("Template:").size(11.0).color(Color32::from_rgb(150, 150, 155)));
-                                    ui.label(egui::RichText::new("Prefix-Timestamp_Date_Month_Year.mp4").size(11.0).font(FontId::monospace(11.0)).color(accent));
-                                });
-                                ui.add_space(2.0);
-                                ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new("Instant Replay:").size(11.0).color(Color32::from_rgb(150, 150, 155)));
-                                    ui.label(egui::RichText::new(&sample_replay).size(11.0).font(FontId::monospace(11.0)).color(Color32::WHITE));
-                                });
-                                ui.add_space(2.0);
-                                ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new("Manual Record:").size(11.0).color(Color32::from_rgb(150, 150, 155)));
-                                    ui.label(egui::RichText::new(&sample_record).size(11.0).font(FontId::monospace(11.0)).color(Color32::WHITE));
-                                });
-                            });
-
-                            ui.add_space(10.0);
-
-                            // -----------------------------------------------------------------
-                            // SECTION 5: ACCENT COLOR THEME (AT THE BOTTOM)
-                            // -----------------------------------------------------------------
-                            render_section_card(ui, "ACCENT COLOR THEME", accent, |ui| {
-                                ui.label(egui::RichText::new("Select Interface Accent Color:").size(12.0).strong().color(Color32::WHITE));
-                                ui.add_space(6.0);
-                                ui.horizontal_wrapped(|ui| {
-                                    let palettes = [
-                                        ("blue", "Charming Blue", Color32::from_rgb(56, 189, 248)),
-                                        ("green", "Emerald Green", Color32::from_rgb(34, 197, 94)),
-                                        ("lime", "Electric Lime", Color32::from_rgb(163, 230, 53)),
-                                        ("yellow", "Solar Yellow", Color32::from_rgb(250, 204, 21)),
-                                        ("amber", "Sunset Amber", Color32::from_rgb(245, 158, 11)),
-                                        ("red", "Crimson Red", Color32::from_rgb(239, 68, 68)),
-                                        ("pink", "Neon Pink", Color32::from_rgb(244, 63, 94)),
-                                        ("purple", "Royal Purple", Color32::from_rgb(168, 85, 247)),
-                                    ];
-
-                                    for (id, name, col) in palettes {
-                                        let is_sel = self.config.accent_color.to_lowercase() == id;
-                                        let bg = if is_sel {
-                                            Color32::from_rgba_unmultiplied(col.r(), col.g(), col.b(), 50)
-                                        } else {
-                                            Color32::from_rgba_unmultiplied(col.r(), col.g(), col.b(), 16)
-                                        };
-                                        // Colored border with each color's respective look
-                                        let stroke = Stroke::new(if is_sel { 2.0_f32 } else { 1.2_f32 }, col);
-
-                                        let btn = egui::Button::new(
-                                            egui::RichText::new(name)
-                                                .size(11.5)
-                                                .strong()
-                                                .color(if is_sel { Color32::WHITE } else { Color32::from_rgb(226, 232, 240) }),
-                                        )
-                                        .fill(bg)
-                                        .stroke(stroke)
-                                        .corner_radius(CornerRadius::ZERO)
-                                        .min_size(Vec2::new(140.0, 30.0));
-
-                                        if ui.add(btn).clicked() {
-                                            self.config.accent_color = id.to_string();
-                                            let _ = self.config.save();
-                                            self.show_hud_notification("THEME ACCENT", &format!("Selected: {}", name), crate::overlay::ToastIcon::Info);
-                                        }
-                                    }
-                                });
-                            });
-
-                            ui.add_space(10.0);
-
-                            // -----------------------------------------------------------------
-                            // SECTION 6: ABOUT & AUTO-UPDATES
-                            // -----------------------------------------------------------------
-                            render_section_card(ui, "ABOUT & AUTO-UPDATES", accent, |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.label(
-                                        egui::RichText::new(format!("Installed Version: v{}", crate::updater::CURRENT_VERSION))
-                                            .size(12.0)
-                                            .strong()
-                                            .color(Color32::WHITE),
-                                    );
                                     ui.add_space(10.0);
 
-                                    let cur_status = self.update_status.lock().ok().map(|g| g.clone()).unwrap_or_default();
-                                    match cur_status {
-                                        crate::updater::UpdateStatus::Idle => {
-                                            if squared_button(ui, "Check for Updates", false, accent) {
-                                                crate::updater::spawn_update_check(self.update_status.clone());
+                                    // 2. Video Quality & Codec
+                                    render_section_card(ui, "VIDEO QUALITY & CODEC", accent, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.label(egui::RichText::new("Record Mouse Cursor").size(12.0).strong().color(Color32::WHITE));
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                let mut cur = self.show_cursor;
+                                                if toggle_switch(ui, &mut cur, accent).changed() {
+                                                    self.show_cursor = cur;
+                                                    self.config.show_cursor = cur;
+                                                    let _ = self.config.save();
+                                                    async_send_command(Command::ToggleCursor);
+                                                    self.show_hud_notification(
+                                                        "MOUSE CURSOR",
+                                                        if cur { "Visible in recording" } else { "Hidden from recording" },
+                                                        crate::overlay::ToastIcon::Cursor,
+                                                    );
+                                                }
+                                            });
+                                        });
+
+                                        ui.add_space(8.0);
+                                        ui.separator();
+                                        ui.add_space(8.0);
+
+                                        ui.label(egui::RichText::new("Target Framerate (FPS):").size(12.0).strong().color(Color32::WHITE));
+                                        ui.add_space(4.0);
+                                        ui.horizontal(|ui| {
+                                            ui.label(egui::RichText::new("Custom:").size(11.0).color(Color32::from_rgb(150, 150, 155)));
+                                            let edit_resp = ui.add(
+                                                egui::TextEdit::singleline(&mut self.fps_input_str)
+                                                    .desired_width(55.0)
+                                                    .font(FontId::monospace(11.5))
+                                            );
+                                            if edit_resp.changed()
+                                                && let Ok(parsed) = self.fps_input_str.trim().parse::<u32>()
+                                                    && (15..=360).contains(&parsed) {
+                                                        self.target_fps = parsed;
+                                                    }
+
+                                            ui.add_space(8.0);
+                                            for fps in [30, 60, 120, 144, 240] {
+                                                if squared_button(ui, &fps.to_string(), self.target_fps == fps, accent) {
+                                                    self.target_fps = fps;
+                                                    self.fps_input_str = fps.to_string();
+                                                }
                                             }
-                                        }
-                                        crate::updater::UpdateStatus::Checking => {
-                                            ui.label(
-                                                egui::RichText::new("Checking for updates...")
-                                                    .size(11.5)
-                                                    .color(Color32::from_rgb(150, 150, 155)),
+                                        });
+
+                                        ui.add_space(8.0);
+
+                                        ui.label(egui::RichText::new("Video Bitrate:").size(12.0).strong().color(Color32::WHITE));
+                                        ui.add_space(4.0);
+                                        ui.horizontal(|ui| {
+                                            ui.label(egui::RichText::new("Custom:").size(11.0).color(Color32::from_rgb(150, 150, 155)));
+                                            let edit_resp = ui.add(
+                                                egui::TextEdit::singleline(&mut self.bitrate_input_str)
+                                                    .desired_width(55.0)
+                                                    .font(FontId::monospace(11.5))
                                             );
-                                        }
-                                        crate::updater::UpdateStatus::UpToDate { version } => {
-                                            ui.label(
-                                                egui::RichText::new(format!("✓ Up to date (v{})", version))
-                                                    .size(11.5)
-                                                    .color(Color32::from_rgb(34, 197, 94))
-                                                    .strong(),
-                                            );
+                                            if edit_resp.changed()
+                                                && let Ok(parsed) = self.bitrate_input_str.trim().parse::<u32>()
+                                                    && (1..=300).contains(&parsed) {
+                                                        self.bitrate_mbps = parsed;
+                                                    }
+                                            ui.label(egui::RichText::new("Mbps").size(10.5).color(Color32::from_rgb(150, 150, 155)));
+
+                                            ui.add_space(8.0);
+                                            for mbps in [10, 20, 35, 50, 80] {
+                                                if squared_button(ui, &format!("{}M", mbps), self.bitrate_mbps == mbps, accent) {
+                                                    self.bitrate_mbps = mbps;
+                                                    self.bitrate_input_str = mbps.to_string();
+                                                }
+                                            }
                                             ui.add_space(6.0);
-                                            if squared_button(ui, "Check Again", false, accent) {
-                                                crate::updater::spawn_update_check(self.update_status.clone());
+                                            let mut br = self.bitrate_mbps;
+                                            if ui.add(egui::Slider::new(&mut br, 5..=150).suffix(" Mbps").step_by(5.0)).changed() {
+                                                self.bitrate_mbps = br;
+                                                self.bitrate_input_str = br.to_string();
                                             }
-                                        }
-                                        crate::updater::UpdateStatus::Available(info) => {
-                                            ui.label(
-                                                egui::RichText::new(format!("New version available: v{}", info.version))
-                                                    .size(11.5)
-                                                    .color(Color32::from_rgb(245, 158, 11))
-                                                    .strong(),
-                                            );
+                                        });
+
+                                        ui.add_space(8.0);
+
+                                        ui.label(egui::RichText::new("Encoder Codec:").size(12.0).strong().color(Color32::WHITE));
+                                        ui.add_space(4.0);
+                                        ui.horizontal(|ui| {
+                                            for (codec_key, label) in [("h264", "H.264"), ("hevc", "HEVC / H.265"), ("av1", "AV1")] {
+                                                if squared_button(ui, label, self.video_codec == codec_key, accent) {
+                                                    self.video_codec = codec_key.to_string();
+                                                }
+                                            }
+                                        });
+                                    });
+
+                                    ui.add_space(10.0);
+
+                                    // 3. Audio Configuration
+                                    render_section_card(ui, "AUDIO CONFIGURATION", accent, |ui| {
+                                        ui.label(egui::RichText::new("Audio Source:").size(12.0).strong().color(Color32::WHITE));
+                                        ui.add_space(4.0);
+                                        ui.horizontal(|ui| {
+                                            let modes = [("system", "System"), ("mic", "Microphone"), ("both", "Both"), ("muted", "Muted")];
+                                            for (idx, (_, m_label)) in modes.iter().enumerate() {
+                                                if squared_button(ui, m_label, self.audio_mode_idx == idx, accent) {
+                                                    self.audio_mode_idx = idx;
+                                                }
+                                            }
+                                        });
+
+                                        ui.add_space(8.0);
+
+                                        ui.horizontal(|ui| {
+                                            ui.label(egui::RichText::new("Mic Vol:").size(12.0).strong().color(Color32::WHITE));
+                                            let mut mv = self.mic_volume_pct;
+                                            if ui.add(egui::Slider::new(&mut mv, 0..=200).suffix("%")).changed() {
+                                                self.mic_volume_pct = mv;
+                                            }
                                             ui.add_space(6.0);
-                                            if squared_button(ui, "VIEW RELEASE / DOWNLOAD", true, accent) {
-                                                crate::updater::open_browser_url(&info.html_url);
+                                            render_vu_meter(ui, self.mic_vu, 65.0, 18.0, "MIC");
+                                        });
+
+                                        ui.add_space(8.0);
+
+                                        ui.horizontal(|ui| {
+                                            ui.label(egui::RichText::new("Sys Vol:").size(12.0).strong().color(Color32::WHITE));
+                                            let mut sv = self.system_volume_pct;
+                                            if ui.add(egui::Slider::new(&mut sv, 0..=200).suffix("%")).changed() {
+                                                self.system_volume_pct = sv;
                                             }
+                                            ui.add_space(6.0);
+                                            render_vu_meter(ui, self.sys_vu, 65.0, 18.0, "SYS");
+                                        });
+                                    });
+
+                                    ui.add_space(10.0);
+
+                                    // 4. Storage
+                                    render_section_card(ui, "STORAGE & SAVED CLIPS", accent, |ui| {
+                                        ui.label(egui::RichText::new("Save Folder:").size(12.0).strong().color(Color32::WHITE));
+                                        ui.add_space(3.0);
+                                        ui.horizontal(|ui| {
+                                            ui.add(egui::TextEdit::singleline(&mut self.output_dir).desired_width(340.0));
+                                            if squared_button(ui, "Change", false, accent) {
+                                                pick_folder(&self.output_dir, self.folder_tx.clone(), self.folder_picking_active.clone());
+                                            }
+                                            if squared_button(ui, "Open", false, accent) {
+                                                open_folder(&ScytheConfig::expand_tilde(&self.output_dir));
+                                            }
+                                        });
+                                    });
+                                }
+                                ShadowPlayView::RecordSettings => {
+                                    // Record settings
+                                    render_section_card(ui, "VIDEO RECORDING QUALITY", accent, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.label(egui::RichText::new("Record Mouse Cursor").size(12.0).strong().color(Color32::WHITE));
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                let mut cur = self.show_cursor;
+                                                if toggle_switch(ui, &mut cur, accent).changed() {
+                                                    self.show_cursor = cur;
+                                                    self.config.show_cursor = cur;
+                                                    let _ = self.config.save();
+                                                    async_send_command(Command::ToggleCursor);
+                                                    self.show_hud_notification(
+                                                        "MOUSE CURSOR",
+                                                        if cur { "Visible in recording" } else { "Hidden from recording" },
+                                                        crate::overlay::ToastIcon::Cursor,
+                                                    );
+                                                }
+                                            });
+                                        });
+
+                                        ui.add_space(8.0);
+                                        ui.separator();
+                                        ui.add_space(8.0);
+
+                                        ui.label(egui::RichText::new("Target Framerate (FPS):").size(12.0).strong().color(Color32::WHITE));
+                                        ui.add_space(4.0);
+                                        ui.horizontal(|ui| {
+                                            ui.label(egui::RichText::new("Custom:").size(11.0).color(Color32::from_rgb(150, 150, 155)));
+                                            let edit_resp = ui.add(
+                                                egui::TextEdit::singleline(&mut self.fps_input_str)
+                                                    .desired_width(55.0)
+                                                    .font(FontId::monospace(11.5))
+                                            );
+                                            if edit_resp.changed()
+                                                && let Ok(parsed) = self.fps_input_str.trim().parse::<u32>()
+                                                    && (15..=360).contains(&parsed) {
+                                                        self.target_fps = parsed;
+                                                    }
+
+                                            ui.add_space(8.0);
+                                            for fps in [30, 60, 120, 144, 240] {
+                                                if squared_button(ui, &fps.to_string(), self.target_fps == fps, accent) {
+                                                    self.target_fps = fps;
+                                                    self.fps_input_str = fps.to_string();
+                                                }
+                                            }
+                                        });
+
+                                        ui.add_space(8.0);
+
+                                        ui.label(egui::RichText::new("Video Bitrate:").size(12.0).strong().color(Color32::WHITE));
+                                        ui.add_space(4.0);
+                                        ui.horizontal(|ui| {
+                                            ui.label(egui::RichText::new("Custom:").size(11.0).color(Color32::from_rgb(150, 150, 155)));
+                                            let edit_resp = ui.add(
+                                                egui::TextEdit::singleline(&mut self.bitrate_input_str)
+                                                    .desired_width(55.0)
+                                                    .font(FontId::monospace(11.5))
+                                            );
+                                            if edit_resp.changed()
+                                                && let Ok(parsed) = self.bitrate_input_str.trim().parse::<u32>()
+                                                    && (1..=300).contains(&parsed) {
+                                                        self.bitrate_mbps = parsed;
+                                                    }
+                                            ui.label(egui::RichText::new("Mbps").size(10.5).color(Color32::from_rgb(150, 150, 155)));
+
+                                            ui.add_space(8.0);
+                                            for mbps in [10, 20, 35, 50, 80] {
+                                                if squared_button(ui, &format!("{}M", mbps), self.bitrate_mbps == mbps, accent) {
+                                                    self.bitrate_mbps = mbps;
+                                                    self.bitrate_input_str = mbps.to_string();
+                                                }
+                                            }
+                                            ui.add_space(6.0);
+                                            let mut br = self.bitrate_mbps;
+                                            if ui.add(egui::Slider::new(&mut br, 5..=150).suffix(" Mbps").step_by(5.0)).changed() {
+                                                self.bitrate_mbps = br;
+                                                self.bitrate_input_str = br.to_string();
+                                            }
+                                        });
+
+                                        ui.add_space(8.0);
+
+                                        ui.label(egui::RichText::new("Encoder Codec:").size(12.0).strong().color(Color32::WHITE));
+                                        ui.add_space(4.0);
+                                        ui.horizontal(|ui| {
+                                            for (codec_key, label) in [("h264", "H.264"), ("hevc", "HEVC / H.265"), ("av1", "AV1")] {
+                                                if squared_button(ui, label, self.video_codec == codec_key, accent) {
+                                                    self.video_codec = codec_key.to_string();
+                                                }
+                                            }
+                                        });
+                                    });
+
+                                    ui.add_space(10.0);
+
+                                    render_section_card(ui, "AUDIO CONFIGURATION", accent, |ui| {
+                                        ui.label(egui::RichText::new("Audio Source:").size(12.0).strong().color(Color32::WHITE));
+                                        ui.add_space(4.0);
+                                        ui.horizontal(|ui| {
+                                            let modes = [("system", "System"), ("mic", "Microphone"), ("both", "Both"), ("muted", "Muted")];
+                                            for (idx, (_, m_label)) in modes.iter().enumerate() {
+                                                if squared_button(ui, m_label, self.audio_mode_idx == idx, accent) {
+                                                    self.audio_mode_idx = idx;
+                                                }
+                                            }
+                                        });
+
+                                        ui.add_space(8.0);
+
+                                        ui.horizontal(|ui| {
+                                            ui.label(egui::RichText::new("Mic Vol:").size(12.0).strong().color(Color32::WHITE));
+                                            let mut mv = self.mic_volume_pct;
+                                            if ui.add(egui::Slider::new(&mut mv, 0..=200).suffix("%")).changed() {
+                                                self.mic_volume_pct = mv;
+                                            }
+                                            ui.add_space(6.0);
+                                            render_vu_meter(ui, self.mic_vu, 65.0, 18.0, "MIC");
+                                        });
+
+                                        ui.add_space(8.0);
+
+                                        ui.horizontal(|ui| {
+                                            ui.label(egui::RichText::new("Sys Vol:").size(12.0).strong().color(Color32::WHITE));
+                                            let mut sv = self.system_volume_pct;
+                                            if ui.add(egui::Slider::new(&mut sv, 0..=200).suffix("%")).changed() {
+                                                self.system_volume_pct = sv;
+                                            }
+                                            ui.add_space(6.0);
+                                            render_vu_meter(ui, self.sys_vu, 65.0, 18.0, "SYS");
+                                        });
+                                    });
+
+                                    ui.add_space(10.0);
+
+                                    render_section_card(ui, "STORAGE & SAVED RECORDINGS", accent, |ui| {
+                                        ui.label(egui::RichText::new("Save Folder:").size(12.0).strong().color(Color32::WHITE));
+                                        ui.add_space(3.0);
+                                        ui.horizontal(|ui| {
+                                            ui.add(egui::TextEdit::singleline(&mut self.output_dir).desired_width(340.0));
+                                            if squared_button(ui, "Change", false, accent) {
+                                                pick_folder(&self.output_dir, self.folder_tx.clone(), self.folder_picking_active.clone());
+                                            }
+                                            if squared_button(ui, "Open", false, accent) {
+                                                open_folder(&ScytheConfig::expand_tilde(&self.output_dir));
+                                            }
+                                        });
+                                    });
+                                }
+                                ShadowPlayView::StreamSettings => {
+                                    // Livestream settings
+                                    render_section_card(ui, "STREAM DESTINATION & CREDENTIALS", accent, |ui| {
+                                        ui.label(egui::RichText::new("Streaming Service:").size(12.0).strong().color(Color32::WHITE));
+                                        ui.add_space(4.0);
+                                        ui.horizontal(|ui| {
+                                            let services = ["Twitch", "YouTube", "Custom RTMP"];
+                                            for (idx, serv) in services.iter().enumerate() {
+                                                if squared_button(ui, serv, self.stream_service_idx == idx, accent) {
+                                                    self.stream_service_idx = idx;
+                                                    self.stream_url = match idx {
+                                                        0 => "rtmp://live.twitch.tv/app/".to_string(),
+                                                        1 => "rtmp://a.rtmp.youtube.com/live2".to_string(),
+                                                        _ => self.stream_url.clone(),
+                                                    };
+                                                }
+                                            }
+                                        });
+
+                                        ui.add_space(8.0);
+                                        ui.separator();
+                                        ui.add_space(8.0);
+
+                                        ui.label(egui::RichText::new("Server URL:").size(12.0).strong().color(Color32::WHITE));
+                                        ui.add_space(3.0);
+                                        ui.add(egui::TextEdit::singleline(&mut self.stream_url).desired_width(420.0));
+
+                                        ui.add_space(8.0);
+
+                                        ui.label(egui::RichText::new("Stream Key:").size(12.0).strong().color(Color32::WHITE));
+                                        ui.add_space(3.0);
+                                        ui.add(egui::TextEdit::singleline(&mut self.stream_key).password(true).desired_width(420.0));
+                                    });
+
+                                    ui.add_space(10.0);
+
+                                    render_section_card(ui, "STREAM VIDEO QUALITY", accent, |ui| {
+                                        ui.label(egui::RichText::new("Target Framerate:").size(12.0).strong().color(Color32::WHITE));
+                                        ui.add_space(4.0);
+                                        ui.horizontal(|ui| {
+                                            for fps in [30, 60] {
+                                                if squared_button(ui, &format!("{} FPS", fps), self.target_fps == fps, accent) {
+                                                    self.target_fps = fps;
+                                                    self.fps_input_str = fps.to_string();
+                                                }
+                                            }
+                                        });
+
+                                        ui.add_space(8.0);
+
+                                        ui.label(egui::RichText::new("Video Bitrate (Kbps):").size(12.0).strong().color(Color32::WHITE));
+                                        ui.add_space(4.0);
+                                        ui.horizontal(|ui| {
+                                            for kbps in [3000, 4500, 6000, 8000] {
+                                                let mbps = kbps / 1000;
+                                                if squared_button(ui, &format!("{}K", kbps), self.bitrate_mbps == mbps, accent) {
+                                                    self.bitrate_mbps = mbps;
+                                                    self.bitrate_input_str = mbps.to_string();
+                                                }
+                                            }
+                                        });
+                                    });
+                                }
+                                ShadowPlayView::GlobalSettings => {
+                                    // 1. System & Startup
+                                    render_section_card(ui, "SYSTEM & STARTUP", accent, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.vertical(|ui| {
+                                                ui.label(egui::RichText::new("Autostart Instant Replay").size(12.5).strong().color(Color32::WHITE));
+                                                ui.label(egui::RichText::new("Automatically launch the background recording engine on login.").size(10.5).color(Color32::from_rgb(150, 150, 155)));
+                                            });
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                let mut ar = self.autostart_replay;
+                                                if toggle_switch(ui, &mut ar, accent).changed() {
+                                                    self.autostart_replay = ar;
+                                                    self.config.autostart_replay = ar;
+                                                    self.config.autostart = ar;
+                                                    let _ = self.config.save();
+                                                    if ar {
+                                                        spawn_daemon_process();
+                                                    }
+                                                    self.show_hud_notification(
+                                                        "AUTOSTART REPLAY",
+                                                        if ar { "Enabled: Starts on login" } else { "Disabled" },
+                                                        crate::overlay::ToastIcon::Info,
+                                                    );
+                                                }
+                                            });
+                                        });
+
+                                        ui.add_space(8.0);
+                                        ui.separator();
+                                        ui.add_space(8.0);
+
+                                        ui.horizontal(|ui| {
+                                            ui.vertical(|ui| {
+                                                ui.label(egui::RichText::new("Autostart HUD Overlay").size(12.5).strong().color(Color32::WHITE));
+                                                ui.label(egui::RichText::new("Automatically open the HUD overlay menu when logging into desktop.").size(10.5).color(Color32::from_rgb(150, 150, 155)));
+                                            });
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                let mut ao = self.autostart_overlay;
+                                                if toggle_switch(ui, &mut ao, accent).changed() {
+                                                    self.autostart_overlay = ao;
+                                                    self.config.autostart_overlay = ao;
+                                                    let _ = self.config.save();
+                                                    self.show_hud_notification(
+                                                        "AUTOSTART OVERLAY",
+                                                        if ao { "Enabled: Opens on login" } else { "Disabled" },
+                                                        crate::overlay::ToastIcon::Info,
+                                                    );
+                                                }
+                                            });
+                                        });
+                                    });
+
+                                    ui.add_space(10.0);
+
+                                    // 2. Keyboard Shortcuts
+                                    render_section_card(ui, "KEYBOARD SHORTCUTS (CLICK TO REBIND)", accent, |ui| {
+                                        let binds = [
+                                            (KeybindAction::Menu, "Menu Overlay", &self.config.menu_hotkey),
+                                            (KeybindAction::SaveReplay, "Save Instant Replay", &self.config.save_hotkey),
+                                            (KeybindAction::ToggleRecord, "Start / Stop Record", &self.config.record_hotkey),
+                                            (KeybindAction::ToggleCursor, "Toggle Mouse Cursor", &self.config.cursor_hotkey),
+                                        ];
+
+                                        for (action, label, current_hotkey) in binds {
+                                            let is_listening = self.listening_keybind == Some(action);
+                                            ui.horizontal(|ui| {
+                                                ui.label(
+                                                    egui::RichText::new(label)
+                                                        .size(12.0)
+                                                        .color(if is_listening { accent } else { Color32::from_rgb(203, 213, 225) }),
+                                                );
+
+                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                    if render_keycap_button(ui, current_hotkey, is_listening, accent) {
+                                                        if is_listening {
+                                                            self.listening_keybind = None;
+                                                        } else {
+                                                            self.listening_keybind = Some(action);
+                                                        }
+                                                    }
+                                                });
+                                            });
+                                            ui.add_space(6.0);
                                         }
-                                        crate::updater::UpdateStatus::Failed(err) => {
+
+                                        if self.listening_keybind.is_some() {
+                                            ui.add_space(4.0);
                                             ui.label(
-                                                egui::RichText::new(format!("Offline or error: {}", err))
+                                                egui::RichText::new("Listening... Press desired key combination or Esc to cancel.")
                                                     .size(11.0)
-                                                    .color(Color32::from_rgb(239, 68, 68)),
+                                                    .strong()
+                                                    .color(accent),
                                             );
-                                            ui.add_space(6.0);
-                                            if squared_button(ui, "Retry", false, accent) {
-                                                crate::updater::spawn_update_check(self.update_status.clone());
-                                            }
                                         }
-                                    }
-                                });
 
-                                ui.add_space(6.0);
-                                ui.checkbox(
-                                    &mut self.auto_check_updates,
-                                    egui::RichText::new("Automatically check for updates on startup")
-                                        .size(11.5)
-                                        .color(Color32::from_rgb(226, 232, 240)),
-                                );
-                            });
+                                        ui.add_space(4.0);
+                                        ui.horizontal(|ui| {
+                                            if squared_button(ui, "Reset Hotkeys to Defaults", false, accent) {
+                                                let old_menu = self.config.menu_hotkey.clone();
+                                                let old_save = self.config.save_hotkey.clone();
+                                                let old_rec = self.config.record_hotkey.clone();
+                                                let old_cur = self.config.cursor_hotkey.clone();
+                                                crate::hyprland_binds::unbind_hotkey_async(&old_menu);
+                                                crate::hyprland_binds::unbind_hotkey_async(&old_save);
+                                                crate::hyprland_binds::unbind_hotkey_async(&old_rec);
+                                                crate::hyprland_binds::unbind_hotkey_async(&old_cur);
+                                                self.config.menu_hotkey = "Alt+Z".to_string();
+                                                self.config.save_hotkey = "Ctrl+Shift+R".to_string();
+                                                self.config.record_hotkey = "Ctrl+Shift+F9".to_string();
+                                                self.config.cursor_hotkey = "Ctrl+Shift+F10".to_string();
+                                                let _ = self.config.save();
+                                                crate::hyprland_binds::register_hyprland_binds_async(&self.config);
+                                                crate::config::ScytheConfig::notify_daemon_reload();
+                                                self.show_hud_notification("KEYBINDS", "Restored default hotkeys", crate::overlay::ToastIcon::Info);
+                                            }
+                                        });
+                                    });
 
-                            ui.add_space(14.0);
+                                    ui.add_space(10.0);
 
-                            // BOTTOM ACTIONS (RESET DEFAULTS + APPLY & SAVE)
-                            ui.horizontal(|ui| {
-                                let reset_btn = egui::Button::new(
-                                    egui::RichText::new("RESET DEFAULTS")
-                                        .font(FontId::proportional(11.5))
-                                        .color(Color32::from_rgb(180, 180, 190)),
-                                )
-                                .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 14))
-                                .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 28)))
-                                .corner_radius(CornerRadius::ZERO)
-                                .min_size(Vec2::new(135.0, 38.0));
+                                    // 3. Accent Color Theme
+                                    render_section_card(ui, "ACCENT COLOR THEME", accent, |ui| {
+                                        ui.label(egui::RichText::new("Select Interface Accent Color:").size(12.0).strong().color(Color32::WHITE));
+                                        ui.add_space(6.0);
+                                        ui.horizontal_wrapped(|ui| {
+                                            let palettes = [
+                                                ("amd", "AMD Radeon Red", Color32::from_rgb(221, 0, 49)),
+                                                ("nvidia", "Nvidia GeForce Green", Color32::from_rgb(118, 185, 0)),
+                                                ("intel", "Intel Arc Blue", Color32::from_rgb(8, 109, 183)),
+                                                ("blue", "Charming Blue", Color32::from_rgb(56, 189, 248)),
+                                                ("green", "Emerald Green", Color32::from_rgb(34, 197, 94)),
+                                                ("yellow", "Solar Yellow", Color32::from_rgb(250, 204, 21)),
+                                                ("purple", "Royal Purple", Color32::from_rgb(168, 85, 247)),
+                                                ("pink", "Neon Pink", Color32::from_rgb(244, 63, 94)),
+                                            ];
 
-                                if ui.add(reset_btn).clicked() {
-                                    let def = ScytheConfig::default();
-                                    self.target_fps = def.fps;
-                                    self.fps_input_str = def.fps.to_string();
-                                    self.bitrate_mbps = def.record_bitrate_kbps / 1000;
-                                    self.bitrate_input_str = self.bitrate_mbps.to_string();
-                                    self.replay_sec = def.replay_duration_sec;
-                                    self.replay_sec_input_str = def.replay_duration_sec.to_string();
-                                    self.video_codec = def.video_codec;
-                                    self.show_cursor = def.show_cursor;
-                                    self.mic_volume_pct = (def.mic_volume * 100.0) as u32;
-                                    self.system_volume_pct = (def.system_volume * 100.0) as u32;
-                                    self.autostart_replay = def.autostart_replay;
-                                    self.autostart_overlay = def.autostart_overlay;
-                                    self.show_hud_notification("DEFAULTS", "Settings restored to defaults", crate::overlay::ToastIcon::Info);
+                                            for (id, name, col) in palettes {
+                                                let is_sel = self.config.accent_color.to_lowercase() == id;
+                                                let bg = if is_sel {
+                                                    Color32::from_rgba_unmultiplied(col.r(), col.g(), col.b(), 50)
+                                                } else {
+                                                    Color32::from_rgba_unmultiplied(col.r(), col.g(), col.b(), 16)
+                                                };
+                                                let stroke = Stroke::new(if is_sel { 2.0_f32 } else { 1.2_f32 }, col);
+
+                                                let btn = egui::Button::new(
+                                                    egui::RichText::new(name)
+                                                        .size(11.5)
+                                                        .strong()
+                                                        .color(if is_sel { Color32::WHITE } else { Color32::from_rgb(226, 232, 240) }),
+                                                )
+                                                .fill(bg)
+                                                .stroke(stroke)
+                                                .corner_radius(CornerRadius::ZERO)
+                                                .min_size(Vec2::new(140.0, 30.0));
+
+                                                if ui.add(btn).clicked() {
+                                                    self.config.accent_color = id.to_string();
+                                                    let _ = self.config.save();
+                                                    self.show_hud_notification("THEME ACCENT", &format!("Selected: {}", name), crate::overlay::ToastIcon::Info);
+                                                }
+                                            }
+                                        });
+                                    });
+
+                                    ui.add_space(10.0);
+
+                                    // 4. About & Auto-Updates
+                                    render_section_card(ui, "ABOUT & AUTO-UPDATES", accent, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.label(
+                                                egui::RichText::new(format!("Installed Version: v{}", crate::updater::CURRENT_VERSION))
+                                                    .size(12.0)
+                                                    .strong()
+                                                    .color(Color32::WHITE),
+                                            );
+                                            ui.add_space(10.0);
+
+                                            let cur_status = self.update_status.lock().ok().map(|g| g.clone()).unwrap_or_default();
+                                            match cur_status {
+                                                crate::updater::UpdateStatus::Idle => {
+                                                    if squared_button(ui, "Check for Updates", false, accent) {
+                                                        crate::updater::spawn_update_check(self.update_status.clone());
+                                                    }
+                                                }
+                                                crate::updater::UpdateStatus::Checking => {
+                                                    ui.label(
+                                                        egui::RichText::new("Checking for updates...")
+                                                            .size(11.5)
+                                                            .color(Color32::from_rgb(150, 150, 155)),
+                                                    );
+                                                }
+                                                crate::updater::UpdateStatus::UpToDate { version } => {
+                                                    ui.label(
+                                                        egui::RichText::new(format!("Up to date (v{})", version))
+                                                            .size(11.5)
+                                                            .color(Color32::from_rgb(34, 197, 94))
+                                                            .strong(),
+                                                    );
+                                                    ui.add_space(6.0);
+                                                    if squared_button(ui, "Check Again", false, accent) {
+                                                        crate::updater::spawn_update_check(self.update_status.clone());
+                                                    }
+                                                }
+                                                crate::updater::UpdateStatus::Available(info) => {
+                                                    ui.label(
+                                                        egui::RichText::new(format!("New version available: v{}", info.version))
+                                                            .size(11.5)
+                                                            .color(Color32::from_rgb(245, 158, 11))
+                                                            .strong(),
+                                                    );
+                                                    ui.add_space(6.0);
+                                                    if squared_button(ui, "VIEW RELEASE / DOWNLOAD", true, accent) {
+                                                        crate::updater::open_browser_url(&info.html_url);
+                                                    }
+                                                }
+                                                crate::updater::UpdateStatus::Failed(err) => {
+                                                    ui.label(
+                                                        egui::RichText::new(format!("Offline or error: {}", err))
+                                                            .size(11.0)
+                                                            .color(Color32::from_rgb(239, 68, 68)),
+                                                    );
+                                                    ui.add_space(6.0);
+                                                    if squared_button(ui, "Retry", false, accent) {
+                                                        crate::updater::spawn_update_check(self.update_status.clone());
+                                                    }
+                                                }
+                                            }
+                                        });
+
+                                        ui.add_space(6.0);
+                                        ui.checkbox(
+                                            &mut self.auto_check_updates,
+                                            egui::RichText::new("Automatically check for updates on startup")
+                                                .size(11.5)
+                                                .color(Color32::from_rgb(226, 232, 240)),
+                                        );
+                                    });
                                 }
+                                ShadowPlayView::ScreenshotSettings => {
+                                    render_section_card(ui, "SCREENSHOT STORAGE", accent, |ui| {
+                                        ui.label(egui::RichText::new("Save Folder:").size(12.0).strong().color(Color32::WHITE));
+                                        ui.add_space(3.0);
+                                        ui.horizontal(|ui| {
+                                            ui.add(egui::TextEdit::singleline(&mut self.output_dir).desired_width(340.0));
+                                            if squared_button(ui, "Change", false, accent) {
+                                                pick_folder(&self.output_dir, self.folder_tx.clone(), self.folder_picking_active.clone());
+                                            }
+                                            if squared_button(ui, "Open", false, accent) {
+                                                open_folder(&ScytheConfig::expand_tilde(&self.output_dir));
+                                            }
+                                        });
+                                    });
 
-                                ui.add_space(8.0);
+                                    ui.add_space(10.0);
 
-                                let apply_btn = egui::Button::new(
-                                    egui::RichText::new("APPLY & SAVE SETTINGS")
-                                        .font(FontId::proportional(12.5))
-                                        .strong()
-                                        .color(Color32::from_rgb(11, 18, 4)),
-                                )
-                                .fill(accent)
-                                .stroke(Stroke::NONE)
-                                .corner_radius(CornerRadius::ZERO)
-                                .min_size(Vec2::new(ui.available_width(), 38.0));
-
-                                if ui.add(apply_btn).clicked() {
-                                    self.config.show_cursor = self.show_cursor;
-                                    self.config.fps = self.target_fps;
-                                    self.config.record_bitrate_kbps = self.bitrate_mbps * 1000;
-                                    self.config.replay_bitrate_kbps = self.bitrate_mbps * 1000;
-                                    self.config.video_codec = self.video_codec.clone();
-                                    self.config.replay_duration_sec = self.replay_sec;
-                                    self.config.output_directory = self.output_dir.clone();
-                                    self.config.mic_volume = self.mic_volume_pct as f32 / 100.0;
-                                    self.config.system_volume = self.system_volume_pct as f32 / 100.0;
-                                    self.config.audio_mode = match self.audio_mode_idx {
-                                        1 => "mic".to_string(),
-                                        2 => "both".to_string(),
-                                        3 => "muted".to_string(),
-                                        _ => "system".to_string(),
-                                    };
-                                    self.config.auto_check_updates = self.auto_check_updates;
-                                    self.config.autostart_replay = self.autostart_replay;
-                                    self.config.autostart_overlay = self.autostart_overlay;
-                                    self.config.autostart = self.autostart_replay;
-                                    let _ = self.config.save();
-                                    crate::hyprland_binds::register_hyprland_binds(&self.config);
-                                    crate::config::ScytheConfig::notify_daemon_reload();
-                                    self.show_hud_notification("SETTINGS", "Settings Saved & Applied!", crate::overlay::ToastIcon::Info);
-                                    self.switch_view(ShadowPlayView::MainHud, ctx);
+                                    render_section_card(ui, "SCREENSHOT OPTIONS", accent, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.label(egui::RichText::new("Image Format:").size(12.0).strong().color(Color32::WHITE));
+                                            ui.label(egui::RichText::new("PNG (Lossless)").size(11.5).color(accent).strong());
+                                        });
+                                        ui.add_space(6.0);
+                                        ui.horizontal(|ui| {
+                                            ui.label(egui::RichText::new("Capture Mouse Cursor").size(12.0).strong().color(Color32::WHITE));
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                let mut cur = self.show_cursor;
+                                                if toggle_switch(ui, &mut cur, accent).changed() {
+                                                    self.show_cursor = cur;
+                                                    self.config.show_cursor = cur;
+                                                    let _ = self.config.save();
+                                                }
+                                            });
+                                        });
+                                    });
                                 }
-                            });
+                                _ => {}
+                            }
                         });
+
+                    ui.add_space(10.0);
+
+                    // BOTTOM ACTIONS (RESET DEFAULTS + APPLY & SAVE)
+                    ui.horizontal(|ui| {
+                        let reset_btn = egui::Button::new(
+                            egui::RichText::new("RESET DEFAULTS")
+                                .font(FontId::proportional(11.5))
+                                .color(Color32::from_rgb(180, 180, 190)),
+                        )
+                        .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 14))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 28)))
+                        .corner_radius(CornerRadius::ZERO)
+                        .min_size(Vec2::new(135.0, 36.0));
+
+                        if ui.add(reset_btn).clicked() {
+                            let def = ScytheConfig::default();
+                            self.target_fps = def.fps;
+                            self.fps_input_str = def.fps.to_string();
+                            self.bitrate_mbps = def.record_bitrate_kbps / 1000;
+                            self.bitrate_input_str = self.bitrate_mbps.to_string();
+                            self.replay_sec = def.replay_duration_sec;
+                            self.replay_sec_input_str = def.replay_duration_sec.to_string();
+                            self.video_codec = def.video_codec;
+                            self.show_cursor = def.show_cursor;
+                            self.mic_volume_pct = (def.mic_volume * 100.0) as u32;
+                            self.system_volume_pct = (def.system_volume * 100.0) as u32;
+                            self.autostart_replay = def.autostart_replay;
+                            self.autostart_overlay = def.autostart_overlay;
+                            self.show_hud_notification("DEFAULTS", "Settings restored to defaults", crate::overlay::ToastIcon::Info);
+                        }
+
+                        ui.add_space(8.0);
+
+                        let apply_btn = egui::Button::new(
+                            egui::RichText::new("APPLY & SAVE SETTINGS")
+                                .font(FontId::proportional(12.5))
+                                .strong()
+                                .color(Color32::from_rgb(11, 18, 4)),
+                        )
+                        .fill(accent)
+                        .stroke(Stroke::NONE)
+                        .corner_radius(CornerRadius::ZERO)
+                        .min_size(Vec2::new(ui.available_width(), 36.0));
+
+                        if ui.add(apply_btn).clicked() {
+                            self.config.show_cursor = self.show_cursor;
+                            self.config.fps = self.target_fps;
+                            self.config.record_bitrate_kbps = self.bitrate_mbps * 1000;
+                            self.config.replay_bitrate_kbps = self.bitrate_mbps * 1000;
+                            self.config.video_codec = self.video_codec.clone();
+                            self.config.replay_duration_sec = self.replay_sec;
+                            self.config.output_directory = self.output_dir.clone();
+                            self.config.mic_volume = self.mic_volume_pct as f32 / 100.0;
+                            self.config.system_volume = self.system_volume_pct as f32 / 100.0;
+                            self.config.audio_mode = match self.audio_mode_idx {
+                                1 => "mic".to_string(),
+                                2 => "both".to_string(),
+                                3 => "muted".to_string(),
+                                _ => "system".to_string(),
+                            };
+                            self.config.auto_check_updates = self.auto_check_updates;
+                            self.config.autostart_replay = self.autostart_replay;
+                            self.config.autostart_overlay = self.autostart_overlay;
+                            self.config.autostart = self.autostart_replay;
+                            let _ = self.config.save();
+                            crate::hyprland_binds::register_hyprland_binds(&self.config);
+                            crate::config::ScytheConfig::notify_daemon_reload();
+                            self.show_hud_notification("SETTINGS", "Settings Saved & Applied!", crate::overlay::ToastIcon::Info);
+                            self.switch_view(ShadowPlayView::MainHud, ctx);
+                        }
+                    });
                 });
         });
     }
@@ -1924,7 +2366,7 @@ impl ScytheOverlayApp {
                         .corner_radius(CornerRadius::ZERO);
 
                         if ui.add(back_btn).clicked() {
-                            self.switch_view(ShadowPlayView::Settings, ctx);
+                            self.switch_view(ShadowPlayView::MainHud, ctx);
                             return;
                         }
 
@@ -2323,6 +2765,15 @@ impl ScytheOverlayApp {
                         painter.line_segment([icon_center + Vec2::new(-5.0, -5.0), icon_center + Vec2::new(5.0, 5.0)], stroke);
                         painter.line_segment([icon_center + Vec2::new(5.0, -5.0), icon_center + Vec2::new(-5.0, 5.0)], stroke);
                     }
+                    crate::overlay::ToastIcon::Screenshot => {
+                        let half_w = 7.0;
+                        let half_h = 5.0;
+                        let rect = egui::Rect::from_center_size(icon_center + Vec2::new(0.0, 1.0), Vec2::new(half_w * 2.0, half_h * 2.0));
+                        painter.rect_stroke(rect, CornerRadius::ZERO, Stroke::new(1.8_f32, icon_tint), egui::StrokeKind::Inside);
+                        painter.circle_stroke(icon_center + Vec2::new(0.0, 1.0), 2.5, Stroke::new(1.6_f32, icon_tint));
+                        let notch = egui::Rect::from_min_size(icon_center + Vec2::new(-3.5, -half_h - 1.5), Vec2::new(4.0, 2.5));
+                        painter.rect_filled(notch, CornerRadius::ZERO, icon_tint);
+                    }
                     crate::overlay::ToastIcon::Info => {
                         painter.circle_filled(icon_center, 4.5, icon_tint);
                     }
@@ -2357,6 +2808,7 @@ impl eframe::App for ScytheOverlayApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.ensure_textures(ctx);
         self.poll_async_events();
         self.mic_vu = (self.mic_vu * 0.94).max(0.0);
         self.sys_vu = (self.sys_vu * 0.94).max(0.0);
@@ -2454,9 +2906,12 @@ impl eframe::App for ScytheOverlayApp {
         } else {
             // Normal Escape handling
             if !self.folder_picking_active.load(Ordering::SeqCst) && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-                if self.replay_dropdown_open || self.record_dropdown_open {
+                if self.replay_dropdown_open || self.record_dropdown_open || self.stream_dropdown_open {
                     self.replay_dropdown_open = false;
                     self.record_dropdown_open = false;
+                    self.stream_dropdown_open = false;
+                } else if self.current_view != ShadowPlayView::MainHud {
+                    self.switch_view(ShadowPlayView::MainHud, ctx);
                 } else {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     crate::ipc::clean_overlay_pid();
@@ -2468,9 +2923,12 @@ impl eframe::App for ScytheOverlayApp {
             if !self.folder_picking_active.load(Ordering::SeqCst) && ctx.input(|i| i.pointer.primary_clicked())
                 && let Some(pos) = ctx.input(|i| i.pointer.interact_pos())
                     && self.panel_rect.width() > 10.0 && !self.panel_rect.expand(6.0).contains(pos) {
-                        if self.replay_dropdown_open || self.record_dropdown_open {
+                        if self.replay_dropdown_open || self.record_dropdown_open || self.stream_dropdown_open {
                             self.replay_dropdown_open = false;
                             self.record_dropdown_open = false;
+                            self.stream_dropdown_open = false;
+                        } else if self.current_view != ShadowPlayView::MainHud {
+                            self.switch_view(ShadowPlayView::MainHud, ctx);
                         } else {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                             crate::ipc::clean_overlay_pid();
@@ -2494,9 +2952,14 @@ impl eframe::App for ScytheOverlayApp {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(Color32::from_rgba_unmultiplied(0, 0, 0, 80)))
             .show(ctx, |ui| {
+                self.render_top_bar(ctx, ui);
                 match self.current_view {
                     ShadowPlayView::MainHud => self.render_main_hud(ctx, ui),
-                    ShadowPlayView::Settings => self.render_settings_view(ctx, ui),
+                    ShadowPlayView::ReplaySettings
+                    | ShadowPlayView::RecordSettings
+                    | ShadowPlayView::StreamSettings
+                    | ShadowPlayView::GlobalSettings
+                    | ShadowPlayView::ScreenshotSettings => self.render_settings_view(ctx, ui),
                     ShadowPlayView::Gallery => self.render_gallery_view(ctx, ui),
                 }
                 self.render_slide_notification(ctx, ui);
@@ -2896,6 +3359,15 @@ impl eframe::App for ShadowPlayToastApp {
                         let stroke = Stroke::new(2.0_f32, icon_tint);
                         painter.line_segment([icon_center + Vec2::new(-5.0, -5.0), icon_center + Vec2::new(5.0, 5.0)], stroke);
                         painter.line_segment([icon_center + Vec2::new(5.0, -5.0), icon_center + Vec2::new(-5.0, 5.0)], stroke);
+                    }
+                    crate::overlay::ToastIcon::Screenshot => {
+                        let half_w = 7.0;
+                        let half_h = 5.0;
+                        let rect = egui::Rect::from_center_size(icon_center + Vec2::new(0.0, 1.0), Vec2::new(half_w * 2.0, half_h * 2.0));
+                        painter.rect_stroke(rect, CornerRadius::ZERO, Stroke::new(1.8_f32, icon_tint), egui::StrokeKind::Inside);
+                        painter.circle_stroke(icon_center + Vec2::new(0.0, 1.0), 2.5, Stroke::new(1.6_f32, icon_tint));
+                        let notch = egui::Rect::from_min_size(icon_center + Vec2::new(-3.5, -half_h - 1.5), Vec2::new(4.0, 2.5));
+                        painter.rect_filled(notch, CornerRadius::ZERO, icon_tint);
                     }
                     crate::overlay::ToastIcon::Info => {
                         painter.circle_filled(icon_center, 4.5, icon_tint);

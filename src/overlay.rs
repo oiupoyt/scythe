@@ -21,6 +21,7 @@ pub enum ToastIcon {
     Cursor,
     Info,
     Error,
+    Screenshot,
 }
 
 impl ToastIcon {
@@ -30,6 +31,7 @@ impl ToastIcon {
             "record" | "recording" | "start" => ToastIcon::Record,
             "save" | "saved" | "stop" => ToastIcon::Save,
             "cursor" => ToastIcon::Cursor,
+            "screenshot" => ToastIcon::Screenshot,
             "error" => ToastIcon::Error,
             _ => ToastIcon::Info,
         }
@@ -42,6 +44,7 @@ pub fn spawn_toast(title: &str, subtitle: &str, icon: ToastIcon) {
         ToastIcon::Record => "record",
         ToastIcon::Save => "save",
         ToastIcon::Cursor => "cursor",
+        ToastIcon::Screenshot => "screenshot",
         ToastIcon::Error => "error",
         ToastIcon::Info => "info",
     };
@@ -477,6 +480,18 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
                         cr.move_to(cx + 5.0, cy - 5.0);
                         cr.line_to(cx - 5.0, cy + 5.0);
                         let _ = cr.stroke();
+                    }
+                    ToastIcon::Screenshot => {
+                        cr.set_source_rgb(accent_rgb.0, accent_rgb.1, accent_rgb.2);
+                        cr.set_line_width(1.8);
+                        cr.set_line_cap(gtk::cairo::LineCap::Round);
+                        cr.set_line_join(gtk::cairo::LineJoin::Round);
+                        cr.rectangle(cx - 7.0, cy - 4.5, 14.0, 10.0);
+                        let _ = cr.stroke();
+                        cr.arc(cx, cy + 0.5, 2.5, 0.0, PI * 2.0);
+                        let _ = cr.stroke();
+                        cr.rectangle(cx - 3.5, cy - 7.0, 4.0, 2.5);
+                        let _ = cr.fill();
                     }
                     ToastIcon::Info => {
                         cr.set_source_rgb(accent_rgb.0, accent_rgb.1, accent_rgb.2);
