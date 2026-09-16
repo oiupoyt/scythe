@@ -117,7 +117,10 @@ pub fn register_hyprland_binds(config: &ScytheConfig) {
             .args(["eval", r#"hl.layer_rule({ match = { namespace = "scythe-notification" }, blur = true, ignore_alpha = 0.1 })"#])
             .output();
         let _ = Command::new("hyprctl")
-            .args(["eval", r#"hl.window_rule({ match = { class = "scythe-overlay" }, float = true, pin = true, move = "0 0", size = "100% 100%" })"#])
+            .args(["eval", r#"hl.window_rule({ match = { class = "^(scythe-overlay)$" }, float = true, pin = true, move = {"0", "0"}, size = {"100%", "100%"}, no_anim = true })"#])
+            .output();
+        let _ = Command::new("hyprctl")
+            .args(["eval", r#"hl.window_rule({ match = { class = "^(scythe-toast)$" }, float = true, pin = true, move = {"(monitor_w-340)", "16"}, no_anim = true })"#])
             .output();
         let _ = Command::new("hyprctl")
             .args(["eval", r#"hl.window_rule({ match = { title = "Select Recordings Directory" }, float = true, pin = true, stay_focused = true, center = true })"#])
