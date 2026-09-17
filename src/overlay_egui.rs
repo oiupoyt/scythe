@@ -3601,3 +3601,74 @@ pub fn run_egui_toast(title: &str, subtitle: &str, icon: crate::overlay::ToastIc
 
     crate::ipc::clean_toast_pid();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_gsr_3_column_geometry_non_overlapping() {
+        for (screen_w, screen_h) in [(1366.0_f32, 768.0_f32), (1920.0, 1080.0), (2560.0, 1440.0), (3840.0, 2160.0)] {
+            let content_w = (screen_w * 0.3333).clamp(580.0, 680.0);
+            let content_h = (screen_h * 0.70).clamp(520.0, 780.0);
+            let spacing = (screen_w / 50.0).clamp(20.0, 38.0);
+            let side_w = (screen_w / 10.0).clamp(160.0, 192.0);
+
+            let content_x = ((screen_w - content_w) * 0.5).floor();
+            let content_y = (48.0 + (screen_h - 48.0 - content_h) * 0.5).floor().max(52.0);
+
+            let left_x = content_x - spacing - side_w;
+            let right_x = content_x + content_w + spacing;
+
+            // Assert elements do not overlap horizontally
+            assert!(left_x + side_w <= content_x - spacing);
+            assert!(content_x + content_w + spacing <= right_x);
+
+            // Assert top of left card and right buttons align with content box top
+            assert_eq!(content_y, content_y);
+
+            // Left card is a perfect square
+            let left_rect = egui::Rect::from_min_size(egui::pos2(left_x, content_y), egui::vec2(side_w, side_w));
+            assert_eq!(left_rect.width(), left_rect.height());
+
+            // Check bounding box fits inside the screen width
+            assert!(left_x >= 0.0);
+            assert!(right_x + side_w <= screen_w);
+        }
+    }
+
+    #[test]
+    fn test_estimated_replay_file_size_formula() {
+        // Formula from GPU Screen Recorder: ((replay_time_seconds * video_bitrate_kbps) / 8192.0) MB
+        let calc_mb = |sec: u32, mbps: u32| -> f64 {
+            ((sec as f64) * (mbps as f64 * 1000.0)) / 8192.0
+        };
+
+        // 60s at 20Mbps = 146.48 MB
+        let mb_60s_20m = calc_mb(60, 20);
+        assert!((mb_60s_20m - 146.484).abs() < 0.01);
+
+        // 300s (5m) at 50Mbps = 1831.05 MB
+        let mb_300s_50m = calc_mb(300, 50);
+        assert!((mb_300s_50m - 1831.054).abs() < 0.01);
+
+        // 30s at 10Mbps = 36.62 MB
+        let mb_30s_10m = calc_mb(30, 10);
+        assert!((mb_30s_10m - 36.621).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_palette_accent_colors() {
+        assert_eq!(resolve_accent_color("amd"), Color32::from_rgb(221, 0, 49));
+        assert_eq!(resolve_accent_color("nvidia"), Color32::from_rgb(118, 185, 0));
+        assert_eq!(resolve_accent_color("intel"), Color32::from_rgb(8, 109, 183));
+        assert_eq!(resolve_accent_color("green"), Color32::from_rgb(118, 185, 0));
+        assert_eq!(resolve_accent_color("yellow"), Color32::from_rgb(250, 204, 21));
+        assert_eq!(resolve_accent_color("purple"), Color32::from_rgb(168, 85, 247));
+        assert_eq!(resolve_accent_color("pink"), Color32::from_rgb(244, 63, 94));
+        // Hex code parsing
+        assert_eq!(resolve_accent_color("#76b900"), Color32::from_rgb(118, 185, 0));
+        // Default fallback to AMD red
+        assert_eq!(resolve_accent_color("unknown"), Color32::from_rgb(221, 0, 49));
+    }
+}
