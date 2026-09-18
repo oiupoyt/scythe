@@ -461,6 +461,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut normal_muxer: Option<Muxer> = None;
         let mut normal_recording = false;
         let mut normal_waiting_keyframe = false;
+        let mut normal_keyframe_timeout: usize = 0;
+        let mut last_replay_save = std::time::Instant::now() - std::time::Duration::from_secs(10);
         let mut rec_base_video_pts: i64 = 0;
         let mut rec_base_audio_pts: i64 = -1;
 
@@ -648,12 +650,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                             },
                             Command::SaveReplay => {
                                 if config.replay_enabled {
-                                    let drain = ring.iter().cloned().collect::<Vec<_>>();
-                                    println!("SaveReplay triggered: {} packets in ring buffer", drain.len());
-                                    if drain.is_empty() {
-                                        eprintln!("Warning: Replay buffer is empty (no frames encoded yet).");
+                                    let now = std::time::Instant::now();
+                                    if now.duration_since(last_replay_save) > std::time::Duration::from_millis(800) {
+                                        last_replay_save = now;
+                                        let drain = ring.iter().cloned().collect::<Vec<_>>();
+                                        println!("SaveReplay triggered: {} packets in ring buffer", drain.len());
+                                        if drain.is_empty() {
+                                            eprintln!("Warning: Replay buffer is empty (no frames encoded yet).");
+                                        } else {
+                                            let _ = mux_tx.send(drain);
+                                        }
                                     } else {
-                                        let _ = mux_tx.send(drain);
+                                        println!("Ignoring duplicate SaveReplay command (debounced)");
                                     }
                                 } else {
                                     println!("SaveReplay requested but replay is disabled in daemon config.");
@@ -663,11 +671,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                 if !normal_recording {
                                     normal_recording = true;
                                     normal_waiting_keyframe = true;
+                                    normal_keyframe_timeout = 0;
+                                    encoder.force_keyframe();
                                     rec_state_clone.store(true, Ordering::SeqCst);
                                     rec_base_audio_pts = -1;
                                     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
                                     rec_start_clone.store(now, Ordering::SeqCst);
-                                    println!("StartRecording requested, waiting for keyframe...");
+                                    println!("StartRecording requested, forcing keyframe...");
                                 }
                             },
                             Command::StopRecording => {
@@ -677,6 +687,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                 }
                                 normal_recording = false;
                                 normal_waiting_keyframe = false;
+                                normal_keyframe_timeout = 0;
                                 rec_base_video_pts = 0;
                                 rec_base_audio_pts = -1;
                                 rec_state_clone.store(false, Ordering::SeqCst);
@@ -692,6 +703,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                     }
                                     normal_recording = false;
                                     normal_waiting_keyframe = false;
+                                    normal_keyframe_timeout = 0;
                                     rec_base_video_pts = 0;
                                     rec_base_audio_pts = -1;
                                     rec_state_clone.store(false, Ordering::SeqCst);
@@ -701,11 +713,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                 } else {
                                     normal_recording = true;
                                     normal_waiting_keyframe = true;
+                                    normal_keyframe_timeout = 0;
+                                    encoder.force_keyframe();
                                     rec_state_clone.store(true, Ordering::SeqCst);
                                     rec_base_audio_pts = -1;
                                     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
                                     rec_start_clone.store(now, Ordering::SeqCst);
-                                    println!("ToggleRecording: StartRecording requested, waiting for keyframe...");
+                                    println!("ToggleRecording: StartRecording requested, forcing keyframe...");
                                 }
                             },
                             Command::ToggleAudio => {
@@ -942,8 +956,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                             for mut pkt in packets {
                                 pkt.set_stream_index(0);
                                 if normal_recording {
-                                    if normal_waiting_keyframe && pkt.is_keyframe() {
+                                    if normal_waiting_keyframe && (pkt.is_keyframe() || normal_keyframe_timeout >= 20) {
                                         normal_waiting_keyframe = false;
+                                        normal_keyframe_timeout = 0;
                                         rec_base_video_pts = pkt.pts();
                                         rec_base_audio_pts = -1;
                                         let codec_ctx = codec_ctx_ptr as *mut ffmpeg_next::ffi::AVCodecContext;
@@ -952,6 +967,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                         let audio_codec_ctx = audio_codec_ctx_ptr.map(|p| p as *mut ffmpeg_next::ffi::AVCodecContext);
                                         normal_muxer = unsafe { Muxer::new(&full_path, codec_ctx, audio_codec_ctx).ok() };
                                         println!("Started normal recording to {}", full_path);
+                                    } else if normal_waiting_keyframe {
+                                        normal_keyframe_timeout += 1;
                                     }
                                     
                                     if !normal_waiting_keyframe

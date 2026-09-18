@@ -11,6 +11,7 @@ pub struct VaapiEncoder {
     staged_nv12: *mut AVFrame,
     hw_frame: *mut AVFrame,
     has_frame: bool,
+    pub force_idr: bool,
     #[cfg(unix)]
     dma_mmap_cache: HashMap<i32, (*mut libc::c_void, usize)>,
     #[cfg(unix)]
@@ -18,6 +19,10 @@ pub struct VaapiEncoder {
 }
 
 impl VaapiEncoder {
+    pub fn force_keyframe(&mut self) {
+        self.force_idr = true;
+    }
+
     pub fn new(width: u32, height: u32) -> Result<Self, String> {
         Self::new_with_params(width, height, 18_000, 60, "h264")
     }
@@ -180,6 +185,7 @@ impl VaapiEncoder {
                 staged_nv12,
                 hw_frame,
                 has_frame: false,
+                force_idr: false,
                 #[cfg(unix)]
                 dma_mmap_cache: HashMap::new(),
                 #[cfg(unix)]
@@ -203,6 +209,12 @@ impl VaapiEncoder {
             }
 
             (*self.hw_frame).pts = pts;
+            if self.force_idr {
+                (*self.hw_frame).pict_type = AVPictureType::AV_PICTURE_TYPE_I;
+                self.force_idr = false;
+            } else {
+                (*self.hw_frame).pict_type = AVPictureType::AV_PICTURE_TYPE_NONE;
+            }
 
             if avcodec_send_frame(self.codec_ctx, self.hw_frame) >= 0 {
                 let mut pkt = av_packet_alloc();
@@ -416,10 +428,15 @@ pub struct WindowsHwEncoder {
     sw_frame: *mut AVFrame,
     pub has_frame: bool,
     native_bgr: bool,
+    pub force_idr: bool,
 }
 
 #[cfg(target_os = "windows")]
 impl WindowsHwEncoder {
+    pub fn force_keyframe(&mut self) {
+        self.force_idr = true;
+    }
+
     pub fn new(width: u32, height: u32) -> Result<Self, String> {
         Self::new_with_params(width, height, 20_000, 60, "h264")
     }
@@ -580,6 +597,7 @@ impl WindowsHwEncoder {
                 sw_frame,
                 has_frame: false,
                 native_bgr: is_native_bgr,
+                force_idr: false,
             })
         }
     }
@@ -632,6 +650,12 @@ impl WindowsHwEncoder {
                     }
 
                     (*self.sw_frame).pts = pts;
+                    if self.force_idr {
+                        (*self.sw_frame).pict_type = AVPictureType::AV_PICTURE_TYPE_I;
+                        self.force_idr = false;
+                    } else {
+                        (*self.sw_frame).pict_type = AVPictureType::AV_PICTURE_TYPE_NONE;
+                    }
 
                     if avcodec_send_frame(self.codec_ctx, self.sw_frame) >= 0 {
                         let mut pkt = av_packet_alloc();
@@ -647,6 +671,12 @@ impl WindowsHwEncoder {
                 #[cfg(target_os = "windows")]
                 Frame::D3D11Texture { handle: _, .. } => {
                     (*self.sw_frame).pts = pts;
+                    if self.force_idr {
+                        (*self.sw_frame).pict_type = AVPictureType::AV_PICTURE_TYPE_I;
+                        self.force_idr = false;
+                    } else {
+                        (*self.sw_frame).pict_type = AVPictureType::AV_PICTURE_TYPE_NONE;
+                    }
 
                     if avcodec_send_frame(self.codec_ctx, self.sw_frame) >= 0 {
                         let mut pkt = av_packet_alloc();
@@ -676,6 +706,12 @@ impl WindowsHwEncoder {
                 return Ok(packets);
             }
             (*self.sw_frame).pts = pts;
+            if self.force_idr {
+                (*self.sw_frame).pict_type = AVPictureType::AV_PICTURE_TYPE_I;
+                self.force_idr = false;
+            } else {
+                (*self.sw_frame).pict_type = AVPictureType::AV_PICTURE_TYPE_NONE;
+            }
 
             if avcodec_send_frame(self.codec_ctx, self.sw_frame) >= 0 {
                 let mut pkt = av_packet_alloc();

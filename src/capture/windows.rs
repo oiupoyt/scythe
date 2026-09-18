@@ -15,7 +15,7 @@ use std::sync::Arc;
 pub struct WindowsCapture {
     device: ID3D11Device,
     context: ID3D11DeviceContext,
-    duplication: IDXGIOutputDuplication,
+    duplication: Option<IDXGIOutputDuplication>,
     staging_textures: [ID3D11Texture2D; 2],
     staging_idx: usize,
     has_staged_frame: bool,
@@ -94,7 +94,7 @@ impl WindowsCapture {
             let height = (desc.DesktopCoordinates.bottom - desc.DesktopCoordinates.top).unsigned_abs();
 
             // Initialize Desktop Duplication
-            let duplication = output1.DuplicateOutput(&device)?;
+            let duplication = output1.DuplicateOutput(&device).ok();
 
             // Allocate double-buffered CPU-accessible staging textures for asynchronous zero-stall GPU readback
             let staging_desc = D3D11_TEXTURE2D_DESC {
@@ -139,53 +139,81 @@ impl WindowsCapture {
 
     fn reinit_duplication(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         unsafe {
+            // Drop old duplication interface first to release COM reference
+            self.duplication = None;
+            self.has_staged_frame = false;
+            self.staging_idx = 0;
+
+            // Wait a moment for DWM compositor to release the previous duplication handle
+            std::thread::sleep(std::time::Duration::from_millis(30));
+
+            // Check if device was removed/lost
+            if self.device.GetDeviceRemovedReason().is_err() {
+                println!("D3D11 device removed or reset. Recreating device...");
+                if let Ok(new_cap) = WindowsCapture::new() {
+                    self.device = new_cap.device;
+                    self.context = new_cap.context;
+                    self.duplication = new_cap.duplication;
+                    self.staging_textures = new_cap.staging_textures;
+                    self.width = new_cap.width;
+                    self.height = new_cap.height;
+                    self.last_stride = new_cap.last_stride;
+                    self.buffer_pool.clear();
+                    return Ok(());
+                }
+            }
+
             let dxgi_device: IDXGIDevice = self.device.cast()?;
             let adapter = dxgi_device.GetAdapter()?;
             let mut o_idx = 0;
             while let Ok(output) = adapter.EnumOutputs(o_idx) {
                 if let Ok(output1) = output.cast::<IDXGIOutput1>() {
-                    if let Ok(dup) = output1.DuplicateOutput(&self.device) {
-                        self.duplication = dup;
-                        self.has_staged_frame = false;
-                        self.staging_idx = 0;
-                        if let Ok(desc) = output1.GetDesc() {
-                            let new_w = (desc.DesktopCoordinates.right - desc.DesktopCoordinates.left).unsigned_abs();
-                            let new_h = (desc.DesktopCoordinates.bottom - desc.DesktopCoordinates.top).unsigned_abs();
-                            if new_w != self.width || new_h != self.height {
-                                self.width = new_w;
-                                self.height = new_h;
-                                self.last_stride = new_w * 4;
-                                self.buffer_pool.clear();
-                                self.last_frame = None;
-                                let staging_desc = D3D11_TEXTURE2D_DESC {
-                                    Width: new_w,
-                                    Height: new_h,
-                                    MipLevels: 1,
-                                    ArraySize: 1,
-                                    Format: DXGI_FORMAT_B8G8R8A8_UNORM,
-                                    SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-                                    Usage: D3D11_USAGE_STAGING,
-                                    BindFlags: 0,
-                                    CPUAccessFlags: D3D11_CPU_ACCESS_READ.0 as u32,
-                                    MiscFlags: 0,
-                                };
-                                let mut tex0: Option<ID3D11Texture2D> = None;
-                                let mut tex1: Option<ID3D11Texture2D> = None;
-                                let ok0 = self.device.CreateTexture2D(&staging_desc, None, Some(&mut tex0)).is_ok();
-                                let ok1 = self.device.CreateTexture2D(&staging_desc, None, Some(&mut tex1)).is_ok();
-                                if ok0 && ok1 {
-                                    if let (Some(t0), Some(t1)) = (tex0, tex1) {
-                                        self.staging_textures = [t0, t1];
+                    match output1.DuplicateOutput(&self.device) {
+                        Ok(dup) => {
+                            self.duplication = Some(dup);
+                            if let Ok(desc) = output1.GetDesc() {
+                                let new_w = (desc.DesktopCoordinates.right - desc.DesktopCoordinates.left).unsigned_abs();
+                                let new_h = (desc.DesktopCoordinates.bottom - desc.DesktopCoordinates.top).unsigned_abs();
+                                if new_w != self.width || new_h != self.height {
+                                    self.width = new_w;
+                                    self.height = new_h;
+                                    self.last_stride = new_w * 4;
+                                    self.buffer_pool.clear();
+                                    self.last_frame = None;
+                                    let staging_desc = D3D11_TEXTURE2D_DESC {
+                                        Width: new_w,
+                                        Height: new_h,
+                                        MipLevels: 1,
+                                        ArraySize: 1,
+                                        Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                                        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                                        Usage: D3D11_USAGE_STAGING,
+                                        BindFlags: 0,
+                                        CPUAccessFlags: D3D11_CPU_ACCESS_READ.0 as u32,
+                                        MiscFlags: 0,
+                                    };
+                                    let mut tex0: Option<ID3D11Texture2D> = None;
+                                    let mut tex1: Option<ID3D11Texture2D> = None;
+                                    let ok0 = self.device.CreateTexture2D(&staging_desc, None, Some(&mut tex0)).is_ok();
+                                    let ok1 = self.device.CreateTexture2D(&staging_desc, None, Some(&mut tex1)).is_ok();
+                                    if ok0 && ok1 {
+                                        if let (Some(t0), Some(t1)) = (tex0, tex1) {
+                                            self.staging_textures = [t0, t1];
+                                        }
                                     }
                                 }
                             }
+                            println!("Successfully reinitialized Windows desktop duplication: {}x{}", self.width, self.height);
+                            return Ok(());
                         }
-                        return Ok(());
+                        Err(e) => {
+                            eprintln!("DuplicateOutput attempt on output {} failed: {:?}", o_idx, e);
+                        }
                     }
                 }
                 o_idx += 1;
             }
-            Err("Failed to reinitialize desktop duplication".into())
+            Err("Failed to reinitialize desktop duplication on any output".into())
         }
     }
 }
@@ -194,11 +222,36 @@ impl WindowsCapture {
 impl FrameSource for WindowsCapture {
     fn next_frame(&mut self) -> Result<Frame, Box<dyn std::error::Error + Send + Sync>> {
         unsafe {
+            if self.duplication.is_none() {
+                let _ = self.reinit_duplication();
+            }
+
+            let mut dup = match self.duplication.clone() {
+                Some(d) => d,
+                None => {
+                    if let Some(ref last) = self.last_frame {
+                        return Ok(Frame::Raw {
+                            width: self.width,
+                            height: self.height,
+                            stride: self.last_stride,
+                            data: Arc::clone(last),
+                        });
+                    } else {
+                        return Ok(Frame::Raw {
+                            width: self.width,
+                            height: self.height,
+                            stride: self.last_stride,
+                            data: Arc::new(vec![0u8; (self.last_stride * self.height) as usize]),
+                        });
+                    }
+                }
+            };
+
             let mut frame_info = DXGI_OUTDUPL_FRAME_INFO::default();
             let mut desktop_resource: Option<IDXGIResource> = None;
 
-            for _ in 0..10 {
-                match self.duplication.AcquireNextFrame(25, &mut frame_info, &mut desktop_resource) {
+            for _ in 0..4 {
+                match dup.AcquireNextFrame(8, &mut frame_info, &mut desktop_resource) {
                     Ok(()) => {
                         if let Some(resource) = desktop_resource {
                             let texture: ID3D11Texture2D = resource.cast()?;
@@ -210,7 +263,7 @@ impl FrameSource for WindowsCapture {
                             self.context.CopyResource(&self.staging_textures[write_idx], &texture);
                             
                             // Immediately release the desktop frame back to the DWM compositor
-                            let _ = self.duplication.ReleaseFrame();
+                            let _ = dup.ReleaseFrame();
 
                             // Use ping-pong texture:
                             // On first frame, read write_idx directly.
@@ -269,33 +322,32 @@ impl FrameSource for WindowsCapture {
                                 data: to_send,
                             });
                         }
-                        let _ = self.duplication.ReleaseFrame();
+                        let _ = dup.ReleaseFrame();
                     }
                     Err(e) if e.code() == DXGI_ERROR_WAIT_TIMEOUT => {
-                        // Desktop static / no new frame presented. Sleep briefly and wait.
-                        // Do NOT allocate duplicate frames!
-                        std::thread::sleep(std::time::Duration::from_millis(3));
-                        continue;
+                        // Desktop static / no new frame presented.
+                        break;
                     }
                     Err(e) if e.code() == DXGI_ERROR_ACCESS_LOST
                         || e.code() == DXGI_ERROR_ACCESS_DENIED
                         || e.code() == DXGI_ERROR_INVALID_CALL => {
-                        let _ = self.duplication.ReleaseFrame();
+                        let _ = dup.ReleaseFrame();
+                        drop(dup);
+                        self.duplication = None;
                         let _ = self.reinit_duplication();
-                        std::thread::sleep(std::time::Duration::from_millis(20));
-                        continue;
+                        break;
                     }
                     Err(e) => {
-                        let _ = self.duplication.ReleaseFrame();
+                        let _ = dup.ReleaseFrame();
+                        drop(dup);
+                        self.duplication = None;
                         let _ = self.reinit_duplication();
-                        std::thread::sleep(std::time::Duration::from_millis(16));
                         return Err(Box::new(e));
                     }
                 }
             }
 
-            // If desktop was completely idle across multiple iterations,
-            // return zero-copy reference to last frame so stream stays active without heap thrashing
+            // If desktop was completely idle or recovering, return last frame
             if let Some(ref last) = self.last_frame {
                 Ok(Frame::Raw {
                     width: self.width,

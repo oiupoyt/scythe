@@ -554,6 +554,10 @@ fn render_keycap_button(
 
 // Modern squared button matching GPU Screen Recorder Button styling
 fn squared_button(ui: &mut egui::Ui, text: &str, active: bool, accent: Color32) -> bool {
+    squared_button_sized(ui, text, active, accent, None)
+}
+
+fn squared_button_sized(ui: &mut egui::Ui, text: &str, active: bool, accent: Color32, min_size: Option<Vec2>) -> bool {
     let fill = if active {
         accent
     } else {
@@ -562,7 +566,7 @@ fn squared_button(ui: &mut egui::Ui, text: &str, active: bool, accent: Color32) 
     let stroke = if active {
         Stroke::new(1.0_f32, accent)
     } else {
-        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 20))
+        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 22))
     };
     let text_color = if active {
         if accent.r() as u16 + accent.g() as u16 + accent.b() as u16 > 400 {
@@ -573,10 +577,12 @@ fn squared_button(ui: &mut egui::Ui, text: &str, active: bool, accent: Color32) 
     } else {
         Color32::from_rgb(220, 220, 225)
     };
+    let sz = min_size.unwrap_or(Vec2::new(36.0, 26.0));
     let btn = egui::Button::new(egui::RichText::new(text).size(11.5).strong().color(text_color))
         .fill(fill)
         .stroke(stroke)
-        .corner_radius(CornerRadius::ZERO);
+        .corner_radius(CornerRadius::ZERO)
+        .min_size(sz);
     ui.add(btn).clicked()
 }
 
@@ -961,6 +967,7 @@ pub struct ScytheOverlayApp {
     autostart_replay: bool,
     autostart_overlay: bool,
     pub settings_view_advanced: bool,
+    last_content_h: f32,
     hud_notification: Option<HudNotification>,
 }
 
@@ -1084,6 +1091,7 @@ impl ScytheOverlayApp {
             autostart_replay,
             autostart_overlay,
             settings_view_advanced: false,
+            last_content_h: 520.0,
             hud_notification: None,
         }
     }
@@ -1221,6 +1229,7 @@ impl ScytheOverlayApp {
         self.replay_dropdown_open = false;
         self.record_dropdown_open = false;
         self.stream_dropdown_open = false;
+        self.last_content_h = 520.0;
     }
 
     fn render_top_bar(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
@@ -1613,7 +1622,8 @@ impl ScytheOverlayApp {
         // Exact GsrPage geometry formula from scratch/gsr-ui/src/gui/GsrPage.cpp:
         // content_page_size = (window_size * vec2(0.3333f, 0.70f)).floor();
         let content_w = (screen_w * 0.3333).clamp(580.0, 680.0);
-        let content_h = (screen_h * 0.70).clamp(520.0, 780.0);
+        let max_content_h = (screen_h * 0.72).clamp(460.0, 780.0);
+        let content_h = self.last_content_h.clamp(360.0, max_content_h);
         let spacing = (screen_w / 50.0).clamp(20.0, 38.0);
         let side_w = (screen_w / 10.0).clamp(160.0, 192.0);
 
@@ -1825,14 +1835,17 @@ impl ScytheOverlayApp {
             ShadowPlayView::ReplaySettings | ShadowPlayView::RecordSettings | ShadowPlayView::StreamSettings
         );
 
-        ui.allocate_new_ui(egui::UiBuilder::new().max_rect(content_rect), |ui| {
-            ui.add_space(14.0);
+        let inner_rect = content_rect.shrink2(egui::vec2(16.0, 12.0));
+
+        ui.allocate_new_ui(egui::UiBuilder::new().max_rect(inner_rect), |ui| {
+            ui.set_width(inner_rect.width());
+            ui.add_space(4.0);
 
             // [ Simple view ]   [ Advanced view ] Horizontal Radio Buttons
             if has_view_toggle {
                 ui.horizontal(|ui| {
                     let total_radio_w = 260.0;
-                    let pad = ((content_w - total_radio_w) * 0.5).max(0.0);
+                    let pad = ((inner_rect.width() - total_radio_w) * 0.5).max(0.0);
                     ui.add_space(pad);
 
                     let item_w = 126.0;
@@ -1916,15 +1929,15 @@ impl ScytheOverlayApp {
                         self.settings_view_advanced = true;
                     }
                 });
-                ui.add_space(14.0);
+                ui.add_space(12.0);
             }
 
-            let scroll_h = content_h - (if has_view_toggle { 70.0 } else { 30.0 });
-            egui::ScrollArea::vertical()
+            let scroll_h = inner_rect.height() - (if has_view_toggle { 48.0 } else { 8.0 });
+            let scroll_resp = egui::ScrollArea::vertical()
                 .max_height(scroll_h)
-                .auto_shrink([false, false])
+                .auto_shrink([false, true])
                 .show(ui, |ui| {
-                    ui.set_width(content_w - 36.0);
+                    ui.set_width(inner_rect.width());
                     ui.add_space(2.0);
 
                     match self.current_view {
@@ -1934,11 +1947,12 @@ impl ScytheOverlayApp {
                                 ui.label(egui::RichText::new("Directory to save replays:").size(12.0).color(Color32::WHITE));
                                 ui.add_space(3.0);
                                 ui.horizontal(|ui| {
-                                    ui.add(egui::TextEdit::singleline(&mut self.output_dir).desired_width(ui.available_width() - 140.0));
-                                    if squared_button(ui, "Change", false, accent) {
+                                    let edit_w = (ui.available_width() - 152.0).max(120.0);
+                                    ui.add(egui::TextEdit::singleline(&mut self.output_dir).desired_width(edit_w));
+                                    if squared_button_sized(ui, "Change", false, accent, Some(egui::vec2(70.0, 26.0))) {
                                         pick_folder(&self.output_dir, self.folder_tx.clone(), self.folder_picking_active.clone());
                                     }
-                                    if squared_button(ui, "Open", false, accent) {
+                                    if squared_button_sized(ui, "Open", false, accent, Some(egui::vec2(60.0, 26.0))) {
                                         open_folder(&ScytheConfig::expand_tilde(&self.output_dir));
                                     }
                                 });
@@ -2155,11 +2169,12 @@ impl ScytheOverlayApp {
                                 ui.label(egui::RichText::new("Directory to save recordings:").size(12.0).color(Color32::WHITE));
                                 ui.add_space(3.0);
                                 ui.horizontal(|ui| {
-                                    ui.add(egui::TextEdit::singleline(&mut self.output_dir).desired_width(ui.available_width() - 140.0));
-                                    if squared_button(ui, "Change", false, accent) {
+                                    let edit_w = (ui.available_width() - 152.0).max(120.0);
+                                    ui.add(egui::TextEdit::singleline(&mut self.output_dir).desired_width(edit_w));
+                                    if squared_button_sized(ui, "Change", false, accent, Some(egui::vec2(70.0, 26.0))) {
                                         pick_folder(&self.output_dir, self.folder_tx.clone(), self.folder_picking_active.clone());
                                     }
-                                    if squared_button(ui, "Open", false, accent) {
+                                    if squared_button_sized(ui, "Open", false, accent, Some(egui::vec2(60.0, 26.0))) {
                                         open_folder(&ScytheConfig::expand_tilde(&self.output_dir));
                                     }
                                 });
@@ -2461,9 +2476,9 @@ impl ScytheOverlayApp {
                                     );
                                 }
 
-                                ui.add_space(6.0);
+                                ui.add_space(8.0);
                                 ui.horizontal(|ui| {
-                                    if squared_button(ui, "Reset Hotkeys to Defaults", false, accent) {
+                                    if squared_button_sized(ui, "Reset Hotkeys to Defaults", false, accent, Some(Vec2::new(180.0, 28.0))) {
                                         let old_menu = self.config.menu_hotkey.clone();
                                         let old_save = self.config.save_hotkey.clone();
                                         let old_rec = self.config.record_hotkey.clone();
@@ -2490,58 +2505,77 @@ impl ScytheOverlayApp {
                             render_section_card(ui, "Appearance", accent, |ui| {
                                 ui.label(egui::RichText::new("Interface Accent Color:").size(12.0).color(Color32::WHITE));
                                 ui.add_space(8.0);
-                                ui.horizontal_wrapped(|ui| {
-                                    let palettes = [
-                                        ("amd", "AMD Radeon Red", Color32::from_rgb(221, 0, 49)),
-                                        ("nvidia", "NVIDIA GeForce Green", Color32::from_rgb(118, 185, 0)),
-                                        ("intel", "Intel Arc Blue", Color32::from_rgb(8, 109, 183)),
-                                        ("blue", "Charming Blue", Color32::from_rgb(56, 189, 248)),
-                                        ("green", "Emerald Green", Color32::from_rgb(34, 197, 94)),
-                                        ("yellow", "Solar Yellow", Color32::from_rgb(250, 204, 21)),
-                                        ("purple", "Royal Purple", Color32::from_rgb(168, 85, 247)),
-                                        ("pink", "Neon Pink", Color32::from_rgb(244, 63, 94)),
-                                    ];
 
-                                    for (id, name, col) in palettes {
-                                        let is_sel = self.config.accent_color.to_lowercase() == id;
-                                        let bg = if is_sel {
-                                            col
-                                        } else {
-                                            Color32::from_rgba_unmultiplied(0, 0, 0, 120)
-                                        };
-                                        let stroke = if is_sel {
-                                            Stroke::new(1.5_f32, Color32::WHITE)
-                                        } else {
-                                            Stroke::new(1.0_f32, col)
-                                        };
-                                        let text_col = if is_sel {
-                                            if col.r() as u16 + col.g() as u16 + col.b() as u16 > 400 {
-                                                Color32::BLACK
+                                let palettes: [(&str, &str, Color32); 8] = [
+                                    ("amd", "AMD Radeon Red", Color32::from_rgb(221, 0, 49)),
+                                    ("nvidia", "NVIDIA GeForce Green", Color32::from_rgb(118, 185, 0)),
+                                    ("intel", "Intel Arc Blue", Color32::from_rgb(8, 109, 183)),
+                                    ("blue", "Charming Blue", Color32::from_rgb(56, 189, 248)),
+                                    ("green", "Emerald Green", Color32::from_rgb(34, 197, 94)),
+                                    ("yellow", "Solar Yellow", Color32::from_rgb(250, 204, 21)),
+                                    ("purple", "Royal Purple", Color32::from_rgb(168, 85, 247)),
+                                    ("pink", "Neon Pink", Color32::from_rgb(244, 63, 94)),
+                                ];
+
+                                let total_w = ui.available_width();
+                                let gap = 6.0_f32;
+                                let cols = 4;
+                                let btn_w = ((total_w - (cols - 1) as f32 * gap) / cols as f32).floor();
+                                let btn_h = 32.0_f32;
+
+                                for chunk in palettes.chunks(cols) {
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = gap;
+                                        for &(id, name, col) in chunk {
+                                            let is_sel = self.config.accent_color.to_lowercase() == id;
+                                            let (rect, resp) = ui.allocate_exact_size(egui::vec2(btn_w, btn_h), egui::Sense::click());
+                                            let is_hovered = resp.hovered();
+
+                                            let bg = if is_sel {
+                                                col
+                                            } else if is_hovered {
+                                                Color32::from_rgba_unmultiplied(255, 255, 255, 18)
                                             } else {
-                                                Color32::WHITE
+                                                Color32::from_rgba_unmultiplied(0, 0, 0, 140)
+                                            };
+
+                                            let stroke = if is_sel {
+                                                Stroke::new(1.5_f32, Color32::WHITE)
+                                            } else if is_hovered {
+                                                Stroke::new(1.5_f32, col)
+                                            } else {
+                                                Stroke::new(1.0_f32, col)
+                                            };
+
+                                            let text_col = if is_sel {
+                                                if col.r() as u16 + col.g() as u16 + col.b() as u16 > 400 {
+                                                    Color32::BLACK
+                                                } else {
+                                                    Color32::WHITE
+                                                }
+                                            } else {
+                                                Color32::from_rgb(225, 225, 230)
+                                            };
+
+                                            ui.painter().rect_filled(rect, CornerRadius::ZERO, bg);
+                                            ui.painter().rect_stroke(rect, CornerRadius::ZERO, stroke, egui::StrokeKind::Inside);
+                                            ui.painter().text(
+                                                rect.center(),
+                                                egui::Align2::CENTER_CENTER,
+                                                name,
+                                                FontId::proportional(11.0),
+                                                text_col,
+                                            );
+
+                                            if resp.clicked() {
+                                                self.config.accent_color = id.to_string();
+                                                let _ = self.config.save();
+                                                self.show_hud_notification("THEME ACCENT", &format!("Selected: {}", name), crate::overlay::ToastIcon::Info);
                                             }
-                                        } else {
-                                            Color32::from_rgb(225, 225, 230)
-                                        };
-
-                                        let btn = egui::Button::new(
-                                            egui::RichText::new(name)
-                                                .size(11.5)
-                                                .strong()
-                                                .color(text_col),
-                                        )
-                                        .fill(bg)
-                                        .stroke(stroke)
-                                        .corner_radius(CornerRadius::ZERO)
-                                        .min_size(Vec2::new(132.0, 30.0));
-
-                                        if ui.add(btn).clicked() {
-                                            self.config.accent_color = id.to_string();
-                                            let _ = self.config.save();
-                                            self.show_hud_notification("THEME ACCENT", &format!("Selected: {}", name), crate::overlay::ToastIcon::Info);
                                         }
-                                    }
-                                });
+                                    });
+                                    ui.add_space(gap);
+                                }
                             });
 
                             ui.add_space(12.0);
@@ -2560,7 +2594,7 @@ impl ScytheOverlayApp {
                                     let cur_status = self.update_status.lock().ok().map(|g| g.clone()).unwrap_or_default();
                                     match cur_status {
                                         crate::updater::UpdateStatus::Idle => {
-                                            if squared_button(ui, "Check for Updates", false, accent) {
+                                            if squared_button_sized(ui, "Check for Updates", false, accent, Some(egui::vec2(130.0, 26.0))) {
                                                 crate::updater::spawn_update_check(self.update_status.clone());
                                             }
                                         }
@@ -2579,7 +2613,7 @@ impl ScytheOverlayApp {
                                                     .strong(),
                                             );
                                             ui.add_space(6.0);
-                                            if squared_button(ui, "Check Again", false, accent) {
+                                            if squared_button_sized(ui, "Check Again", false, accent, Some(egui::vec2(90.0, 26.0))) {
                                                 crate::updater::spawn_update_check(self.update_status.clone());
                                             }
                                         }
@@ -2591,7 +2625,7 @@ impl ScytheOverlayApp {
                                                     .strong(),
                                             );
                                             ui.add_space(6.0);
-                                            if squared_button(ui, "VIEW RELEASE / DOWNLOAD", true, accent) {
+                                            if squared_button_sized(ui, "VIEW RELEASE / DOWNLOAD", true, accent, Some(egui::vec2(180.0, 26.0))) {
                                                 crate::updater::open_browser_url(&info.html_url);
                                             }
                                         }
@@ -2602,7 +2636,7 @@ impl ScytheOverlayApp {
                                                     .color(Color32::from_rgb(239, 68, 68)),
                                             );
                                             ui.add_space(6.0);
-                                            if squared_button(ui, "Retry", false, accent) {
+                                            if squared_button_sized(ui, "Retry", false, accent, Some(egui::vec2(70.0, 26.0))) {
                                                 crate::updater::spawn_update_check(self.update_status.clone());
                                             }
                                         }
@@ -2633,11 +2667,12 @@ impl ScytheOverlayApp {
                                 ui.label(egui::RichText::new("Directory to save screenshots:").size(12.0).color(Color32::WHITE));
                                 ui.add_space(3.0);
                                 ui.horizontal(|ui| {
-                                    ui.add(egui::TextEdit::singleline(&mut self.output_dir).desired_width(ui.available_width() - 140.0));
-                                    if squared_button(ui, "Change", false, accent) {
+                                    let edit_w = (ui.available_width() - 152.0).max(120.0);
+                                    ui.add(egui::TextEdit::singleline(&mut self.output_dir).desired_width(edit_w));
+                                    if squared_button_sized(ui, "Change", false, accent, Some(egui::vec2(70.0, 26.0))) {
                                         pick_folder(&self.output_dir, self.folder_tx.clone(), self.folder_picking_active.clone());
                                     }
-                                    if squared_button(ui, "Open", false, accent) {
+                                    if squared_button_sized(ui, "Open", false, accent, Some(egui::vec2(60.0, 26.0))) {
                                         open_folder(&ScytheConfig::expand_tilde(&self.output_dir));
                                     }
                                 });
@@ -2673,6 +2708,9 @@ impl ScytheOverlayApp {
                         _ => {}
                     }
                 });
+
+            let needed_h = scroll_resp.content_size.y + (if has_view_toggle { 52.0 } else { 12.0 }) + 36.0;
+            self.last_content_h = (self.last_content_h * 0.7 + needed_h * 0.3).clamp(360.0, max_content_h);
         });
     }
     fn render_gallery_view(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
@@ -3335,13 +3373,8 @@ impl eframe::App for ScytheOverlayApp {
         }
 
         self.frame_count += 1;
-        // Auto-position, DWM transparency, and size to monitor on launch
-        if !self.initial_pos_set && self.frame_count >= 2 {
-            if let Some(monitor_size) = ctx.input(|i| i.viewport().monitor_size)
-                && monitor_size.x > 100.0 && monitor_size.y > 100.0 {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(0.0, 0.0)));
-                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(monitor_size));
-                }
+        // Apply transparency and make visible smoothly on first frame
+        if !self.initial_pos_set {
             #[cfg(target_os = "windows")]
             apply_windows_transparency("Scythe");
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
@@ -3552,20 +3585,11 @@ pub fn apply_windows_transparency(title: &str) {
                         if let Some(proc) = GetProcAddress(user32, windows::core::s!("SetWindowCompositionAttribute")) {
                             let set_wca: SetWindowCompositionAttributeFn = std::mem::transmute(proc);
                             
-                            let mut policy = if is_overlay {
-                                AccentPolicy {
-                                    accent_state: 3, // ACCENT_ENABLE_BLURBEHIND
-                                    accent_flags: 2,
-                                    gradient_color: 0x99101014, // Translucent dark obsidian tint
-                                    animation_id: 0,
-                                }
-                            } else {
-                                AccentPolicy {
-                                    accent_state: 2, // ACCENT_ENABLE_TRANSPARENTGRADIENT
-                                    accent_flags: 2,
-                                    gradient_color: 0x00000000, // Fully transparent
-                                    animation_id: 0,
-                                }
+                            let mut policy = AccentPolicy {
+                                accent_state: 2, // ACCENT_ENABLE_TRANSPARENTGRADIENT (true per-pixel alpha on Win 10 & 11)
+                                accent_flags: 2,
+                                gradient_color: 0x00000000, // Fully transparent backbuffer
+                                animation_id: 0,
                             };
 
                             let mut data = WindowCompositionAttributeData {

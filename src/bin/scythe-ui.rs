@@ -3,7 +3,7 @@
 use scythe::ipc::{Command, send_command, query_status};
 use scythe::overlay::{show_shadowplay_toast, ToastIcon};
 use std::env;
-use global_hotkey::{GlobalHotKeyManager, hotkey::{HotKey, Modifiers, Code}, GlobalHotKeyEvent};
+use global_hotkey::{GlobalHotKeyManager, hotkey::{HotKey, Modifiers, Code}, GlobalHotKeyEvent, HotKeyState};
 
 fn ensure_wayland_env() {
     scythe::overlay::ensure_wayland_env();
@@ -572,6 +572,9 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
 
         while let Ok(event) = receiver.try_recv() {
+            if event.state != HotKeyState::Pressed {
+                continue;
+            }
             if Some(event.id) == id_menu {
                 std::thread::spawn(|| {
                     ensure_daemon_running();
