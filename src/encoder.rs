@@ -321,12 +321,10 @@ impl VaapiEncoder {
                                         0,
                                     );
                                     if p != libc::MAP_FAILED {
-                                        if self.dma_mmap_cache.len() >= 16 {
-                                            if let Some(old_fd) = self.dma_mmap_cache.keys().next().copied() {
-                                                if let Some((old_p, old_size)) = self.dma_mmap_cache.remove(&old_fd) {
-                                                    libc::munmap(old_p, old_size);
-                                                }
-                                            }
+                                        if self.dma_mmap_cache.len() >= 16
+                                            && let Some(old_fd) = self.dma_mmap_cache.keys().next().copied()
+                                            && let Some((old_p, old_size)) = self.dma_mmap_cache.remove(&old_fd) {
+                                                libc::munmap(old_p, old_size);
                                         }
                                         self.dma_mmap_cache.insert(*fd, (p, mmap_size));
                                         p

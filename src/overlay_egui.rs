@@ -494,14 +494,13 @@ fn render_keycap(ui: &mut egui::Ui, text: &str) {
 
 pub fn resolve_accent_color(accent: &str) -> Color32 {
     let trimmed = accent.trim();
-    if trimmed.starts_with('#') && trimmed.len() == 7 {
-        if let (Ok(r), Ok(g), Ok(b)) = (
+    if trimmed.starts_with('#') && trimmed.len() == 7
+        && let (Ok(r), Ok(g), Ok(b)) = (
             u8::from_str_radix(&trimmed[1..3], 16),
             u8::from_str_radix(&trimmed[3..5], 16),
             u8::from_str_radix(&trimmed[5..7], 16),
         ) {
             return Color32::from_rgb(r, g, b);
-        }
     }
     match trimmed.to_lowercase().as_str() {
         "amd" | "red" | "crimson" => Color32::from_rgb(221, 0, 49),
@@ -726,6 +725,46 @@ fn draw_settings_icon(painter: &egui::Painter, center: egui::Pos2, radius: f32, 
     }
 }
 
+fn draw_stream_icon(painter: &egui::Painter, center: egui::Pos2, radius: f32, is_streaming: bool, accent: Color32) {
+    let col = if is_streaming { accent } else { Color32::WHITE };
+    // Center broadcast transmitter dot
+    painter.circle_filled(center, radius * 0.28, col);
+
+    // Broadcast wave brackets
+    let r1 = radius * 0.58;
+    let r2 = radius * 0.95;
+    let stroke1 = Stroke::new(2.0_f32, col);
+    let stroke2 = Stroke::new(1.6_f32, Color32::from_rgba_unmultiplied(col.r(), col.g(), col.b(), 180));
+
+    // Inner waves
+    let p1_l = [
+        center + Vec2::new(-r1 * 0.6, -r1 * 0.7),
+        center + Vec2::new(-r1, 0.0),
+        center + Vec2::new(-r1 * 0.6, r1 * 0.7),
+    ];
+    let p1_r = [
+        center + Vec2::new(r1 * 0.6, -r1 * 0.7),
+        center + Vec2::new(r1, 0.0),
+        center + Vec2::new(r1 * 0.6, r1 * 0.7),
+    ];
+    painter.add(egui::epaint::PathShape::line(p1_l.to_vec(), stroke1));
+    painter.add(egui::epaint::PathShape::line(p1_r.to_vec(), stroke1));
+
+    // Outer waves
+    let p2_l = [
+        center + Vec2::new(-r2 * 0.6, -r2 * 0.75),
+        center + Vec2::new(-r2, 0.0),
+        center + Vec2::new(-r2 * 0.6, r2 * 0.75),
+    ];
+    let p2_r = [
+        center + Vec2::new(r2 * 0.6, -r2 * 0.75),
+        center + Vec2::new(r2, 0.0),
+        center + Vec2::new(r2 * 0.6, r2 * 0.75),
+    ];
+    painter.add(egui::epaint::PathShape::line(p2_l.to_vec(), stroke2));
+    painter.add(egui::epaint::PathShape::line(p2_r.to_vec(), stroke2));
+}
+
 // GPU Screen Recorder 1:1 Action Card Renderer
 #[allow(clippy::too_many_arguments)]
 fn render_gsr_card(
@@ -917,6 +956,7 @@ pub struct ScytheOverlayApp {
     update_status: Arc<std::sync::Mutex<crate::updater::UpdateStatus>>,
     #[allow(dead_code)]
     update_dismissed: bool,
+    popup_do_not_ask: bool,
     auto_check_updates: bool,
     autostart_replay: bool,
     autostart_overlay: bool,
@@ -959,6 +999,18 @@ impl ScytheOverlayApp {
             _ => 0,
         };
 
+        let stream_service_idx = match config.stream_service.as_str() {
+            "youtube" => 1,
+            "custom" => 2,
+            _ => 0,
+        };
+        let stream_key = config.stream_key.clone();
+        let stream_url = if config.stream_url.is_empty() {
+            "rtmp://live.twitch.tv/app/".to_string()
+        } else {
+            config.stream_url.clone()
+        };
+
         let (status_tx, status_rx) = channel::<DaemonStatus>();
         std::thread::spawn(move || {
             loop {
@@ -992,9 +1044,9 @@ impl ScytheOverlayApp {
             replay_dropdown_open: false,
             record_dropdown_open: false,
             stream_dropdown_open: false,
-            stream_service_idx: 0,
-            stream_key: String::new(),
-            stream_url: "rtmp://live.twitch.tv/app/".to_string(),
+            stream_service_idx,
+            stream_key,
+            stream_url,
             textures: None,
             output_dir,
             replay_sec,
@@ -1027,6 +1079,7 @@ impl ScytheOverlayApp {
             frame_count: 0,
             update_status,
             update_dismissed: false,
+            popup_do_not_ask: false,
             auto_check_updates,
             autostart_replay,
             autostart_overlay,
@@ -1051,6 +1104,13 @@ impl ScytheOverlayApp {
             3 => "muted".to_string(),
             _ => "system".to_string(),
         };
+        self.config.stream_service = match self.stream_service_idx {
+            1 => "youtube".to_string(),
+            2 => "custom".to_string(),
+            _ => "twitch".to_string(),
+        };
+        self.config.stream_url = self.stream_url.clone();
+        self.config.stream_key = self.stream_key.clone();
         self.config.auto_check_updates = self.auto_check_updates;
         self.config.autostart_replay = self.autostart_replay;
         self.config.autostart_overlay = self.autostart_overlay;
@@ -1074,6 +1134,9 @@ impl ScytheOverlayApp {
         self.system_volume_pct = (def.system_volume * 100.0) as u32;
         self.autostart_replay = def.autostart_replay;
         self.autostart_overlay = def.autostart_overlay;
+        self.stream_service_idx = 0;
+        self.stream_url = "rtmp://live.twitch.tv/app/".to_string();
+        self.stream_key.clear();
         self.show_hud_notification("DEFAULTS", "Settings restored to defaults", crate::overlay::ToastIcon::Info);
     }
 
@@ -1161,8 +1224,8 @@ impl ScytheOverlayApp {
     }
 
     fn render_top_bar(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
-        let top_left = ui.max_rect().min;
-        let screen_w = ui.max_rect().width();
+        let top_left = egui::pos2(0.0, 0.0);
+        let screen_w = ctx.screen_rect().width().max(ui.available_width());
         let bar_h = 48.0_f32;
         let bar_rect = egui::Rect::from_min_size(top_left, Vec2::new(screen_w, bar_h));
         let accent = self.accent_color();
@@ -1346,6 +1409,16 @@ impl ScytheOverlayApp {
             self.stream_dropdown_open = false;
         }
 
+        let is_streaming = self.status.is_streaming;
+        let stream_dur = self.status.streaming_duration_sec;
+        let stream_status_str = if is_streaming {
+            let mins = stream_dur / 60;
+            let secs = stream_dur % 60;
+            format!("Streaming {:02}:{:02}", mins, secs)
+        } else {
+            "Not streaming".to_string()
+        };
+
         // Card 2: Livestream
         let c2_clicked = render_gsr_card(
             ui,
@@ -1353,10 +1426,10 @@ impl ScytheOverlayApp {
             "Livestream",
             tex_stream,
             |painter, center| {
-                draw_settings_icon(painter, center, 24.0, Color32::WHITE);
+                draw_stream_icon(painter, center, 24.0, is_streaming, accent);
             },
-            "Not streaming",
-            false,
+            &stream_status_str,
+            is_streaming,
             self.stream_dropdown_open,
             accent,
         );
@@ -1511,8 +1584,20 @@ impl ScytheOverlayApp {
             let r0 = egui::Rect::from_min_size(egui::pos2(card2_rect.left(), drop_y), Vec2::new(card_w, item_h));
             let r1 = egui::Rect::from_min_size(egui::pos2(card2_rect.left(), drop_y + item_h), Vec2::new(card_w, item_h));
 
-            if render_dropdown_item(ui, r0, "Start Streaming", None, tex_play, accent, false) {
-                self.show_hud_notification("LIVESTREAM", "Streaming not configured", crate::overlay::ToastIcon::Info);
+            let stream_toggle_title = if is_streaming { "Stop Streaming" } else { "Start Streaming" };
+            let stream_toggle_icon = if is_streaming { tex_stop } else { tex_play };
+            if render_dropdown_item(ui, r0, stream_toggle_title, None, stream_toggle_icon, accent, false) {
+                if is_streaming {
+                    async_send_command(Command::StopStreaming);
+                    self.status.is_streaming = false;
+                    self.show_hud_notification("LIVESTREAM", "Stream stopped", crate::overlay::ToastIcon::Info);
+                } else if self.stream_key.trim().is_empty() {
+                    self.show_hud_notification("LIVESTREAM", "Stream key is empty. Configure in Settings.", crate::overlay::ToastIcon::Error);
+                } else {
+                    async_send_command(Command::StartStreaming);
+                    self.status.is_streaming = true;
+                    self.show_hud_notification("LIVESTREAM", "Livestream started", crate::overlay::ToastIcon::Record);
+                }
                 self.stream_dropdown_open = false;
             }
 
@@ -2531,6 +2616,15 @@ impl ScytheOverlayApp {
                                         .size(11.5)
                                         .color(Color32::from_rgb(220, 225, 230)),
                                 );
+                                ui.add_space(4.0);
+                                if ui.checkbox(
+                                    &mut self.config.do_not_ask_updates,
+                                    egui::RichText::new("Suppress update popup prompts")
+                                        .size(11.5)
+                                        .color(Color32::from_rgb(220, 225, 230)),
+                                ).changed() {
+                                    let _ = self.config.save();
+                                }
                             });
                         }
                         ShadowPlayView::ScreenshotSettings => {
@@ -2892,8 +2986,149 @@ impl ScytheOverlayApp {
             }
         }
     }
+
+    fn render_update_popup(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
+        let (has_update, rel_info) = {
+            let cur = self.update_status.lock().ok().map(|g| g.clone()).unwrap_or_default();
+            match cur {
+                crate::updater::UpdateStatus::Available(info) => (true, Some(info)),
+                _ => (false, None),
+            }
+        };
+
+        if !has_update || self.update_dismissed || self.config.do_not_ask_updates {
+            return;
+        }
+        let info = match rel_info {
+            Some(i) => i,
+            None => return,
+        };
+
+        let screen_rect = ctx.screen_rect();
+        let modal_w = 460.0_f32;
+        let modal_h = 210.0_f32;
+        let modal_x = ((screen_rect.width() - modal_w) * 0.5).floor();
+        let modal_y = ((screen_rect.height() - modal_h) * 0.40).floor();
+        let modal_rect = egui::Rect::from_min_size(egui::pos2(modal_x, modal_y), Vec2::new(modal_w, modal_h));
+
+        let accent = self.accent_color();
+
+        // 1. Semi-translucent backdrop scrim to focus attention
+        ui.painter().rect_filled(
+            screen_rect,
+            CornerRadius::ZERO,
+            Color32::from_rgba_unmultiplied(0, 0, 0, 180),
+        );
+
+        // Block interaction outside modal
+        let _ = ui.allocate_rect(screen_rect, egui::Sense::click());
+
+        // 2. Obsidian card container (1:1 GPU Screen Recorder theme)
+        let painter = ui.painter();
+        painter.rect_filled(modal_rect, CornerRadius::ZERO, Color32::from_rgb(10, 11, 14));
+        painter.rect_stroke(modal_rect, CornerRadius::ZERO, Stroke::new(1.5_f32, accent), egui::StrokeKind::Inside);
+
+        // Top accent laser stripe
+        let stripe_rect = egui::Rect::from_min_size(modal_rect.min, Vec2::new(modal_w, 3.0));
+        painter.rect_filled(stripe_rect, CornerRadius::ZERO, accent);
+
+        // 3. Inner contents
+        let inner_rect = modal_rect.shrink(18.0);
+        let mut child_ui = ui.new_child(egui::UiBuilder::new().max_rect(inner_rect));
+
+        // Header: Scythe Icon + "Update Available" + version badge
+        child_ui.horizontal(|ui| {
+            let icon_center = egui::pos2(ui.cursor().min.x + 14.0, ui.cursor().min.y + 12.0);
+            draw_scythe_icon(ui.painter(), icon_center, 18.0, accent);
+            ui.add_space(32.0);
+            ui.label(
+                egui::RichText::new("Update Available")
+                    .size(15.0)
+                    .strong()
+                    .color(Color32::WHITE),
+            );
+            ui.add_space(8.0);
+            let badge_text = format!("v{}", info.version);
+            let badge_bg = Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 35);
+            let badge_stroke = Stroke::new(1.0_f32, accent);
+            let galley = ui.painter().layout_no_wrap(
+                badge_text.clone(),
+                FontId::proportional(11.0),
+                accent,
+            );
+            let badge_rect = egui::Rect::from_min_size(
+                ui.cursor().min + egui::vec2(0.0, 3.0),
+                galley.size() + egui::vec2(12.0, 6.0),
+            );
+            ui.painter().rect(badge_rect, CornerRadius::ZERO, badge_bg, badge_stroke, egui::StrokeKind::Inside);
+            ui.painter().text(
+                badge_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                badge_text,
+                FontId::proportional(11.0),
+                accent,
+            );
+        });
+
+        child_ui.add_space(14.0);
+
+        // Body message
+        child_ui.label(
+            egui::RichText::new(format!(
+                "A new version of Scythe is available (v{}). Installed: v{}.",
+                info.version,
+                crate::updater::CURRENT_VERSION
+            ))
+            .size(12.0)
+            .color(Color32::from_rgb(220, 225, 235)),
+        );
+        child_ui.add_space(2.0);
+        child_ui.label(
+            egui::RichText::new("Would you like to open the release page to download and update now?")
+                .size(11.5)
+                .color(Color32::from_rgb(155, 160, 170)),
+        );
+
+        child_ui.add_space(14.0);
+
+        // Smaller toggle option: "Do not ask next time"
+        child_ui.checkbox(
+            &mut self.popup_do_not_ask,
+            egui::RichText::new("Do not ask next time")
+                .size(10.5)
+                .color(Color32::from_rgb(175, 180, 190)),
+        );
+
+        child_ui.add_space(14.0);
+
+        // Action buttons: "Update Now" and "Later"
+        child_ui.horizontal(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if squared_button(ui, "Update Now", true, accent) {
+                    if self.popup_do_not_ask {
+                        self.config.do_not_ask_updates = true;
+                        let _ = self.config.save();
+                    }
+                    self.update_dismissed = true;
+                    crate::updater::open_browser_url(&info.html_url);
+                    self.show_hud_notification("UPDATER", "Opening release in browser...", crate::overlay::ToastIcon::Info);
+                }
+
+                ui.add_space(10.0);
+
+                if squared_button(ui, "Later", false, accent) {
+                    if self.popup_do_not_ask {
+                        self.config.do_not_ask_updates = true;
+                        let _ = self.config.save();
+                    }
+                    self.update_dismissed = true;
+                }
+            });
+        });
+    }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_scythe_notification_card(
     painter: &egui::Painter,
     rect: egui::Rect,
@@ -3184,9 +3419,18 @@ impl eframe::App for ScytheOverlayApp {
                 }
             }
         } else {
+            let modal_active = {
+                let cur = self.update_status.lock().ok().map(|g| g.clone()).unwrap_or_default();
+                matches!(cur, crate::updater::UpdateStatus::Available(_))
+                    && !self.update_dismissed
+                    && !self.config.do_not_ask_updates
+            };
+
             // Normal Escape handling
             if !self.folder_picking_active.load(Ordering::SeqCst) && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-                if self.replay_dropdown_open || self.record_dropdown_open || self.stream_dropdown_open {
+                if modal_active {
+                    self.update_dismissed = true;
+                } else if self.replay_dropdown_open || self.record_dropdown_open || self.stream_dropdown_open {
                     self.replay_dropdown_open = false;
                     self.record_dropdown_open = false;
                     self.stream_dropdown_open = false;
@@ -3200,7 +3444,7 @@ impl eframe::App for ScytheOverlayApp {
             }
 
             // Click outside active panel on darkened background to dismiss
-            if !self.folder_picking_active.load(Ordering::SeqCst) && ctx.input(|i| i.pointer.primary_clicked())
+            if !modal_active && !self.folder_picking_active.load(Ordering::SeqCst) && ctx.input(|i| i.pointer.primary_clicked())
                 && let Some(pos) = ctx.input(|i| i.pointer.interact_pos())
                     && self.panel_rect.width() > 10.0 && !self.panel_rect.expand(6.0).contains(pos) {
                         if self.replay_dropdown_open || self.record_dropdown_open || self.stream_dropdown_open {
@@ -3243,6 +3487,7 @@ impl eframe::App for ScytheOverlayApp {
                     ShadowPlayView::Gallery => self.render_gallery_view(ctx, ui),
                 }
                 self.render_slide_notification(ctx, ui);
+                self.render_update_popup(ctx, ui);
             });
     }
 }
@@ -3670,5 +3915,24 @@ mod tests {
         assert_eq!(resolve_accent_color("#76b900"), Color32::from_rgb(118, 185, 0));
         // Default fallback to AMD red
         assert_eq!(resolve_accent_color("unknown"), Color32::from_rgb(221, 0, 49));
+    }
+
+    #[test]
+    fn test_update_popup_logic() {
+        let should_show_popup = |has_update: bool, dismissed: bool, do_not_ask: bool| -> bool {
+            has_update && !dismissed && !do_not_ask
+        };
+
+        // When update is available and not suppressed/dismissed -> shows popup
+        assert!(should_show_popup(true, false, false));
+
+        // When user dismissed the popup in current session -> does not show
+        assert!(!should_show_popup(true, true, false));
+
+        // When user checked 'Do not ask next time' -> suppressed
+        assert!(!should_show_popup(true, false, true));
+
+        // When no update is available -> does not show
+        assert!(!should_show_popup(false, false, false));
     }
 }

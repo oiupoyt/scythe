@@ -65,6 +65,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let is_recording_state = Arc::new(AtomicBool::new(false));
     let record_start_state = Arc::new(AtomicU64::new(0));
+    let is_streaming_state = Arc::new(AtomicBool::new(false));
+    let stream_start_state = Arc::new(AtomicU64::new(0));
     let replay_enabled_state = Arc::new(AtomicBool::new(initial_config.replay_enabled));
     let audio_muted_state = Arc::new(AtomicBool::new(false));
     let audio_levels = Arc::new(scythe::capture::audio::AudioLevels::new());
@@ -112,6 +114,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let cmd_tx_ipc = cmd_tx.clone();
     let is_recording_state_ipc = Arc::clone(&is_recording_state);
     let record_start_state_ipc = Arc::clone(&record_start_state);
+    let is_streaming_state_ipc = Arc::clone(&is_streaming_state);
+    let stream_start_state_ipc = Arc::clone(&stream_start_state);
     let replay_enabled_state_ipc = Arc::clone(&replay_enabled_state);
     let audio_muted_state_ipc = Arc::clone(&audio_muted_state);
     let audio_levels_ipc = Arc::clone(&audio_levels);
@@ -123,6 +127,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     let cmd_tx_ipc = cmd_tx_ipc.clone();
                     let is_recording_state_ipc = Arc::clone(&is_recording_state_ipc);
                     let record_start_state_ipc = Arc::clone(&record_start_state_ipc);
+                    let is_streaming_state_ipc = Arc::clone(&is_streaming_state_ipc);
+                    let stream_start_state_ipc = Arc::clone(&stream_start_state_ipc);
                     let replay_enabled_state_ipc = Arc::clone(&replay_enabled_state_ipc);
                     let audio_muted_state_ipc = Arc::clone(&audio_muted_state_ipc);
                     let audio_levels_ipc = Arc::clone(&audio_levels_ipc);
@@ -140,9 +146,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                         Command::GetStatus => {
                                             let rec = is_recording_state_ipc.load(Ordering::SeqCst);
                                             let start_ts = record_start_state_ipc.load(Ordering::SeqCst);
+                                            let is_stream = is_streaming_state_ipc.load(Ordering::SeqCst);
+                                            let stream_start_ts = stream_start_state_ipc.load(Ordering::SeqCst);
                                             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
                                             let duration = if rec && start_ts > 0 {
                                                 now.saturating_sub(start_ts)
+                                            } else {
+                                                0
+                                            };
+                                            let stream_duration = if is_stream && stream_start_ts > 0 {
+                                                now.saturating_sub(stream_start_ts)
                                             } else {
                                                 0
                                             };
@@ -158,6 +171,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                                 system_volume: cfg.system_volume,
                                                 mic_level_peak: audio_levels_ipc.get_mic_peak(),
                                                 system_level_peak: audio_levels_ipc.get_system_peak(),
+                                                is_streaming: is_stream,
+                                                streaming_duration_sec: stream_duration,
                                             };
                                             if let Ok(resp) = serde_json::to_vec(&status) {
                                                 let len_resp = (resp.len() as u32).to_le_bytes();
@@ -346,6 +361,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let rec_state_clone = Arc::clone(&is_recording_state);
     let rec_start_clone = Arc::clone(&record_start_state);
+    let stream_state_clone = Arc::clone(&is_streaming_state);
+    let stream_start_clone = Arc::clone(&stream_start_state);
     let replay_state_clone = Arc::clone(&replay_enabled_state);
     let audio_muted_clone = Arc::clone(&audio_muted_state);
     let audio_tx_clone = audio_tx.clone();
@@ -626,6 +643,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                 let cur = audio_muted_clone.load(Ordering::SeqCst);
                                 audio_muted_clone.store(!cur, Ordering::SeqCst);
                                 println!("Audio mute toggled: {}", !cur);
+                            },
+                            Command::StartStreaming => {
+                                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+                                stream_state_clone.store(true, Ordering::SeqCst);
+                                stream_start_clone.store(now, Ordering::SeqCst);
+                                println!("Livestream started at timestamp {}", now);
+                            },
+                            Command::StopStreaming => {
+                                stream_state_clone.store(false, Ordering::SeqCst);
+                                stream_start_clone.store(0, Ordering::SeqCst);
+                                println!("Livestream stopped.");
+                            },
+                            Command::ToggleStreaming => {
+                                let cur = stream_state_clone.load(Ordering::SeqCst);
+                                if cur {
+                                    stream_state_clone.store(false, Ordering::SeqCst);
+                                    stream_start_clone.store(0, Ordering::SeqCst);
+                                    println!("ToggleStreaming: Livestream stopped.");
+                                } else {
+                                    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+                                    stream_state_clone.store(true, Ordering::SeqCst);
+                                    stream_start_clone.store(now, Ordering::SeqCst);
+                                    println!("ToggleStreaming: Livestream started at timestamp {}", now);
+                                }
                             },
                             _ => {}
                         }

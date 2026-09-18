@@ -6,6 +6,9 @@ pub enum Command {
     StartRecording,
     StopRecording,
     ToggleRecording,
+    StartStreaming,
+    StopStreaming,
+    ToggleStreaming,
     ToggleAudio,
     CycleAudioMode,
     ToggleCursor,
@@ -33,6 +36,10 @@ pub struct DaemonStatus {
     pub mic_level_peak: f32,
     #[serde(default)]
     pub system_level_peak: f32,
+    #[serde(default)]
+    pub is_streaming: bool,
+    #[serde(default)]
+    pub streaming_duration_sec: u64,
 }
 
 fn default_true() -> bool {
@@ -273,4 +280,36 @@ pub fn get_toast_pid_path() -> std::path::PathBuf {
 
 pub fn clean_toast_pid() {
     let _ = std::fs::remove_file(get_toast_pid_path());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ipc_command_and_status_serde() {
+        let cmd = Command::ToggleStreaming;
+        let json = serde_json::to_string(&cmd).unwrap();
+        let parsed: Command = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, Command::ToggleStreaming);
+
+        let status = DaemonStatus {
+            is_recording: true,
+            recording_duration_sec: 42,
+            is_replay_active: true,
+            audio_muted: false,
+            audio_mode: "system".to_string(),
+            show_cursor: true,
+            mic_volume: 0.6,
+            system_volume: 1.0,
+            mic_level_peak: 0.2,
+            system_level_peak: 0.8,
+            is_streaming: true,
+            streaming_duration_sec: 120,
+        };
+        let status_json = serde_json::to_string(&status).unwrap();
+        let parsed_status: DaemonStatus = serde_json::from_str(&status_json).unwrap();
+        assert!(parsed_status.is_streaming);
+        assert_eq!(parsed_status.streaming_duration_sec, 120);
+    }
 }

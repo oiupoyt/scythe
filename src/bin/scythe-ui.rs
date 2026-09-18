@@ -279,6 +279,31 @@ fn handle_save_replay() -> Result<(), Box<dyn std::error::Error + Send + Sync>> 
     send_with_notification(Command::SaveReplay, "INSTANT REPLAY", "Saved to Videos", ToastIcon::Replay)
 }
 
+fn handle_toggle_streaming() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ensure_daemon_running();
+    let cfg = scythe::config::ScytheConfig::load();
+    if cfg.stream_key.trim().is_empty() {
+        show_shadowplay_toast("LIVESTREAM", "Stream key is empty. Configure in Settings.", ToastIcon::Error);
+        return Ok(());
+    }
+    let status = query_status().ok();
+    let is_streaming = status.as_ref().map(|s| s.is_streaming).unwrap_or(false);
+    match send_command(Command::ToggleStreaming) {
+        Ok(()) => {
+            if is_streaming {
+                show_shadowplay_toast("LIVESTREAM", "Stream stopped", ToastIcon::Info);
+            } else {
+                show_shadowplay_toast("LIVESTREAM", "Livestream started", ToastIcon::Record);
+            }
+            Ok(())
+        }
+        Err(e) => {
+            show_shadowplay_toast("SCYTHE", "Error: failed to connect to daemon", ToastIcon::Error);
+            Err(e)
+        }
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let args: Vec<String> = env::args().collect();
 
@@ -350,6 +375,9 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             "--record" | "--toggle" => {
                 return handle_toggle_recording();
             }
+            "--stream" | "--toggle-stream" => {
+                return handle_toggle_streaming();
+            }
             "--cursor" | "--toggle-cursor" => {
                 return handle_toggle_cursor();
             }
@@ -369,6 +397,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     Ok(st) => {
                         println!("Daemon Status:");
                         println!("  State: {}", if st.is_recording { format!("RECORDING ({}s)", st.recording_duration_sec) } else { "IDLE".to_string() });
+                        println!("  Livestream: {}", if st.is_streaming { format!("STREAMING ({}s)", st.streaming_duration_sec) } else { "OFF".to_string() });
                         println!("  Instant Replay: {}", if st.is_replay_active { "ACTIVE" } else { "OFF" });
                         println!("  Audio Mode: {}", st.audio_mode);
                         println!("  Mic Volume: {:.0}%", st.mic_volume * 100.0);
@@ -400,6 +429,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 println!("  scythe-ui --notify-stop  Show recording saved notification toast");
                 println!("  scythe-ui --toast <t> <s> Show custom ShadowPlay notification toast");
                 println!("  scythe-ui --record       Toggle normal recording on/off (with notification)");
+                println!("  scythe-ui --stream       Toggle livestreaming on/off (with notification)");
                 println!("  scythe-ui --cursor       Toggle mouse cursor recording on/off (with notification)");
                 println!("  scythe-ui --start        Start normal recording");
                 println!("  scythe-ui --stop         Stop normal recording");

@@ -20,6 +20,9 @@ fn default_mic_volume() -> f32 { 0.60 }
 fn default_system_volume() -> f32 { 1.00 }
 fn default_accent_color() -> String { "blue".to_string() }
 
+fn default_stream_service() -> String { "twitch".to_string() }
+fn default_stream_url() -> String { "rtmp://live.twitch.tv/app/".to_string() }
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ScytheConfig {
     #[serde(default = "default_accent_color")]
@@ -72,6 +75,14 @@ pub struct ScytheConfig {
     pub cursor_hotkey: String,
     #[serde(default = "default_true")]
     pub auto_check_updates: bool,
+    #[serde(default)]
+    pub do_not_ask_updates: bool,
+    #[serde(default = "default_stream_service")]
+    pub stream_service: String,
+    #[serde(default = "default_stream_url")]
+    pub stream_url: String,
+    #[serde(default)]
+    pub stream_key: String,
 }
 
 pub type VrecConfig = ScytheConfig;
@@ -105,6 +116,10 @@ impl Default for ScytheConfig {
             record_hotkey: "Ctrl+Shift+F9".to_string(),
             cursor_hotkey: "Ctrl+Shift+F10".to_string(),
             auto_check_updates: true,
+            do_not_ask_updates: false,
+            stream_service: "twitch".to_string(),
+            stream_url: "rtmp://live.twitch.tv/app/".to_string(),
+            stream_key: String::new(),
         }
     }
 }
@@ -354,6 +369,10 @@ mod tests {
         assert!((parsed.mic_volume - 0.60).abs() < 1e-4);
         assert!((parsed.system_volume - 1.00).abs() < 1e-4);
         assert!(parsed.auto_check_updates);
+        assert!(!parsed.do_not_ask_updates);
+        assert_eq!(parsed.stream_service, "twitch");
+        assert_eq!(parsed.stream_url, "rtmp://live.twitch.tv/app/");
+        assert_eq!(parsed.stream_key, "");
     }
 
     #[test]

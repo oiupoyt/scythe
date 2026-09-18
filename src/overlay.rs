@@ -283,22 +283,20 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
             });
 
             let css_provider = CssProvider::new();
-            let css = format!(
-                r#"
-                window, window.background {{
+            let css = r#"
+                window, window.background {
                     background-color: transparent;
                     background: transparent;
                     border: none;
                     box-shadow: none;
-                }}
-                .toast-card {{
+                }
+                .toast-card {
                     background-color: rgba(10, 10, 10, 0.65);
                     border: 1px solid rgba(255, 255, 255, 0.08);
                     border-radius: 0px;
                     box-shadow: none;
-                }}
-                "#,
-            );
+                }
+                "#;
             let _ = css_provider.load_from_data(css.as_bytes());
             if let Some(screen) = gdk::Screen::default() {
                 StyleContext::add_provider_for_screen(
