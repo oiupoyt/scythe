@@ -2625,8 +2625,32 @@ impl ScytheOverlayApp {
                                                     .strong(),
                                             );
                                             ui.add_space(6.0);
-                                            if squared_button_sized(ui, "VIEW RELEASE / DOWNLOAD", true, accent, Some(egui::vec2(180.0, 26.0))) {
+                                            if squared_button_sized(ui, "UPDATE NOW", true, accent, Some(egui::vec2(110.0, 26.0))) {
+                                                crate::updater::spawn_auto_update(info.clone(), self.update_status.clone());
+                                            }
+                                            ui.add_space(6.0);
+                                            if squared_button_sized(ui, "Release Notes", false, accent, Some(egui::vec2(110.0, 26.0))) {
                                                 crate::updater::open_browser_url(&info.html_url);
+                                            }
+                                        }
+                                        crate::updater::UpdateStatus::Updating { version, progress } => {
+                                            ui.label(
+                                                egui::RichText::new(format!("Updating to v{}: {}", version, progress))
+                                                    .size(11.5)
+                                                    .color(Color32::from_rgb(96, 165, 250))
+                                                    .strong(),
+                                            );
+                                        }
+                                        crate::updater::UpdateStatus::Updated { version, message: _ } => {
+                                            ui.label(
+                                                egui::RichText::new(format!("Updated to v{}! Restart required.", version))
+                                                    .size(11.5)
+                                                    .color(Color32::from_rgb(34, 197, 94))
+                                                    .strong(),
+                                            );
+                                            ui.add_space(6.0);
+                                            if squared_button_sized(ui, "Restart Scythe", true, accent, Some(egui::vec2(120.0, 26.0))) {
+                                                crate::updater::restart_application();
                                             }
                                         }
                                         crate::updater::UpdateStatus::Failed(err) => {
@@ -3026,25 +3050,58 @@ impl ScytheOverlayApp {
     }
 
     fn render_update_popup(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
-        let (has_update, rel_info) = {
-            let cur = self.update_status.lock().ok().map(|g| g.clone()).unwrap_or_default();
-            match cur {
-                crate::updater::UpdateStatus::Available(info) => (true, Some(info)),
-                _ => (false, None),
+        let cur = self.update_status.lock().ok().map(|g| g.clone()).unwrap_or_default();
+        let (should_render, title, version_badge, body_lines, show_do_not_ask) = match &cur {
+            crate::updater::UpdateStatus::Available(info) => {
+                if self.update_dismissed || self.config.do_not_ask_updates {
+                    (false, "", "", vec![], false)
+                } else {
+                    (
+                        true,
+                        "Update Available",
+                        info.version.as_str(),
+                        vec![
+                            format!("A new version of Scythe is available (v{}). Installed: v{}.", info.version, crate::updater::CURRENT_VERSION),
+                            "Would you like to download and install the update locally?".to_string(),
+                        ],
+                        true,
+                    )
+                }
             }
+            crate::updater::UpdateStatus::Updating { version, progress } => {
+                (
+                    true,
+                    "Updating Scythe...",
+                    version.as_str(),
+                    vec![
+                        format!("Downloading and applying update v{}...", version),
+                        progress.clone(),
+                    ],
+                    false,
+                )
+            }
+            crate::updater::UpdateStatus::Updated { version, message } => {
+                (
+                    true,
+                    "Update Complete!",
+                    version.as_str(),
+                    vec![
+                        format!("Scythe has been updated to v{}.", version),
+                        message.clone(),
+                    ],
+                    false,
+                )
+            }
+            _ => (false, "", "", vec![], false),
         };
 
-        if !has_update || self.update_dismissed || self.config.do_not_ask_updates {
+        if !should_render {
             return;
         }
-        let info = match rel_info {
-            Some(i) => i,
-            None => return,
-        };
 
         let screen_rect = ctx.screen_rect();
-        let modal_w = 460.0_f32;
-        let modal_h = 210.0_f32;
+        let modal_w = 480.0_f32;
+        let modal_h = 220.0_f32;
         let modal_x = ((screen_rect.width() - modal_w) * 0.5).floor();
         let modal_y = ((screen_rect.height() - modal_h) * 0.40).floor();
         let modal_rect = egui::Rect::from_min_size(egui::pos2(modal_x, modal_y), Vec2::new(modal_w, modal_h));
@@ -3074,92 +3131,114 @@ impl ScytheOverlayApp {
         let inner_rect = modal_rect.shrink(18.0);
         let mut child_ui = ui.new_child(egui::UiBuilder::new().max_rect(inner_rect));
 
-        // Header: Scythe Icon + "Update Available" + version badge
+        // Header: Scythe Icon + Title + version badge
         child_ui.horizontal(|ui| {
             let icon_center = egui::pos2(ui.cursor().min.x + 14.0, ui.cursor().min.y + 12.0);
             draw_scythe_icon(ui.painter(), icon_center, 18.0, accent);
             ui.add_space(32.0);
             ui.label(
-                egui::RichText::new("Update Available")
+                egui::RichText::new(title)
                     .size(15.0)
                     .strong()
                     .color(Color32::WHITE),
             );
-            ui.add_space(8.0);
-            let badge_text = format!("v{}", info.version);
-            let badge_bg = Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 35);
-            let badge_stroke = Stroke::new(1.0_f32, accent);
-            let galley = ui.painter().layout_no_wrap(
-                badge_text.clone(),
-                FontId::proportional(11.0),
-                accent,
-            );
-            let badge_rect = egui::Rect::from_min_size(
-                ui.cursor().min + egui::vec2(0.0, 3.0),
-                galley.size() + egui::vec2(12.0, 6.0),
-            );
-            ui.painter().rect(badge_rect, CornerRadius::ZERO, badge_bg, badge_stroke, egui::StrokeKind::Inside);
-            ui.painter().text(
-                badge_rect.center(),
-                egui::Align2::CENTER_CENTER,
-                badge_text,
-                FontId::proportional(11.0),
-                accent,
-            );
+            if !version_badge.is_empty() {
+                ui.add_space(8.0);
+                let badge_text = format!("v{}", version_badge);
+                let badge_bg = Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 35);
+                let badge_stroke = Stroke::new(1.0_f32, accent);
+                let galley = ui.painter().layout_no_wrap(
+                    badge_text.clone(),
+                    FontId::proportional(11.0),
+                    accent,
+                );
+                let badge_rect = egui::Rect::from_min_size(
+                    ui.cursor().min + egui::vec2(0.0, 3.0),
+                    galley.size() + egui::vec2(12.0, 6.0),
+                );
+                ui.painter().rect(badge_rect, CornerRadius::ZERO, badge_bg, badge_stroke, egui::StrokeKind::Inside);
+                ui.painter().text(
+                    badge_rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    badge_text,
+                    FontId::proportional(11.0),
+                    accent,
+                );
+            }
         });
 
         child_ui.add_space(14.0);
 
-        // Body message
-        child_ui.label(
-            egui::RichText::new(format!(
-                "A new version of Scythe is available (v{}). Installed: v{}.",
-                info.version,
-                crate::updater::CURRENT_VERSION
-            ))
-            .size(12.0)
-            .color(Color32::from_rgb(220, 225, 235)),
-        );
-        child_ui.add_space(2.0);
-        child_ui.label(
-            egui::RichText::new("Would you like to open the release page to download and update now?")
-                .size(11.5)
-                .color(Color32::from_rgb(155, 160, 170)),
-        );
+        // Body lines
+        if let Some(first) = body_lines.first() {
+            child_ui.label(
+                egui::RichText::new(first)
+                    .size(12.0)
+                    .color(Color32::from_rgb(220, 225, 235)),
+            );
+        }
+        if let Some(second) = body_lines.get(1) {
+            child_ui.add_space(2.0);
+            child_ui.label(
+                egui::RichText::new(second)
+                    .size(11.5)
+                    .color(Color32::from_rgb(155, 160, 170)),
+            );
+        }
 
-        child_ui.add_space(14.0);
+        child_ui.add_space(12.0);
 
-        // Smaller toggle option: "Do not ask next time"
-        child_ui.checkbox(
-            &mut self.popup_do_not_ask,
-            egui::RichText::new("Do not ask next time")
-                .size(10.5)
-                .color(Color32::from_rgb(175, 180, 190)),
-        );
+        if show_do_not_ask {
+            child_ui.checkbox(
+                &mut self.popup_do_not_ask,
+                egui::RichText::new("Do not ask next time")
+                    .size(10.5)
+                    .color(Color32::from_rgb(175, 180, 190)),
+            );
+            child_ui.add_space(12.0);
+        }
 
-        child_ui.add_space(14.0);
-
-        // Action buttons: "Update Now" and "Later"
+        // Action buttons based on current state
         child_ui.horizontal(|ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if squared_button(ui, "Update Now", true, accent) {
-                    if self.popup_do_not_ask {
-                        self.config.do_not_ask_updates = true;
-                        let _ = self.config.save();
-                    }
-                    self.update_dismissed = true;
-                    crate::updater::open_browser_url(&info.html_url);
-                    self.show_hud_notification("UPDATER", "Opening release in browser...", crate::overlay::ToastIcon::Info);
-                }
+                match &cur {
+                    crate::updater::UpdateStatus::Available(info) => {
+                        if squared_button_sized(ui, "Update Now", true, accent, Some(egui::vec2(100.0, 28.0))) {
+                            if self.popup_do_not_ask {
+                                self.config.do_not_ask_updates = true;
+                                let _ = self.config.save();
+                            }
+                            crate::updater::spawn_auto_update(info.clone(), self.update_status.clone());
+                            self.show_hud_notification("UPDATER", "Downloading and applying update locally...", crate::overlay::ToastIcon::Info);
+                        }
 
-                ui.add_space(10.0);
+                        ui.add_space(10.0);
 
-                if squared_button(ui, "Later", false, accent) {
-                    if self.popup_do_not_ask {
-                        self.config.do_not_ask_updates = true;
-                        let _ = self.config.save();
+                        if squared_button_sized(ui, "Later", false, accent, Some(egui::vec2(70.0, 28.0))) {
+                            if self.popup_do_not_ask {
+                                self.config.do_not_ask_updates = true;
+                                let _ = self.config.save();
+                            }
+                            self.update_dismissed = true;
+                        }
                     }
-                    self.update_dismissed = true;
+                    crate::updater::UpdateStatus::Updating { .. } => {
+                        ui.label(
+                            egui::RichText::new("Please wait while update completes...")
+                                .size(11.5)
+                                .color(Color32::from_rgb(96, 165, 250)),
+                        );
+                    }
+                    crate::updater::UpdateStatus::Updated { .. } => {
+                        if squared_button_sized(ui, "Restart Now", true, accent, Some(egui::vec2(110.0, 28.0))) {
+                            crate::updater::restart_application();
+                        }
+                        ui.add_space(10.0);
+                        if squared_button_sized(ui, "Close", false, accent, Some(egui::vec2(70.0, 28.0))) {
+                            self.update_dismissed = true;
+                        }
+                    }
+                    _ => {}
                 }
             });
         });
@@ -3454,8 +3533,12 @@ impl eframe::App for ScytheOverlayApp {
         } else {
             let modal_active = {
                 let cur = self.update_status.lock().ok().map(|g| g.clone()).unwrap_or_default();
-                matches!(cur, crate::updater::UpdateStatus::Available(_))
-                    && !self.update_dismissed
+                matches!(
+                    cur,
+                    crate::updater::UpdateStatus::Available(_)
+                        | crate::updater::UpdateStatus::Updating { .. }
+                        | crate::updater::UpdateStatus::Updated { .. }
+                ) && !self.update_dismissed
                     && !self.config.do_not_ask_updates
             };
 
