@@ -21,14 +21,21 @@ impl Muxer {
             let path_cstr = CString::new(path).map_err(|e| e.to_string())?;
             let mut fmt_ctx: *mut AVFormatContext = std::ptr::null_mut();
 
+            let is_rtmp = path.starts_with("rtmp://") || path.starts_with("rtmps://");
+            let format_name = if is_rtmp {
+                c"flv".as_ptr()
+            } else {
+                std::ptr::null()
+            };
+
             let ret = avformat_alloc_output_context2(
                 &mut fmt_ctx,
                 std::ptr::null(),
-                std::ptr::null(),
+                format_name,
                 path_cstr.as_ptr(),
             );
             if ret < 0 || fmt_ctx.is_null() {
-                return Err("Failed to alloc output context".into());
+                return Err(format!("Failed to alloc output context (code {})", ret));
             }
 
             let stream = avformat_new_stream(fmt_ctx, std::ptr::null());
@@ -61,15 +68,31 @@ impl Muxer {
             }
 
             if ((*(*fmt_ctx).oformat).flags & AVFMT_NOFILE) == 0 {
-                let ret = avio_open(&mut (*fmt_ctx).pb, path_cstr.as_ptr(), AVIO_FLAG_WRITE);
+                let mut io_opts: *mut AVDictionary = std::ptr::null_mut();
+                if is_rtmp {
+                    av_dict_set(&mut io_opts, c"rw_timeout".as_ptr(), c"5000000".as_ptr(), 0);
+                    av_dict_set(&mut io_opts, c"tcp_nodelay".as_ptr(), c"1".as_ptr(), 0);
+                }
+                let ret = avio_open2(
+                    &mut (*fmt_ctx).pb,
+                    path_cstr.as_ptr(),
+                    AVIO_FLAG_WRITE,
+                    std::ptr::null(),
+                    &mut io_opts,
+                );
+                av_dict_free(&mut io_opts);
                 if ret < 0 {
                     avformat_free_context(fmt_ctx);
-                    return Err("Failed to open output file".into());
+                    return Err(format!("Failed to open output URL/file (code {})", ret));
                 }
             }
 
             let mut opts: *mut AVDictionary = std::ptr::null_mut();
-            av_dict_set(&mut opts, c"movflags".as_ptr(), c"+faststart".as_ptr(), 0);
+            if is_rtmp {
+                av_dict_set(&mut opts, c"flvflags".as_ptr(), c"no_duration_filesize".as_ptr(), 0);
+            } else {
+                av_dict_set(&mut opts, c"movflags".as_ptr(), c"+faststart".as_ptr(), 0);
+            }
             (*fmt_ctx).avoid_negative_ts = 2; // AVFMT_AVOID_NEG_TS_MAKE_ZERO: Shift timestamps so that they start at 0
             (*fmt_ctx).max_interleave_delta = 1_000_000;
             let ret = avformat_write_header(fmt_ctx, &mut opts);
@@ -79,7 +102,7 @@ impl Muxer {
                     avio_closep(&mut (*fmt_ctx).pb);
                 }
                 avformat_free_context(fmt_ctx);
-                return Err("Failed to write header".into());
+                return Err(format!("Failed to write header (code {})", ret));
             }
 
             Ok(Self {
@@ -153,5 +176,19 @@ impl Drop for Muxer {
                 self.fmt_ctx = std::ptr::null_mut();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_rtmp_url_classification() {
+        let rtmp_twitch = "rtmp://live.twitch.tv/app/live_test_key";
+        let rtmps_youtube = "rtmps://a.rtmp.youtube.com/live2/xxxx-yyyy-zzzz";
+        let local_mp4 = "/home/user/Videos/recording.mp4";
+
+        assert!(rtmp_twitch.starts_with("rtmp://") || rtmp_twitch.starts_with("rtmps://"));
+        assert!(rtmps_youtube.starts_with("rtmp://") || rtmps_youtube.starts_with("rtmps://"));
+        assert!(!local_mp4.starts_with("rtmp://") && !local_mp4.starts_with("rtmps://"));
     }
 }

@@ -14,6 +14,69 @@ use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
+fn mask_stream_url(url: &str) -> String {
+    if let Some((base, key)) = url.rsplit_once('/')
+        && key.len() > 4 {
+        let masked = format!("{}****", &key[..2]);
+        return format!("{}/{}", base, masked);
+    }
+    url.to_string()
+}
+
+fn spawn_stream_worker(
+    rtmp_url: String,
+    codec_ctx_ptr: usize,
+    audio_codec_ctx_ptr: Option<usize>,
+    stream_state: Arc<AtomicBool>,
+    stream_start: Arc<AtomicU64>,
+) -> crossbeam_channel::Sender<Packet> {
+    let (tx, rx) = crossbeam_channel::bounded::<Packet>(120);
+    thread::spawn(move || {
+        let codec_ctx = codec_ctx_ptr as *mut ffmpeg_next::ffi::AVCodecContext;
+        let audio_codec_ctx = audio_codec_ctx_ptr.map(|p| p as *mut ffmpeg_next::ffi::AVCodecContext);
+        
+        println!("Connecting to RTMP destination: {}...", mask_stream_url(&rtmp_url));
+        let muxer_res = unsafe { Muxer::new(&rtmp_url, codec_ctx, audio_codec_ctx) };
+        let mut muxer = match muxer_res {
+            Ok(m) => {
+                println!("Connected to RTMP stream successfully.");
+                m
+            }
+            Err(e) => {
+                eprintln!("Failed to connect to RTMP destination: {}", e);
+                stream_state.store(false, Ordering::SeqCst);
+                stream_start.store(0, Ordering::SeqCst);
+                return;
+            }
+        };
+
+        let mut write_errors = 0;
+        while let Ok(pkt) = rx.recv() {
+            if !stream_state.load(Ordering::Relaxed) {
+                break;
+            }
+            if let Err(e) = muxer.write_packet(&pkt) {
+                write_errors += 1;
+                if write_errors % 30 == 1 {
+                    eprintln!("Error writing packet to RTMP stream (errors: {}): {}", write_errors, e);
+                }
+                if write_errors >= 120 {
+                    eprintln!("Too many consecutive write errors on RTMP stream. Aborting broadcast.");
+                    break;
+                }
+            } else {
+                write_errors = 0;
+            }
+        }
+
+        let _ = muxer.finalize();
+        stream_state.store(false, Ordering::SeqCst);
+        stream_start.store(0, Ordering::SeqCst);
+        println!("RTMP stream broadcast finalized.");
+    });
+    tx
+}
+
 fn ensure_wayland_env() {
     scythe::overlay::ensure_wayland_env();
 }
@@ -401,6 +464,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut rec_base_video_pts: i64 = 0;
         let mut rec_base_audio_pts: i64 = -1;
 
+        let mut stream_sender: Option<crossbeam_channel::Sender<Packet>> = None;
+        let mut stream_waiting_keyframe = false;
+        let mut stream_base_video_pts: i64 = 0;
+        let mut stream_base_audio_pts: i64 = -1;
+
         thread::spawn(move || {
             while let Ok(drain) = mux_rx.recv() {
                 let filename = scythe::config::ScytheConfig::format_video_filename("Replay", "mp4");
@@ -527,6 +595,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                     if let Some(mut m) = normal_muxer.take() {
                                         let _ = m.finalize();
                                     }
+                                    let _ = stream_sender.take();
                                     if let Ok(exe) = std::env::current_exe() {
                                         let mut cmd = std::process::Command::new(exe);
                                         cmd.stdin(std::process::Stdio::null())
@@ -645,27 +714,77 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                 println!("Audio mute toggled: {}", !cur);
                             },
                             Command::StartStreaming => {
-                                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
-                                stream_state_clone.store(true, Ordering::SeqCst);
-                                stream_start_clone.store(now, Ordering::SeqCst);
-                                println!("Livestream started at timestamp {}", now);
+                                let cfg = scythe::config::ScytheConfig::load();
+                                let key = cfg.stream_key.trim();
+                                if key.is_empty() {
+                                    eprintln!("Cannot start livestream: stream key is empty in config.");
+                                    stream_state_clone.store(false, Ordering::SeqCst);
+                                    stream_start_clone.store(0, Ordering::SeqCst);
+                                } else if stream_sender.is_some() {
+                                    println!("Livestream is already active.");
+                                } else {
+                                    let rtmp_url = format!("{}/{}", cfg.stream_url.trim_end_matches('/'), key);
+                                    let tx = spawn_stream_worker(
+                                        rtmp_url,
+                                        codec_ctx_ptr,
+                                        audio_codec_ctx_ptr,
+                                        Arc::clone(&stream_state_clone),
+                                        Arc::clone(&stream_start_clone),
+                                    );
+                                    stream_sender = Some(tx);
+                                    stream_waiting_keyframe = true;
+                                    stream_base_video_pts = 0;
+                                    stream_base_audio_pts = -1;
+                                    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+                                    stream_state_clone.store(true, Ordering::SeqCst);
+                                    stream_start_clone.store(now, Ordering::SeqCst);
+                                    println!("Livestream started at timestamp {}, waiting for video keyframe...", now);
+                                }
                             },
                             Command::StopStreaming => {
+                                if stream_sender.take().is_some() {
+                                    println!("Livestream stopped.");
+                                }
+                                stream_waiting_keyframe = false;
+                                stream_base_video_pts = 0;
+                                stream_base_audio_pts = -1;
                                 stream_state_clone.store(false, Ordering::SeqCst);
                                 stream_start_clone.store(0, Ordering::SeqCst);
-                                println!("Livestream stopped.");
                             },
                             Command::ToggleStreaming => {
-                                let cur = stream_state_clone.load(Ordering::SeqCst);
-                                if cur {
+                                if stream_sender.is_some() {
+                                    stream_sender = None;
+                                    stream_waiting_keyframe = false;
+                                    stream_base_video_pts = 0;
+                                    stream_base_audio_pts = -1;
                                     stream_state_clone.store(false, Ordering::SeqCst);
                                     stream_start_clone.store(0, Ordering::SeqCst);
                                     println!("ToggleStreaming: Livestream stopped.");
                                 } else {
-                                    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
-                                    stream_state_clone.store(true, Ordering::SeqCst);
-                                    stream_start_clone.store(now, Ordering::SeqCst);
-                                    println!("ToggleStreaming: Livestream started at timestamp {}", now);
+                                    let cfg = scythe::config::ScytheConfig::load();
+                                    let key = cfg.stream_key.trim();
+                                    if key.is_empty() {
+                                        eprintln!("Cannot start livestream: stream key is empty in config.");
+                                        stream_state_clone.store(false, Ordering::SeqCst);
+                                        stream_start_clone.store(0, Ordering::SeqCst);
+                                    } else {
+                                        let rtmp_url = format!("{}/{}", cfg.stream_url.trim_end_matches('/'), key);
+                                        let tx = spawn_stream_worker(
+                                            rtmp_url,
+                                            codec_ctx_ptr,
+                                            audio_codec_ctx_ptr,
+                                            Arc::clone(&stream_state_clone),
+                                            Arc::clone(&stream_start_clone),
+                                        );
+                                        stream_sender = Some(tx);
+                                        stream_waiting_keyframe = true;
+                                        stream_base_video_pts = 0;
+                                        stream_base_audio_pts = -1;
+                                        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+                                        stream_state_clone.store(true, Ordering::SeqCst);
+                                        stream_start_clone.store(now, Ordering::SeqCst);
+                                        println!("ToggleStreaming: Livestream started at timestamp {}, waiting for video keyframe...", now);
+                                    }
                                 }
                             },
                             _ => {}
@@ -711,6 +830,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                                 let _ = muxer.write_packet(&rebased);
                                             }
                                         }
+                                    if let Some(ref tx) = stream_sender
+                                        && !stream_waiting_keyframe {
+                                            let stream_base_video_time_us = unsafe {
+                                                ffmpeg_next::ffi::av_rescale_q(
+                                                    stream_base_video_pts,
+                                                    video_time_base,
+                                                    ffmpeg_next::ffi::AVRational { num: 1, den: 1_000_000 },
+                                                )
+                                            };
+                                            let a_time_us = if let Some(a_tb) = audio_time_base {
+                                                unsafe {
+                                                    ffmpeg_next::ffi::av_rescale_q(
+                                                        pkt.pts(),
+                                                        a_tb,
+                                                        ffmpeg_next::ffi::AVRational { num: 1, den: 1_000_000 },
+                                                    )
+                                                }
+                                            } else {
+                                                0
+                                            };
+                                            if a_time_us >= stream_base_video_time_us {
+                                                if stream_base_audio_pts < 0 {
+                                                    stream_base_audio_pts = pkt.pts();
+                                                }
+                                                let rebased = pkt.rebased(stream_base_audio_pts);
+                                                let _ = tx.try_send(rebased);
+                                            }
+                                        }
                                     if config.replay_enabled {
                                         ring.push_overwrite(pkt);
                                     }
@@ -731,7 +878,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 recv(ticker) -> _ => {
                     while ticker.try_recv().is_ok() {}
 
-                    if !normal_recording && !config.replay_enabled {
+                    if stream_sender.is_some() && !stream_state_clone.load(Ordering::Relaxed) {
+                        stream_sender = None;
+                        stream_waiting_keyframe = false;
+                        stream_base_video_pts = 0;
+                        stream_base_audio_pts = -1;
+                    }
+
+                    let is_streaming = stream_sender.is_some();
+                    if !normal_recording && !config.replay_enabled && !is_streaming {
                         if last_malloc_trim.elapsed().as_secs() >= 5 {
                             last_malloc_trim = std::time::Instant::now();
                             #[cfg(target_os = "linux")]
@@ -805,6 +960,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                             let _ = muxer.write_packet(&rebased);
                                     }
                                 }
+
+                                if let Some(ref tx) = stream_sender {
+                                    if stream_waiting_keyframe && pkt.is_keyframe() {
+                                        stream_waiting_keyframe = false;
+                                        stream_base_video_pts = pkt.pts();
+                                        stream_base_audio_pts = -1;
+                                        println!("Livestream keyframe received, broadcasting video...");
+                                    }
+                                    if !stream_waiting_keyframe {
+                                        let rebased = pkt.rebased(stream_base_video_pts);
+                                        let _ = tx.try_send(rebased);
+                                    }
+                                }
+
                                 if config.replay_enabled {
                                     ring.push_overwrite(pkt);
                                 }
