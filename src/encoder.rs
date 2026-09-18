@@ -149,7 +149,8 @@ impl VaapiEncoder {
                 width as i32,
                 height as i32,
                 AVPixelFormat::AV_PIX_FMT_NV12,
-                (SwsFlags::SWS_BICUBIC as libc::c_int) | (SwsFlags::SWS_ACCURATE_RND as libc::c_int),
+                // SWS_BICUBIC (4) | SWS_ACCURATE_RND (0x40000)
+                4 | 0x40000,
                 ptr::null_mut(),
                 ptr::null_mut(),
                 ptr::null_mut(),
