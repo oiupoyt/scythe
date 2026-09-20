@@ -437,7 +437,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut config = scythe::config::ScytheConfig::load();
         replay_state_clone.store(config.replay_enabled, Ordering::SeqCst);
 
-        let mut encoder = VideoEncoder::new_with_params(width, height, config.record_bitrate_kbps, config.fps, &config.video_codec)
+        let active_bitrate = if config.replay_enabled {
+            config.replay_bitrate_kbps
+        } else {
+            config.record_bitrate_kbps
+        };
+        let mut encoder = VideoEncoder::new_with_params(width, height, active_bitrate, config.fps, &config.video_codec)
             .expect("Failed to init encoder");
         let codec_ctx_ptr = encoder.codec_ctx() as usize;
         println!("Background recorder engine active and ready ({} fps, replay: {}).", config.fps, config.replay_enabled);
@@ -579,11 +584,68 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
         let stream_start = std::time::Instant::now();
         let mut last_video_pts: i64 = -1;
-        let mut ticker = crossbeam_channel::tick(std::time::Duration::from_nanos(1_000_000_000 / config.fps.max(1) as u64));
+        let target_frame_duration = std::time::Duration::from_nanos(1_000_000_000 / config.fps.max(1) as u64);
+        let mut ticker = crossbeam_channel::tick(target_frame_duration);
         let mut latest_frame: Option<Frame> = None;
         let mut has_new_frame = false;
         let mut last_encoded_raw_ptr: usize = 0;
         let mut last_malloc_trim = std::time::Instant::now();
+        let mut next_frame_time = stream_start;
+        let mut last_frame_encoded_time = stream_start.checked_sub(target_frame_duration).unwrap_or(stream_start);
+
+        macro_rules! handle_packets {
+            ($packets_res:expr) => {
+                match $packets_res {
+                    Ok(packets) => {
+                        for mut pkt in packets {
+                            pkt.set_stream_index(0);
+                            if normal_recording {
+                                if normal_waiting_keyframe && (pkt.is_keyframe() || normal_keyframe_timeout >= 20) {
+                                    normal_waiting_keyframe = false;
+                                    normal_keyframe_timeout = 0;
+                                    rec_base_video_pts = pkt.pts();
+                                    rec_base_audio_pts = -1;
+                                    let codec_ctx = codec_ctx_ptr as *mut ffmpeg_next::ffi::AVCodecContext;
+                                    let filename = scythe::config::ScytheConfig::format_video_filename("Recording", "mp4");
+                                    let full_path = config.resolve_save_path(&filename);
+                                    let audio_codec_ctx = audio_codec_ctx_ptr.map(|p| p as *mut ffmpeg_next::ffi::AVCodecContext);
+                                    normal_muxer = unsafe { Muxer::new(&full_path, codec_ctx, audio_codec_ctx).ok() };
+                                    println!("Started normal recording to {}", full_path);
+                                } else if normal_waiting_keyframe {
+                                    normal_keyframe_timeout += 1;
+                                }
+
+                                if !normal_waiting_keyframe
+                                    && let Some(muxer) = normal_muxer.as_mut() {
+                                        let rebased = pkt.rebased(rec_base_video_pts);
+                                        let _ = muxer.write_packet(&rebased);
+                                }
+                            }
+
+                            if let Some(ref tx) = stream_sender {
+                                if stream_waiting_keyframe && pkt.is_keyframe() {
+                                    stream_waiting_keyframe = false;
+                                    stream_base_video_pts = pkt.pts();
+                                    stream_base_audio_pts = -1;
+                                    println!("Livestream keyframe received, broadcasting video...");
+                                }
+                                if !stream_waiting_keyframe {
+                                    let rebased = pkt.rebased(stream_base_video_pts);
+                                    let _ = tx.try_send(rebased);
+                                }
+                            }
+
+                            if config.replay_enabled {
+                                ring.push_overwrite(pkt);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Video encoding error: {}", e);
+                    }
+                }
+            };
+        }
 
         loop {
             crossbeam_channel::select! {
@@ -592,8 +654,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         match cmd {
                             Command::ReloadConfig => {
                                 let new_config = scythe::config::ScytheConfig::load();
-                                if new_config.show_cursor != config.show_cursor {
-                                    println!("Cursor display changed ({} -> {}). Restarting daemon for new capture session...", config.show_cursor, new_config.show_cursor);
+                                let video_changed = new_config.show_cursor != config.show_cursor
+                                    || new_config.fps != config.fps
+                                    || new_config.video_codec != config.video_codec
+                                    || new_config.record_bitrate_kbps != config.record_bitrate_kbps
+                                    || new_config.replay_bitrate_kbps != config.replay_bitrate_kbps
+                                    || new_config.replay_enabled != config.replay_enabled;
+
+                                if video_changed {
+                                    println!("Core video settings changed (fps/codec/bitrate/cursor/replay). Restarting daemon for new capture session...");
                                     if let Some(mut m) = normal_muxer.take() {
                                         let _ = m.finalize();
                                     }
@@ -881,12 +950,72 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 },
                 recv(frame_rx) -> frame_res => {
                     if let Ok(f) = frame_res {
-                        latest_frame = Some(f);
+                        let mut current = f;
+                        while let Ok(newer) = frame_rx.try_recv() {
+                            current = newer;
+                        }
+                        latest_frame = Some(current);
                         has_new_frame = true;
                     }
-                    while let Ok(f) = frame_rx.try_recv() {
-                        latest_frame = Some(f);
-                        has_new_frame = true;
+
+                    let is_streaming = stream_sender.is_some();
+                    if !normal_recording && !config.replay_enabled && !is_streaming {
+                        has_new_frame = false;
+                        continue;
+                    }
+
+                    let now = std::time::Instant::now();
+                    let jitter_margin = target_frame_duration / 8;
+                    if now + jitter_margin >= next_frame_time {
+                        let elapsed = now.duration_since(stream_start);
+                        let raw_pts = (elapsed.as_secs_f64() * config.fps as f64).round() as i64;
+                        let pts = if (raw_pts - last_video_pts).abs() <= 1 {
+                            last_video_pts + 1
+                        } else if raw_pts > last_video_pts {
+                            raw_pts
+                        } else {
+                            last_video_pts + 1
+                        };
+                        last_video_pts = pts;
+                        last_frame_encoded_time = now;
+                        if next_frame_time + target_frame_duration <= now {
+                            next_frame_time = now + target_frame_duration;
+                        } else {
+                            next_frame_time += target_frame_duration;
+                        }
+
+                        let is_same_raw_frame = match &latest_frame {
+                            Some(Frame::Raw { data, .. }) => {
+                                let ptr = Arc::as_ptr(data) as usize;
+                                ptr != 0 && ptr == last_encoded_raw_ptr
+                            }
+                            _ => false,
+                        };
+
+                        has_new_frame = false;
+                        let packets_res = if !is_same_raw_frame {
+                            if let Some(ref f) = latest_frame {
+                                if let Frame::Raw { data, .. } = f {
+                                    last_encoded_raw_ptr = Arc::as_ptr(data) as usize;
+                                }
+                                encoder.encode_frame(f, pts)
+                            } else {
+                                Ok(Vec::new())
+                            }
+                        } else {
+                            match encoder.encode_cached_frame(pts) {
+                                Ok(pkts) => Ok(pkts),
+                                Err(_) => {
+                                    if let Some(ref f) = latest_frame {
+                                        encoder.encode_frame(f, pts)
+                                    } else {
+                                        Ok(Vec::new())
+                                    }
+                                }
+                            }
+                        };
+
+                        handle_packets!(packets_res);
                     }
                 },
                 recv(ticker) -> _ => {
@@ -911,96 +1040,63 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     }
 
                     let now = std::time::Instant::now();
-                    let elapsed = now.duration_since(stream_start);
-                    let raw_pts = (elapsed.as_secs_f64() * config.fps as f64).round() as i64;
-                    let pts = if raw_pts > last_video_pts { raw_pts } else { last_video_pts + 1 };
-                    last_video_pts = pts;
-
-                    let is_same_raw_frame = match &latest_frame {
-                        Some(Frame::Raw { data, .. }) => {
-                            let ptr = Arc::as_ptr(data) as usize;
-                            ptr != 0 && ptr == last_encoded_raw_ptr
-                        }
-                        _ => false,
-                    };
-
-                    let packets_res = if has_new_frame && !is_same_raw_frame {
-                        has_new_frame = false;
-                        if let Some(ref f) = latest_frame {
-                            if let Frame::Raw { data, .. } = f {
-                                last_encoded_raw_ptr = Arc::as_ptr(data) as usize;
-                            }
-                            encoder.encode_frame(f, pts)
+                    let jitter_margin = target_frame_duration / 8;
+                    if now.duration_since(last_frame_encoded_time) >= target_frame_duration.saturating_sub(jitter_margin) {
+                        let elapsed = now.duration_since(stream_start);
+                        let raw_pts = (elapsed.as_secs_f64() * config.fps as f64).round() as i64;
+                        let pts = if (raw_pts - last_video_pts).abs() <= 1 {
+                            last_video_pts + 1
+                        } else if raw_pts > last_video_pts {
+                            raw_pts
                         } else {
-                            Ok(Vec::new())
+                            last_video_pts + 1
+                        };
+                        last_video_pts = pts;
+                        last_frame_encoded_time = now;
+                        if next_frame_time + target_frame_duration <= now {
+                            next_frame_time = now + target_frame_duration;
+                        } else {
+                            next_frame_time += target_frame_duration;
                         }
-                    } else {
-                        has_new_frame = false;
-                        match encoder.encode_cached_frame(pts) {
-                            Ok(pkts) => Ok(pkts),
-                            Err(_) => {
-                                if let Some(ref f) = latest_frame {
-                                    if let Frame::Raw { data, .. } = f {
-                                        last_encoded_raw_ptr = Arc::as_ptr(data) as usize;
+
+                        let is_same_raw_frame = match &latest_frame {
+                            Some(Frame::Raw { data, .. }) => {
+                                let ptr = Arc::as_ptr(data) as usize;
+                                ptr != 0 && ptr == last_encoded_raw_ptr
+                            }
+                            _ => false,
+                        };
+
+                        let packets_res = if has_new_frame && !is_same_raw_frame {
+                            has_new_frame = false;
+                            if let Some(ref f) = latest_frame {
+                                if let Frame::Raw { data, .. } = f {
+                                    last_encoded_raw_ptr = Arc::as_ptr(data) as usize;
+                                }
+                                encoder.encode_frame(f, pts)
+                            } else {
+                                Ok(Vec::new())
+                            }
+                        } else {
+                            has_new_frame = false;
+                            match encoder.encode_cached_frame(pts) {
+                                Ok(pkts) => Ok(pkts),
+                                Err(_) => {
+                                    if let Some(ref f) = latest_frame {
+                                        if let Frame::Raw { data, .. } = f {
+                                            last_encoded_raw_ptr = Arc::as_ptr(data) as usize;
+                                        }
+                                        encoder.encode_frame(f, pts)
+                                    } else {
+                                        Ok(Vec::new())
                                     }
-                                    encoder.encode_frame(f, pts)
-                                } else {
-                                    Ok(Vec::new())
                                 }
                             }
-                        }
-                    };
+                        };
 
-                    match packets_res {
-                        Ok(packets) => {
-                            for mut pkt in packets {
-                                pkt.set_stream_index(0);
-                                if normal_recording {
-                                    if normal_waiting_keyframe && (pkt.is_keyframe() || normal_keyframe_timeout >= 20) {
-                                        normal_waiting_keyframe = false;
-                                        normal_keyframe_timeout = 0;
-                                        rec_base_video_pts = pkt.pts();
-                                        rec_base_audio_pts = -1;
-                                        let codec_ctx = codec_ctx_ptr as *mut ffmpeg_next::ffi::AVCodecContext;
-                                        let filename = scythe::config::ScytheConfig::format_video_filename("Recording", "mp4");
-                                        let full_path = config.resolve_save_path(&filename);
-                                        let audio_codec_ctx = audio_codec_ctx_ptr.map(|p| p as *mut ffmpeg_next::ffi::AVCodecContext);
-                                        normal_muxer = unsafe { Muxer::new(&full_path, codec_ctx, audio_codec_ctx).ok() };
-                                        println!("Started normal recording to {}", full_path);
-                                    } else if normal_waiting_keyframe {
-                                        normal_keyframe_timeout += 1;
-                                    }
-                                    
-                                    if !normal_waiting_keyframe
-                                        && let Some(muxer) = normal_muxer.as_mut() {
-                                            let rebased = pkt.rebased(rec_base_video_pts);
-                                            let _ = muxer.write_packet(&rebased);
-                                    }
-                                }
-
-                                if let Some(ref tx) = stream_sender {
-                                    if stream_waiting_keyframe && pkt.is_keyframe() {
-                                        stream_waiting_keyframe = false;
-                                        stream_base_video_pts = pkt.pts();
-                                        stream_base_audio_pts = -1;
-                                        println!("Livestream keyframe received, broadcasting video...");
-                                    }
-                                    if !stream_waiting_keyframe {
-                                        let rebased = pkt.rebased(stream_base_video_pts);
-                                        let _ = tx.try_send(rebased);
-                                    }
-                                }
-
-                                if config.replay_enabled {
-                                    ring.push_overwrite(pkt);
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            eprintln!("Video encoding error: {}", e);
-                        }
+                        handle_packets!(packets_res);
                     }
-            }
+                }
     }
 }
     });
