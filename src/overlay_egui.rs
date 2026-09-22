@@ -1937,7 +1937,7 @@ impl ScytheOverlayApp {
                 .max_height(scroll_h)
                 .auto_shrink([false, true])
                 .show(ui, |ui| {
-                    ui.set_width(inner_rect.width());
+                    ui.set_width(ui.available_width());
                     ui.add_space(2.0);
 
                     match self.current_view {
@@ -1947,7 +1947,7 @@ impl ScytheOverlayApp {
                                 ui.label(egui::RichText::new("Directory to save replays:").size(12.0).color(Color32::WHITE));
                                 ui.add_space(3.0);
                                 ui.horizontal(|ui| {
-                                    let edit_w = (ui.available_width() - 152.0).max(120.0);
+                                    let edit_w = (ui.available_width() - 70.0 - 60.0 - ui.spacing().item_spacing.x * 2.0).max(60.0);
                                     ui.add(egui::TextEdit::singleline(&mut self.output_dir).desired_width(edit_w));
                                     if squared_button_sized(ui, "Change", false, accent, Some(egui::vec2(70.0, 26.0))) {
                                         pick_folder(&self.output_dir, self.folder_tx.clone(), self.folder_picking_active.clone());
@@ -2169,7 +2169,7 @@ impl ScytheOverlayApp {
                                 ui.label(egui::RichText::new("Directory to save recordings:").size(12.0).color(Color32::WHITE));
                                 ui.add_space(3.0);
                                 ui.horizontal(|ui| {
-                                    let edit_w = (ui.available_width() - 152.0).max(120.0);
+                                    let edit_w = (ui.available_width() - 70.0 - 60.0 - ui.spacing().item_spacing.x * 2.0).max(60.0);
                                     ui.add(egui::TextEdit::singleline(&mut self.output_dir).desired_width(edit_w));
                                     if squared_button_sized(ui, "Change", false, accent, Some(egui::vec2(70.0, 26.0))) {
                                         pick_folder(&self.output_dir, self.folder_tx.clone(), self.folder_picking_active.clone());
@@ -2477,7 +2477,7 @@ impl ScytheOverlayApp {
                                 }
 
                                 ui.add_space(8.0);
-                                ui.horizontal(|ui| {
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     if squared_button_sized(ui, "Reset Hotkeys to Defaults", false, accent, Some(Vec2::new(180.0, 28.0))) {
                                         let old_menu = self.config.menu_hotkey.clone();
                                         let old_save = self.config.save_hotkey.clone();
@@ -2523,9 +2523,13 @@ impl ScytheOverlayApp {
                                 let btn_w = ((total_w - (cols - 1) as f32 * gap) / cols as f32).floor();
                                 let btn_h = 32.0_f32;
 
-                                for chunk in palettes.chunks(cols) {
+                                for (chunk_idx, chunk) in palettes.chunks(cols).enumerate() {
+                                    if chunk_idx > 0 {
+                                        ui.add_space(gap);
+                                    }
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = gap;
+                                        ui.spacing_mut().item_spacing.y = 0.0;
                                         for &(id, name, col) in chunk {
                                             let is_sel = self.config.accent_color.to_lowercase() == id;
                                             let (rect, resp) = ui.allocate_exact_size(egui::vec2(btn_w, btn_h), egui::Sense::click());
@@ -2574,7 +2578,6 @@ impl ScytheOverlayApp {
                                             }
                                         }
                                     });
-                                    ui.add_space(gap);
                                 }
                             });
 
@@ -2691,7 +2694,7 @@ impl ScytheOverlayApp {
                                 ui.label(egui::RichText::new("Directory to save screenshots:").size(12.0).color(Color32::WHITE));
                                 ui.add_space(3.0);
                                 ui.horizontal(|ui| {
-                                    let edit_w = (ui.available_width() - 152.0).max(120.0);
+                                    let edit_w = (ui.available_width() - 70.0 - 60.0 - ui.spacing().item_spacing.x * 2.0).max(60.0);
                                     ui.add(egui::TextEdit::singleline(&mut self.output_dir).desired_width(edit_w));
                                     if squared_button_sized(ui, "Change", false, accent, Some(egui::vec2(70.0, 26.0))) {
                                         pick_folder(&self.output_dir, self.folder_tx.clone(), self.folder_picking_active.clone());
@@ -3452,11 +3455,10 @@ impl eframe::App for ScytheOverlayApp {
         }
 
         self.frame_count += 1;
-        // Apply transparency and make visible smoothly on first frame
+        // Apply transparency smoothly on first frame
         if !self.initial_pos_set {
             #[cfg(target_os = "windows")]
             apply_windows_transparency("Scythe");
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
             self.initial_pos_set = true;
         }
 
@@ -3588,9 +3590,15 @@ impl eframe::App for ScytheOverlayApp {
         visuals.selection.bg_fill = self.accent_color();
         ctx.set_visuals(visuals);
 
-        // Background screen darkening scrim (translucent dimming so background remains visible)
+        // Background screen darkening scrim: on Windows use Color32::TRANSPARENT so DWM displays true per-pixel glass transparency without black screen
+        let bg_fill = if cfg!(target_os = "windows") {
+            Color32::TRANSPARENT
+        } else {
+            Color32::from_rgba_unmultiplied(0, 0, 0, 80)
+        };
+
         egui::CentralPanel::default()
-            .frame(egui::Frame::NONE.fill(Color32::from_rgba_unmultiplied(0, 0, 0, 80)).inner_margin(egui::Margin::ZERO))
+            .frame(egui::Frame::NONE.fill(bg_fill).inner_margin(egui::Margin::ZERO))
             .show(ctx, |ui| {
                 self.render_top_bar(ctx, ui);
                 match self.current_view {
@@ -3612,31 +3620,22 @@ impl eframe::App for ScytheOverlayApp {
 pub fn apply_windows_transparency(title: &str) {
     unsafe {
         use windows::Win32::UI::WindowsAndMessaging::{
-            EnumWindows, GetWindowThreadProcessId, SetClassLongPtrW, GCLP_HBRBACKGROUND,
+            EnumWindows, GetWindowThreadProcessId,
         };
         use windows::Win32::System::Threading::GetCurrentProcessId;
         use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
         use windows::Win32::Graphics::Dwm::DwmExtendFrameIntoClientArea;
         use windows::Win32::UI::Controls::MARGINS;
-        use windows::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
 
         let my_pid = GetCurrentProcessId();
-        let is_overlay = title == "Scythe";
 
         unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
             unsafe {
-                let (my_pid, is_overlay) = {
-                    let ptr = lparam.0 as *const (u32, bool);
-                    *ptr
-                };
+                let my_pid = lparam.0 as u32;
                 let mut proc_id = 0u32;
                 GetWindowThreadProcessId(hwnd, Some(&mut proc_id));
                 if proc_id == my_pid {
-                    // 1. Set window class background brush to 0 (NULL) to prevent GDI white flash
-                    #[cfg(target_pointer_width = "64")]
-                    let _ = SetClassLongPtrW(hwnd, GCLP_HBRBACKGROUND, 0);
-
-                    // 2. Extend DWM frame margins into the client area
+                    // Extend DWM frame margins into the client area for true per-pixel glass transparency
                     let margins = MARGINS {
                         cxLeftWidth: -1,
                         cxRightWidth: -1,
@@ -3644,53 +3643,12 @@ pub fn apply_windows_transparency(title: &str) {
                         cyBottomHeight: -1,
                     };
                     let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
-
-                    // 3. Set AccentPolicy via SetWindowCompositionAttribute for true transparency/blur
-                    #[repr(C)]
-                    struct AccentPolicy {
-                        accent_state: u32,
-                        accent_flags: u32,
-                        gradient_color: u32,
-                        animation_id: u32,
-                    }
-
-                    #[repr(C)]
-                    struct WindowCompositionAttributeData {
-                        attribute: u32, // WCA_ACCENT_POLICY = 19
-                        data: *mut AccentPolicy,
-                        size_of_data: usize,
-                    }
-
-                    type SetWindowCompositionAttributeFn =
-                        unsafe extern "system" fn(HWND, *mut WindowCompositionAttributeData) -> BOOL;
-
-                    if let Ok(user32) = GetModuleHandleA(windows::core::s!("user32.dll")) {
-                        if let Some(proc) = GetProcAddress(user32, windows::core::s!("SetWindowCompositionAttribute")) {
-                            let set_wca: SetWindowCompositionAttributeFn = std::mem::transmute(proc);
-                            
-                            let mut policy = AccentPolicy {
-                                accent_state: 2, // ACCENT_ENABLE_TRANSPARENTGRADIENT (true per-pixel alpha on Win 10 & 11)
-                                accent_flags: 2,
-                                gradient_color: 0x00000000, // Fully transparent backbuffer
-                                animation_id: 0,
-                            };
-
-                            let mut data = WindowCompositionAttributeData {
-                                attribute: 19,
-                                data: &mut policy,
-                                size_of_data: std::mem::size_of::<AccentPolicy>(),
-                            };
-
-                            let _ = set_wca(hwnd, &mut data);
-                        }
-                    }
                 }
                 BOOL(1)
             }
         }
 
-        let ctx_data = (my_pid, is_overlay);
-        let _ = EnumWindows(Some(enum_proc), LPARAM(&ctx_data as *const _ as isize));
+        let _ = EnumWindows(Some(enum_proc), LPARAM(my_pid as isize));
     }
 }
 
@@ -3768,7 +3726,6 @@ pub fn run_egui_overlay() {
             .with_resizable(false)
             .with_decorations(false)
             .with_transparent(true)
-            .with_visible(false)
             .with_always_on_top(),
         ..Default::default()
     };
@@ -3811,7 +3768,6 @@ impl eframe::App for ShadowPlayToastApp {
             }
             #[cfg(target_os = "windows")]
             apply_windows_transparency("Scythe Notification");
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
             self.initial_setup = true;
         }
 
@@ -3918,7 +3874,6 @@ pub fn run_egui_toast(title: &str, subtitle: &str, icon: crate::overlay::ToastIc
             .with_inner_size([toast_w, toast_h])
             .with_decorations(false)
             .with_transparent(true)
-            .with_visible(false)
             .with_always_on_top()
             .with_resizable(false),
         ..Default::default()

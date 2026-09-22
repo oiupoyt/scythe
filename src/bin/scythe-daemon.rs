@@ -384,8 +384,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let first_frame = match source.next_frame_timeout(std::time::Duration::from_millis(600)) {
         Ok(f) => f,
         Err(_) => {
+            let mut black_buf = vec![0u8; 1920 * 1080 * 4];
+            for chunk in black_buf.chunks_exact_mut(4) {
+                chunk[0] = 0;
+                chunk[1] = 0;
+                chunk[2] = 0;
+                chunk[3] = 255;
+            }
             Frame::Raw {
-                data: std::sync::Arc::new(vec![0u8; 1920 * 1080 * 4]),
+                data: std::sync::Arc::new(black_buf),
                 width: 1920,
                 height: 1080,
                 stride: 1920 * 4,

@@ -12,13 +12,23 @@ use crate::capture::{Frame, FrameSource};
 use std::sync::Arc;
 
 #[cfg(target_os = "windows")]
+fn create_black_bgra(width: u32, height: u32) -> Arc<Vec<u8>> {
+    let mut buf = vec![0u8; (width * 4 * height) as usize];
+    for chunk in buf.chunks_exact_mut(4) {
+        chunk[0] = 0;   // B
+        chunk[1] = 0;   // G
+        chunk[2] = 0;   // R
+        chunk[3] = 255; // A (opaque black)
+    }
+    Arc::new(buf)
+}
+
+#[cfg(target_os = "windows")]
 pub struct WindowsCapture {
     device: ID3D11Device,
     context: ID3D11DeviceContext,
     duplication: Option<IDXGIOutputDuplication>,
-    staging_textures: [ID3D11Texture2D; 2],
-    staging_idx: usize,
-    has_staged_frame: bool,
+    staging_texture: ID3D11Texture2D,
     pub width: u32,
     pub height: u32,
     pub last_stride: u32,
@@ -38,65 +48,64 @@ impl WindowsCapture {
 
             // Create DXGI Factory to find the display adapter with active outputs
             let factory: IDXGIFactory1 = CreateDXGIFactory1()?;
-            let mut chosen_adapter: Option<IDXGIAdapter1> = None;
-            let mut chosen_output: Option<IDXGIOutput1> = None;
+            let mut successful_session: Option<(ID3D11Device, ID3D11DeviceContext, IDXGIOutputDuplication, u32, u32)> = None;
 
             let mut a_idx = 0;
-            while let Ok(adapter) = factory.EnumAdapters1(a_idx) {
+            'adapter_loop: while let Ok(adapter) = factory.EnumAdapters1(a_idx) {
                 let mut o_idx = 0;
                 while let Ok(output) = adapter.EnumOutputs(o_idx) {
                     if let Ok(output1) = output.cast::<IDXGIOutput1>() {
-                        chosen_adapter = Some(adapter);
-                        chosen_output = Some(output1);
-                        break;
+                        if let Ok(desc) = output1.GetDesc() {
+                            let width = (desc.DesktopCoordinates.right - desc.DesktopCoordinates.left).unsigned_abs();
+                            let height = (desc.DesktopCoordinates.bottom - desc.DesktopCoordinates.top).unsigned_abs();
+                            if width > 0 && height > 0 {
+                                if let Ok(adapter_base) = adapter.cast::<IDXGIAdapter>() {
+                                    let mut device: Option<ID3D11Device> = None;
+                                    let mut context: Option<ID3D11DeviceContext> = None;
+                                    let mut feature_level = D3D_FEATURE_LEVEL_11_0;
+
+                                    let create_res = D3D11CreateDevice(
+                                        Some(&adapter_base),
+                                        D3D_DRIVER_TYPE_UNKNOWN,
+                                        HMODULE(std::ptr::null_mut()),
+                                        D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+                                        Some(&[
+                                            D3D_FEATURE_LEVEL_11_1,
+                                            D3D_FEATURE_LEVEL_11_0,
+                                            D3D_FEATURE_LEVEL_10_1,
+                                            D3D_FEATURE_LEVEL_10_0,
+                                        ]),
+                                        D3D11_SDK_VERSION,
+                                        Some(&mut device),
+                                        Some(&mut feature_level),
+                                        Some(&mut context),
+                                    );
+
+                                    if create_res.is_ok() {
+                                        if let (Some(dev), Some(ctx)) = (device, context) {
+                                            match output1.DuplicateOutput(&dev) {
+                                                Ok(dup) => {
+                                                    successful_session = Some((dev, ctx, dup, width, height));
+                                                    break 'adapter_loop;
+                                                }
+                                                Err(e) => {
+                                                    eprintln!("Adapter {} Output {} DuplicateOutput failed: {:?}", a_idx, o_idx, e);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                     o_idx += 1;
-                }
-                if chosen_adapter.is_some() {
-                    break;
                 }
                 a_idx += 1;
             }
 
-            let (adapter, output1) = match (chosen_adapter, chosen_output) {
-                (Some(a), Some(o)) => (a, o),
-                _ => return Err("No active display output found for Windows desktop capture".into()),
-            };
+            let (device, context, duplication, width, height) = successful_session
+                .ok_or("Failed to initialize Windows Desktop Duplication on any display output")?;
 
-            let mut device: Option<ID3D11Device> = None;
-            let mut context: Option<ID3D11DeviceContext> = None;
-            let mut feature_level = D3D_FEATURE_LEVEL_11_0;
-
-            let adapter_base = adapter.cast::<IDXGIAdapter>()?;
-
-            D3D11CreateDevice(
-                Some(&adapter_base),
-                D3D_DRIVER_TYPE_UNKNOWN,
-                HMODULE(std::ptr::null_mut()),
-                D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-                Some(&[
-                    D3D_FEATURE_LEVEL_11_1,
-                    D3D_FEATURE_LEVEL_11_0,
-                    D3D_FEATURE_LEVEL_10_1,
-                    D3D_FEATURE_LEVEL_10_0,
-                ]),
-                D3D11_SDK_VERSION,
-                Some(&mut device),
-                Some(&mut feature_level),
-                Some(&mut context),
-            )?;
-
-            let device = device.ok_or("Failed to create D3D11 device")?;
-            let context = context.ok_or("Failed to create D3D11 context")?;
-
-            let desc = output1.GetDesc()?;
-            let width = (desc.DesktopCoordinates.right - desc.DesktopCoordinates.left).unsigned_abs();
-            let height = (desc.DesktopCoordinates.bottom - desc.DesktopCoordinates.top).unsigned_abs();
-
-            // Initialize Desktop Duplication
-            let duplication = output1.DuplicateOutput(&device).ok();
-
-            // Allocate double-buffered CPU-accessible staging textures for asynchronous zero-stall GPU readback
             let staging_desc = D3D11_TEXTURE2D_DESC {
                 Width: width,
                 Height: height,
@@ -110,24 +119,17 @@ impl WindowsCapture {
                 MiscFlags: 0,
             };
 
-            let mut tex0: Option<ID3D11Texture2D> = None;
-            let mut tex1: Option<ID3D11Texture2D> = None;
-            device.CreateTexture2D(&staging_desc, None, Some(&mut tex0))?;
-            device.CreateTexture2D(&staging_desc, None, Some(&mut tex1))?;
-            let staging_textures = [
-                tex0.ok_or("Failed to create D3D11 staging texture 0")?,
-                tex1.ok_or("Failed to create D3D11 staging texture 1")?,
-            ];
+            let mut staging_texture_opt: Option<ID3D11Texture2D> = None;
+            device.CreateTexture2D(&staging_desc, None, Some(&mut staging_texture_opt))?;
+            let staging_texture = staging_texture_opt.ok_or("Failed to create D3D11 staging texture")?;
 
-            println!("Windows DXGI Hardware Desktop Duplication active (asynchronous double-buffered): {}x{}", width, height);
+            println!("Windows DXGI Hardware Desktop Duplication active: {}x{}", width, height);
 
             Ok(Self {
                 device,
                 context,
-                duplication,
-                staging_textures,
-                staging_idx: 0,
-                has_staged_frame: false,
+                duplication: Some(duplication),
+                staging_texture,
                 width,
                 height,
                 last_stride: width * 4,
@@ -138,83 +140,20 @@ impl WindowsCapture {
     }
 
     fn reinit_duplication(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        unsafe {
-            // Drop old duplication interface first to release COM reference
-            self.duplication = None;
-            self.has_staged_frame = false;
-            self.staging_idx = 0;
-
-            // Wait a moment for DWM compositor to release the previous duplication handle
-            std::thread::sleep(std::time::Duration::from_millis(30));
-
-            // Check if device was removed/lost
-            if self.device.GetDeviceRemovedReason().is_err() {
-                println!("D3D11 device removed or reset. Recreating device...");
-                if let Ok(new_cap) = WindowsCapture::new() {
-                    self.device = new_cap.device;
-                    self.context = new_cap.context;
-                    self.duplication = new_cap.duplication;
-                    self.staging_textures = new_cap.staging_textures;
-                    self.width = new_cap.width;
-                    self.height = new_cap.height;
-                    self.last_stride = new_cap.last_stride;
-                    self.buffer_pool.clear();
-                    return Ok(());
-                }
-            }
-
-            let dxgi_device: IDXGIDevice = self.device.cast()?;
-            let adapter = dxgi_device.GetAdapter()?;
-            let mut o_idx = 0;
-            while let Ok(output) = adapter.EnumOutputs(o_idx) {
-                if let Ok(output1) = output.cast::<IDXGIOutput1>() {
-                    match output1.DuplicateOutput(&self.device) {
-                        Ok(dup) => {
-                            self.duplication = Some(dup);
-                            if let Ok(desc) = output1.GetDesc() {
-                                let new_w = (desc.DesktopCoordinates.right - desc.DesktopCoordinates.left).unsigned_abs();
-                                let new_h = (desc.DesktopCoordinates.bottom - desc.DesktopCoordinates.top).unsigned_abs();
-                                if new_w != self.width || new_h != self.height {
-                                    self.width = new_w;
-                                    self.height = new_h;
-                                    self.last_stride = new_w * 4;
-                                    self.buffer_pool.clear();
-                                    self.last_frame = None;
-                                    let staging_desc = D3D11_TEXTURE2D_DESC {
-                                        Width: new_w,
-                                        Height: new_h,
-                                        MipLevels: 1,
-                                        ArraySize: 1,
-                                        Format: DXGI_FORMAT_B8G8R8A8_UNORM,
-                                        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-                                        Usage: D3D11_USAGE_STAGING,
-                                        BindFlags: 0,
-                                        CPUAccessFlags: D3D11_CPU_ACCESS_READ.0 as u32,
-                                        MiscFlags: 0,
-                                    };
-                                    let mut tex0: Option<ID3D11Texture2D> = None;
-                                    let mut tex1: Option<ID3D11Texture2D> = None;
-                                    let ok0 = self.device.CreateTexture2D(&staging_desc, None, Some(&mut tex0)).is_ok();
-                                    let ok1 = self.device.CreateTexture2D(&staging_desc, None, Some(&mut tex1)).is_ok();
-                                    if ok0 && ok1 {
-                                        if let (Some(t0), Some(t1)) = (tex0, tex1) {
-                                            self.staging_textures = [t0, t1];
-                                        }
-                                    }
-                                }
-                            }
-                            println!("Successfully reinitialized Windows desktop duplication: {}x{}", self.width, self.height);
-                            return Ok(());
-                        }
-                        Err(e) => {
-                            eprintln!("DuplicateOutput attempt on output {} failed: {:?}", o_idx, e);
-                        }
-                    }
-                }
-                o_idx += 1;
-            }
-            Err("Failed to reinitialize desktop duplication on any output".into())
+        self.duplication = None;
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        if let Ok(new_cap) = WindowsCapture::new() {
+            self.device = new_cap.device;
+            self.context = new_cap.context;
+            self.duplication = new_cap.duplication;
+            self.staging_texture = new_cap.staging_texture;
+            self.width = new_cap.width;
+            self.height = new_cap.height;
+            self.last_stride = new_cap.last_stride;
+            self.buffer_pool.clear();
+            return Ok(());
         }
+        Err("Failed to reinitialize desktop duplication".into())
     }
 }
 
@@ -229,21 +168,12 @@ impl FrameSource for WindowsCapture {
             let mut dup = match self.duplication.clone() {
                 Some(d) => d,
                 None => {
-                    if let Some(ref last) = self.last_frame {
-                        return Ok(Frame::Raw {
-                            width: self.width,
-                            height: self.height,
-                            stride: self.last_stride,
-                            data: Arc::clone(last),
-                        });
-                    } else {
-                        return Ok(Frame::Raw {
-                            width: self.width,
-                            height: self.height,
-                            stride: self.last_stride,
-                            data: Arc::new(vec![0u8; (self.last_stride * self.height) as usize]),
-                        });
-                    }
+                    return Ok(Frame::Raw {
+                        width: self.width,
+                        height: self.height,
+                        stride: self.last_stride,
+                        data: self.last_frame.clone().unwrap_or_else(|| create_black_bgra(self.width, self.height)),
+                    });
                 }
             };
 
@@ -256,34 +186,17 @@ impl FrameSource for WindowsCapture {
                         if let Some(resource) = desktop_resource {
                             let texture: ID3D11Texture2D = resource.cast()?;
                             
-                            let write_idx = self.staging_idx;
-                            let read_idx = 1 - self.staging_idx;
-
-                            // Asynchronously copy GPU desktop texture into staging texture[write_idx]
-                            self.context.CopyResource(&self.staging_textures[write_idx], &texture);
-                            
-                            // Immediately release the desktop frame back to the DWM compositor
+                            // Copy GPU desktop texture into CPU staging texture
+                            self.context.CopyResource(&self.staging_texture, &texture);
                             let _ = dup.ReleaseFrame();
 
-                            // Use ping-pong texture:
-                            // On first frame, read write_idx directly.
-                            // On subsequent frames, read read_idx (queued 1 frame ago, DMA already finished!)
-                            let target_read = if !self.has_staged_frame {
-                                self.has_staged_frame = true;
-                                write_idx
-                            } else {
-                                read_idx
-                            };
-                            self.staging_idx = 1 - self.staging_idx;
-
                             let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
-                            self.context.Map(&self.staging_textures[target_read], 0, D3D11_MAP_READ, 0, Some(&mut mapped))?;
+                            self.context.Map(&self.staging_texture, 0, D3D11_MAP_READ, 0, Some(&mut mapped))?;
 
-                            let stride = mapped.RowPitch as usize;
-                            self.last_stride = mapped.RowPitch;
-                            let total_bytes = stride * self.height as usize;
+                            let target_stride = (self.width * 4) as usize;
+                            let total_bytes = target_stride * self.height as usize;
 
-                            // Reusable zero-allocation buffer acquisition from pool
+                            // Acquire buffer from pool
                             let mut arc_buf = None;
                             for slot in &mut self.buffer_pool {
                                 if let Some(buf) = slot {
@@ -299,18 +212,28 @@ impl FrameSource for WindowsCapture {
                                 if vec_ref.len() != total_bytes {
                                     vec_ref.resize(total_bytes, 0);
                                 }
-                                std::ptr::copy_nonoverlapping(
-                                    mapped.pData as *const u8,
-                                    vec_ref.as_mut_ptr(),
-                                    total_bytes,
-                                );
+                                
+                                let src_pitch = mapped.RowPitch as usize;
+                                if src_pitch == target_stride {
+                                    std::ptr::copy_nonoverlapping(
+                                        mapped.pData as *const u8,
+                                        vec_ref.as_mut_ptr(),
+                                        total_bytes,
+                                    );
+                                } else {
+                                    for y in 0..self.height as usize {
+                                        let src_row = (mapped.pData as *const u8).add(y * src_pitch);
+                                        let dst_row = vec_ref.as_mut_ptr().add(y * target_stride);
+                                        std::ptr::copy_nonoverlapping(src_row, dst_row, target_stride);
+                                    }
+                                }
                             }
-                            self.context.Unmap(&self.staging_textures[target_read], 0);
+                            self.context.Unmap(&self.staging_texture, 0);
 
                             let to_send = Arc::clone(&arc_buf);
                             self.last_frame = Some(Arc::clone(&arc_buf));
+                            self.last_stride = target_stride as u32;
 
-                            // Return to buffer pool
                             if self.buffer_pool.len() < 4 {
                                 self.buffer_pool.push(Some(arc_buf));
                             }
@@ -318,14 +241,14 @@ impl FrameSource for WindowsCapture {
                             return Ok(Frame::Raw {
                                 width: self.width,
                                 height: self.height,
-                                stride: stride as u32,
+                                stride: self.last_stride,
                                 data: to_send,
                             });
                         }
                         let _ = dup.ReleaseFrame();
                     }
                     Err(e) if e.code() == DXGI_ERROR_WAIT_TIMEOUT => {
-                        // Desktop static / no new frame presented.
+                        // Desktop static / no new frame presented
                         break;
                     }
                     Err(e) if e.code() == DXGI_ERROR_ACCESS_LOST
@@ -347,22 +270,13 @@ impl FrameSource for WindowsCapture {
                 }
             }
 
-            // If desktop was completely idle or recovering, return last frame
-            if let Some(ref last) = self.last_frame {
-                Ok(Frame::Raw {
-                    width: self.width,
-                    height: self.height,
-                    stride: self.last_stride,
-                    data: Arc::clone(last),
-                })
-            } else {
-                Ok(Frame::Raw {
-                    width: self.width,
-                    height: self.height,
-                    stride: self.last_stride,
-                    data: Arc::new(vec![0u8; (self.last_stride * self.height) as usize]),
-                })
-            }
+            // Return last frame or black frame if idle
+            Ok(Frame::Raw {
+                width: self.width,
+                height: self.height,
+                stride: self.last_stride,
+                data: self.last_frame.clone().unwrap_or_else(|| create_black_bgra(self.width, self.height)),
+            })
         }
     }
 }
