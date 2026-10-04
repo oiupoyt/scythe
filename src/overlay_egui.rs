@@ -11,12 +11,10 @@ use crate::ipc::{self, Command, DaemonStatus};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SettingsTab {
     #[default]
-    Video,
-    Audio,
-    Shortcuts,
-    ReplayAndStorage,
+    Replay,
+    Record,
     Livestream,
-    AppearanceAndSystem,
+    General,
 }
 
 #[derive(Debug, Clone)]
@@ -947,7 +945,24 @@ fn render_gsr_card(
     resp.clicked()
 }
 
-// GPU Screen Recorder 1:1 Dropdown Menu Item Renderer
+// Modern Floating Frosted Glass Dropdown Frame
+fn draw_dropdown_frame(painter: &egui::Painter, frame_rect: egui::Rect, accent: Color32) {
+    painter.rect_filled(
+        frame_rect,
+        CornerRadius::same(10),
+        Color32::from_rgba_unmultiplied(16, 20, 26, 248),
+    );
+    painter.rect_stroke(
+        frame_rect,
+        CornerRadius::same(10),
+        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 25)),
+        egui::StrokeKind::Inside,
+    );
+    let top_bar = egui::Rect::from_min_size(frame_rect.min, Vec2::new(frame_rect.width(), 2.5));
+    painter.rect_filled(top_bar, CornerRadius { nw: 9, ne: 9, sw: 0, se: 0 }, accent);
+}
+
+// Sleek Rounded Dropdown Menu Item Renderer
 fn render_dropdown_item(
     ui: &mut egui::Ui,
     rect: egui::Rect,
@@ -961,12 +976,15 @@ fn render_dropdown_item(
     let hovered = resp.hovered();
     let painter = ui.painter();
 
-    // Background: solid black
-    painter.rect_filled(rect, CornerRadius::ZERO, Color32::from_rgb(0, 0, 0));
-
-    // Hover outline
+    let inner_rect = rect.shrink2(Vec2::new(4.0, 2.0));
+    let bg = if hovered {
+        Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 36)
+    } else {
+        Color32::TRANSPARENT
+    };
+    painter.rect_filled(inner_rect, CornerRadius::same(6), bg);
     if hovered {
-        painter.rect_stroke(rect, CornerRadius::ZERO, Stroke::new(2.0_f32, accent), egui::StrokeKind::Inside);
+        painter.rect_stroke(inner_rect, CornerRadius::same(6), Stroke::new(1.0_f32, accent), egui::StrokeKind::Inside);
     }
 
     // Left Icon
@@ -983,25 +1001,31 @@ fn render_dropdown_item(
         egui::Align2::LEFT_CENTER,
         title,
         FontId::proportional(12.5),
-        if hovered { accent } else { Color32::WHITE },
+        if hovered { Color32::WHITE } else { Color32::from_rgb(220, 225, 230) },
     );
 
-    // Right Hotkey
+    // Right Hotkey badge
     if let Some(hk) = hotkey && !hk.trim().is_empty() {
+        let badge_rect = egui::Rect::from_center_size(
+            egui::pos2(rect.right() - 36.0, rect.center().y),
+            Vec2::new(54.0, 20.0),
+        );
+        painter.rect_filled(badge_rect, CornerRadius::same(4), Color32::from_rgba_unmultiplied(0, 0, 0, 160));
+        painter.rect_stroke(badge_rect, CornerRadius::same(4), Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 20)), egui::StrokeKind::Inside);
         painter.text(
-            egui::pos2(rect.right() - 14.0, rect.center().y),
-            egui::Align2::RIGHT_CENTER,
+            badge_rect.center(),
+            egui::Align2::CENTER_CENTER,
             hk,
-            FontId::proportional(11.0),
-            if hovered { accent } else { Color32::from_rgba_unmultiplied(255, 255, 255, 140) },
+            FontId::proportional(10.5),
+            if hovered { accent } else { Color32::from_rgb(180, 185, 195) },
         );
     }
 
-    // 1px divider
+    // Divider line
     if !is_last && !hovered {
         painter.line_segment(
-            [egui::pos2(rect.left(), rect.bottom()), egui::pos2(rect.right(), rect.bottom())],
-            Stroke::new(1.0_f32, Color32::from_rgb(32, 32, 36)),
+            [egui::pos2(rect.left() + 12.0, rect.bottom()), egui::pos2(rect.right() - 12.0, rect.bottom())],
+            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 14)),
         );
     }
 
@@ -1212,7 +1236,7 @@ impl ScytheOverlayApp {
             settings_view_advanced: false,
             last_content_h: 520.0,
             hud_notification: None,
-            active_settings_tab: SettingsTab::Video,
+            active_settings_tab: SettingsTab::Replay,
             in_overlay_toast: None,
         }
     }
@@ -1354,20 +1378,20 @@ impl ScytheOverlayApp {
     pub fn switch_view(&mut self, view: ShadowPlayView, _ctx: &egui::Context) {
         match view {
             ShadowPlayView::ReplaySettings => {
-                self.active_settings_tab = SettingsTab::ReplayAndStorage;
-                self.current_view = ShadowPlayView::Settings(SettingsTab::ReplayAndStorage);
+                self.active_settings_tab = SettingsTab::Replay;
+                self.current_view = ShadowPlayView::Settings(SettingsTab::Replay);
             }
             ShadowPlayView::RecordSettings => {
-                self.active_settings_tab = SettingsTab::Video;
-                self.current_view = ShadowPlayView::Settings(SettingsTab::Video);
+                self.active_settings_tab = SettingsTab::Record;
+                self.current_view = ShadowPlayView::Settings(SettingsTab::Record);
             }
             ShadowPlayView::StreamSettings => {
                 self.active_settings_tab = SettingsTab::Livestream;
                 self.current_view = ShadowPlayView::Settings(SettingsTab::Livestream);
             }
             ShadowPlayView::GlobalSettings | ShadowPlayView::ScreenshotSettings => {
-                self.active_settings_tab = SettingsTab::AppearanceAndSystem;
-                self.current_view = ShadowPlayView::Settings(SettingsTab::AppearanceAndSystem);
+                self.active_settings_tab = SettingsTab::General;
+                self.current_view = ShadowPlayView::Settings(SettingsTab::General);
             }
             ShadowPlayView::Settings(tab) => {
                 self.active_settings_tab = tab;
@@ -1645,15 +1669,19 @@ impl ScytheOverlayApp {
             self.replay_dropdown_open = false;
             self.record_dropdown_open = false;
             self.stream_dropdown_open = false;
-            self.switch_view(ShadowPlayView::GlobalSettings, ctx);
+            self.switch_view(ShadowPlayView::Settings(SettingsTab::General), ctx);
         }
 
-        // Dropdown menus flush beneath cards
-        let item_h = 44.0_f32;
+        // Dropdown menus floating beneath cards with sleek rounded frosted glass
+        let item_h = 38.0_f32;
 
         // Instant Replay dropdown
         if self.replay_dropdown_open {
-            let drop_y = card0_rect.bottom();
+            let drop_y = card0_rect.bottom() + 6.0;
+            let total_h = item_h * 5.0;
+            let frame_rect = egui::Rect::from_min_size(egui::pos2(card0_rect.left(), drop_y), Vec2::new(card_w, total_h));
+            draw_dropdown_frame(ui.painter(), frame_rect, accent);
+
             let r0 = egui::Rect::from_min_size(egui::pos2(card0_rect.left(), drop_y), Vec2::new(card_w, item_h));
             let r1 = egui::Rect::from_min_size(egui::pos2(card0_rect.left(), drop_y + item_h), Vec2::new(card_w, item_h));
             let r2 = egui::Rect::from_min_size(egui::pos2(card0_rect.left(), drop_y + item_h * 2.0), Vec2::new(card_w, item_h));
@@ -1674,7 +1702,7 @@ impl ScytheOverlayApp {
 
             let save_hk = self.config.save_hotkey.trim();
             let save_hk_opt = if save_hk.is_empty() { None } else { Some(save_hk) };
-            if render_dropdown_item(ui, r1, "Save", save_hk_opt, tex_save, accent, false) {
+            if render_dropdown_item(ui, r1, "Save Replay", save_hk_opt, tex_save, accent, false) {
                 if is_replay_active {
                     async_send_command(Command::SaveReplay);
                     self.show_hud_notification("INSTANT REPLAY", "Saved to Videos", crate::overlay::ToastIcon::Replay);
@@ -1705,13 +1733,17 @@ impl ScytheOverlayApp {
             }
 
             if render_dropdown_item(ui, r4, "Settings", None, tex_settings_xs, accent, true) {
-                self.switch_view(ShadowPlayView::ReplaySettings, ctx);
+                self.switch_view(ShadowPlayView::Settings(SettingsTab::Replay), ctx);
             }
         }
 
         // Record dropdown
         if self.record_dropdown_open {
-            let drop_y = card1_rect.bottom();
+            let drop_y = card1_rect.bottom() + 6.0;
+            let total_h = item_h * 3.0;
+            let frame_rect = egui::Rect::from_min_size(egui::pos2(card1_rect.left(), drop_y), Vec2::new(card_w, total_h));
+            draw_dropdown_frame(ui.painter(), frame_rect, accent);
+
             let r0 = egui::Rect::from_min_size(egui::pos2(card1_rect.left(), drop_y), Vec2::new(card_w, item_h));
             let r1 = egui::Rect::from_min_size(egui::pos2(card1_rect.left(), drop_y + item_h), Vec2::new(card_w, item_h));
             let r2 = egui::Rect::from_min_size(egui::pos2(card1_rect.left(), drop_y + item_h * 2.0), Vec2::new(card_w, item_h));
@@ -1736,13 +1768,17 @@ impl ScytheOverlayApp {
             }
 
             if render_dropdown_item(ui, r2, "Settings", None, tex_settings_xs, accent, true) {
-                self.switch_view(ShadowPlayView::RecordSettings, ctx);
+                self.switch_view(ShadowPlayView::Settings(SettingsTab::Record), ctx);
             }
         }
 
         // Livestream dropdown
         if self.stream_dropdown_open {
-            let drop_y = card2_rect.bottom();
+            let drop_y = card2_rect.bottom() + 6.0;
+            let total_h = item_h * 2.0;
+            let frame_rect = egui::Rect::from_min_size(egui::pos2(card2_rect.left(), drop_y), Vec2::new(card_w, total_h));
+            draw_dropdown_frame(ui.painter(), frame_rect, accent);
+
             let r0 = egui::Rect::from_min_size(egui::pos2(card2_rect.left(), drop_y), Vec2::new(card_w, item_h));
             let r1 = egui::Rect::from_min_size(egui::pos2(card2_rect.left(), drop_y + item_h), Vec2::new(card_w, item_h));
 
@@ -1764,7 +1800,7 @@ impl ScytheOverlayApp {
             }
 
             if render_dropdown_item(ui, r1, "Settings", None, tex_settings_xs, accent, true) {
-                self.switch_view(ShadowPlayView::StreamSettings, ctx);
+                self.switch_view(ShadowPlayView::Settings(SettingsTab::Livestream), ctx);
             }
         }
     }
@@ -1775,7 +1811,7 @@ impl ScytheOverlayApp {
         let is_compact_w = screen_w < 1400.0;
         let is_compact_h = screen_h < 850.0;
 
-        let modal_w = if is_compact_w { 680.0_f32 } else { 760.0_f32 };
+        let modal_w = if is_compact_w { 700.0_f32 } else { 780.0_f32 };
         let modal_h = if is_compact_h { 460.0_f32 } else { 520.0_f32 };
 
         let modal_x = ((screen_w - modal_w) * 0.5).floor();
@@ -1790,128 +1826,137 @@ impl ScytheOverlayApp {
 
         let painter = ui.painter();
 
-        // 1. Modal Container (Obsidian Glass `#101418` with subtle border and top accent line)
+        // 1. Smooth Rounded Modal Container (Obsidian Glass `#101418` + CornerRadius 12 + soft anti-aliased border)
         painter.rect_filled(
             modal_rect,
-            CornerRadius::same(6),
+            CornerRadius::same(12),
             Color32::from_rgb(16, 20, 24),
         );
         painter.rect_stroke(
             modal_rect,
-            CornerRadius::same(6),
-            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 22)),
+            CornerRadius::same(12),
+            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 26)),
             egui::StrokeKind::Inside,
         );
 
-        // Top accent line
+        // Smooth top accent curve
         let top_accent = egui::Rect::from_min_size(modal_rect.min, egui::vec2(modal_w, 3.0));
-        painter.rect_filled(top_accent, CornerRadius::same(2), accent);
+        painter.rect_filled(
+            top_accent,
+            CornerRadius { nw: 11, ne: 11, sw: 0, se: 0 },
+            accent,
+        );
 
-        let sidebar_w = if is_compact_w { 180.0_f32 } else { 200.0_f32 };
+        let sidebar_w = if is_compact_w { 190.0_f32 } else { 210.0_f32 };
         let sidebar_rect = egui::Rect::from_min_size(
             egui::pos2(modal_rect.left(), modal_rect.top() + 3.0),
             egui::vec2(sidebar_w, modal_h - 3.0),
         );
 
-        // Sidebar background
+        // Left sidebar background matching smooth left corners
         painter.rect_filled(
             sidebar_rect,
-            CornerRadius::same(6),
+            CornerRadius { nw: 11, ne: 0, sw: 11, se: 0 },
             Color32::from_rgb(12, 15, 18),
         );
         // Vertical divider
         painter.line_segment(
             [egui::pos2(sidebar_rect.right(), sidebar_rect.top()), egui::pos2(sidebar_rect.right(), sidebar_rect.bottom())],
-            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 14)),
+            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 16)),
         );
 
-        // 2. Left Sidebar: Category Navigation
+        // 2. Left Sidebar: The 4 Dedicated Menus + Bottom Pinned Footer
         let sidebar_inner = sidebar_rect.shrink2(egui::vec2(10.0, 14.0));
         ui.allocate_new_ui(egui::UiBuilder::new().max_rect(sidebar_inner), |ui| {
             ui.set_width(sidebar_inner.width());
 
-            let tabs = [
-                (SettingsTab::Video, "Video"),
-                (SettingsTab::Audio, "Audio"),
-                (SettingsTab::Shortcuts, "Keyboard Shortcuts"),
-                (SettingsTab::ReplayAndStorage, "Replay & Storage"),
-                (SettingsTab::Livestream, "Broadcast LIVE"),
-                (SettingsTab::AppearanceAndSystem, "Themes & System"),
-            ];
-
-            let tab_btn_w = sidebar_inner.width();
-            let tab_btn_h = 36.0_f32;
-
-            for (tab, label) in tabs {
-                let is_active = self.active_settings_tab == tab;
-                let (btn_rect, btn_resp) = ui.allocate_exact_size(egui::vec2(tab_btn_w, tab_btn_h), egui::Sense::click());
-                let is_hovered = btn_resp.hovered();
-
-                let bg = if is_active {
-                    Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 32)
-                } else if is_hovered {
-                    Color32::from_rgba_unmultiplied(255, 255, 255, 12)
-                } else {
-                    Color32::TRANSPARENT
-                };
-
-                let text_col = if is_active {
-                    Color32::WHITE
-                } else if is_hovered {
-                    Color32::from_rgb(220, 225, 230)
-                } else {
-                    Color32::from_rgb(150, 155, 165)
-                };
-
-                ui.painter().rect_filled(btn_rect, CornerRadius::same(4), bg);
-
-                if is_active {
-                    let pill_rect = egui::Rect::from_min_size(
-                        egui::pos2(btn_rect.left(), btn_rect.top() + 6.0),
-                        egui::vec2(3.0, tab_btn_h - 12.0),
-                    );
-                    ui.painter().rect_filled(pill_rect, CornerRadius::same(1), accent);
-                }
-
-                ui.painter().text(
-                    egui::pos2(btn_rect.left() + 14.0, btn_rect.center().y),
-                    egui::Align2::LEFT_CENTER,
-                    label,
-                    FontId::proportional(if is_active { 12.5 } else { 12.0 }),
-                    text_col,
-                );
-
-                if btn_resp.clicked() {
-                    self.active_settings_tab = tab;
-                    self.current_view = ShadowPlayView::Settings(tab);
-                }
-
+            // Bottom-pinned footer: Version and Reset to Defaults pinned at the complete end
+            ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
                 ui.add_space(4.0);
-            }
+                ui.label(
+                    egui::RichText::new("Scythe v0.2.17")
+                        .size(10.0)
+                        .color(Color32::from_rgb(95, 100, 110)),
+                );
+                ui.add_space(6.0);
+                let reset_resp = ui.add(
+                    egui::Button::new(
+                        egui::RichText::new("Reset to Defaults")
+                            .size(11.5)
+                            .color(Color32::from_rgb(180, 185, 190)),
+                    )
+                    .fill(Color32::from_rgb(20, 24, 28))
+                    .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 20)))
+                    .corner_radius(CornerRadius::same(5))
+                    .min_size(egui::vec2(sidebar_inner.width() - 8.0, 28.0)),
+                );
+                if reset_resp.clicked() {
+                    self.reset_settings_to_defaults();
+                }
+                ui.add_space(10.0);
+                ui.separator();
+                ui.add_space(10.0);
 
-            // Footer of sidebar: Reset to Defaults and Version
-            ui.add_space(if is_compact_h { 16.0 } else { 40.0 });
-            let reset_resp = ui.add(
-                egui::Button::new(
-                    egui::RichText::new("Reset to Defaults")
-                        .size(11.5)
-                        .color(Color32::from_rgb(180, 185, 190)),
-                )
-                .fill(Color32::from_rgb(20, 24, 28))
-                .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 18)))
-                .corner_radius(CornerRadius::same(3))
-                .min_size(egui::vec2(sidebar_inner.width(), 28.0)),
-            );
-            if reset_resp.clicked() {
-                self.reset_settings_to_defaults();
-            }
+                // Top: The 4 distinct menus
+                ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
+                    let tabs = [
+                        (SettingsTab::Replay, "Instant Replay"),
+                        (SettingsTab::Record, "Normal Recording"),
+                        (SettingsTab::Livestream, "Broadcast LIVE"),
+                        (SettingsTab::General, "General Settings"),
+                    ];
 
-            ui.add_space(8.0);
-            ui.label(
-                egui::RichText::new("Scythe v0.2.17")
-                    .size(10.0)
-                    .color(Color32::from_rgb(100, 105, 115)),
-            );
+                    let tab_btn_w = sidebar_inner.width();
+                    let tab_btn_h = 38.0_f32;
+
+                    for (tab, label) in tabs {
+                        let is_active = self.active_settings_tab == tab;
+                        let (btn_rect, btn_resp) = ui.allocate_exact_size(egui::vec2(tab_btn_w, tab_btn_h), egui::Sense::click());
+                        let is_hovered = btn_resp.hovered();
+
+                        let bg = if is_active {
+                            Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 36)
+                        } else if is_hovered {
+                            Color32::from_rgba_unmultiplied(255, 255, 255, 14)
+                        } else {
+                            Color32::TRANSPARENT
+                        };
+
+                        let text_col = if is_active {
+                            Color32::WHITE
+                        } else if is_hovered {
+                            Color32::from_rgb(225, 230, 235)
+                        } else {
+                            Color32::from_rgb(150, 155, 165)
+                        };
+
+                        ui.painter().rect_filled(btn_rect, CornerRadius::same(6), bg);
+
+                        if is_active {
+                            let pill_rect = egui::Rect::from_min_size(
+                                egui::pos2(btn_rect.left(), btn_rect.top() + 7.0),
+                                egui::vec2(3.0, tab_btn_h - 14.0),
+                            );
+                            ui.painter().rect_filled(pill_rect, CornerRadius::same(1), accent);
+                        }
+
+                        ui.painter().text(
+                            egui::pos2(btn_rect.left() + 16.0, btn_rect.center().y),
+                            egui::Align2::LEFT_CENTER,
+                            label,
+                            FontId::proportional(if is_active { 12.5 } else { 12.0 }),
+                            text_col,
+                        );
+
+                        if btn_resp.clicked() {
+                            self.active_settings_tab = tab;
+                            self.current_view = ShadowPlayView::Settings(tab);
+                        }
+
+                        ui.add_space(4.0);
+                    }
+                });
+            });
         });
 
         // 3. Right Content Area
@@ -1929,18 +1974,16 @@ impl ScytheOverlayApp {
             // Header: Category Title + Close Button
             let header_h = 32.0_f32;
             let title = match self.active_settings_tab {
-                SettingsTab::Video => "VIDEO SETTINGS",
-                SettingsTab::Audio => "AUDIO CAPTURE",
-                SettingsTab::Shortcuts => "KEYBOARD SHORTCUTS",
-                SettingsTab::ReplayAndStorage => "REPLAY & STORAGE",
-                SettingsTab::Livestream => "BROADCAST LIVE",
-                SettingsTab::AppearanceAndSystem => "THEMES & SYSTEM",
+                SettingsTab::Replay => "INSTANT REPLAY SETTINGS",
+                SettingsTab::Record => "NORMAL RECORDING SETTINGS",
+                SettingsTab::Livestream => "BROADCAST LIVE SETTINGS",
+                SettingsTab::General => "GENERAL SETTINGS",
             };
 
             ui.horizontal(|ui| {
                 ui.label(
                     egui::RichText::new(title)
-                        .size(14.0)
+                        .size(13.5)
                         .strong()
                         .color(Color32::WHITE),
                 );
@@ -1967,35 +2010,47 @@ impl ScytheOverlayApp {
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     match self.active_settings_tab {
-                        SettingsTab::Video => self.render_tab_video(ui, accent),
-                        SettingsTab::Audio => self.render_tab_audio(ui, accent),
-                        SettingsTab::Shortcuts => self.render_tab_shortcuts(ui, accent),
-                        SettingsTab::ReplayAndStorage => self.render_tab_replay_storage(ui, accent),
+                        SettingsTab::Replay => self.render_tab_replay(ui, accent),
+                        SettingsTab::Record => self.render_tab_record(ui, accent),
                         SettingsTab::Livestream => self.render_tab_livestream(ui, accent),
-                        SettingsTab::AppearanceAndSystem => self.render_tab_appearance_system(ui, accent),
+                        SettingsTab::General => self.render_tab_general(ui, accent),
                     }
                 });
         });
     }
 
-    fn render_tab_video(&mut self, ui: &mut egui::Ui, accent: Color32) {
-        render_section_card(ui, "Target Framerate", accent, |ui| {
-            ui.label(egui::RichText::new("Frames per second (15 - 360 FPS):").size(11.5).color(Color32::from_rgb(180, 185, 190)));
+    fn render_tab_replay(&mut self, ui: &mut egui::Ui, accent: Color32) {
+        render_section_card(ui, "Buffer Duration & RAM Footprint", accent, |ui| {
+            ui.label(egui::RichText::new("Replay buffer duration (5 - 1800 seconds):").size(11.5).color(Color32::from_rgb(180, 185, 190)));
+            ui.add_space(4.0);
+            numeric_input_box(ui, &mut self.replay_sec_input_str, &mut self.replay_sec, 5, 1800, 10, "sec", accent);
+
+            let mins = self.replay_sec / 60;
+            let secs = self.replay_sec % 60;
+            let est_mb = ((self.replay_sec as f64) * (self.bitrate_mbps as f64 * 1000.0)) / 8192.0;
+            ui.add_space(4.0);
+            ui.label(
+                egui::RichText::new(format!("Duration: {}m {:02}s  |  Estimated RAM footprint: {:.1} MB", mins, secs, est_mb))
+                    .size(11.0)
+                    .color(Color32::from_rgb(150, 155, 165)),
+            );
+        });
+
+        ui.add_space(10.0);
+
+        render_section_card(ui, "Replay Video Parameters", accent, |ui| {
+            ui.label(egui::RichText::new("Target framerate (15 - 360 FPS):").size(11.5).color(Color32::from_rgb(180, 185, 190)));
             ui.add_space(4.0);
             numeric_input_box(ui, &mut self.fps_input_str, &mut self.target_fps, 15, 360, 5, "FPS", accent);
-        });
 
-        ui.add_space(10.0);
-
-        render_section_card(ui, "Video Bitrate", accent, |ui| {
-            ui.label(egui::RichText::new("Target encoding bitrate (5 - 150 Mbps):").size(11.5).color(Color32::from_rgb(180, 185, 190)));
+            ui.add_space(8.0);
+            ui.label(egui::RichText::new("Replay bitrate (5 - 150 Mbps):").size(11.5).color(Color32::from_rgb(180, 185, 190)));
             ui.add_space(4.0);
             numeric_input_box(ui, &mut self.bitrate_input_str, &mut self.bitrate_mbps, 5, 150, 5, "Mbps", accent);
-        });
 
-        ui.add_space(10.0);
-
-        render_section_card(ui, "Encoder Codec", accent, |ui| {
+            ui.add_space(8.0);
+            ui.label(egui::RichText::new("Encoder Codec:").size(11.5).color(Color32::from_rgb(180, 185, 190)));
+            ui.add_space(4.0);
             ui.horizontal(|ui| {
                 for (k, label) in [("h264", "H.264"), ("hevc", "HEVC (H.265)"), ("av1", "AV1")] {
                     if squared_button(ui, label, self.video_codec == k, accent) {
@@ -2003,11 +2058,77 @@ impl ScytheOverlayApp {
                     }
                 }
             });
+
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Record mouse cursor in replay").size(12.0).color(Color32::WHITE));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let mut cur = self.show_cursor;
+                    if toggle_switch(ui, &mut cur, accent).changed() {
+                        self.show_cursor = cur;
+                        self.config.show_cursor = cur;
+                        let _ = self.config.save();
+                        async_send_command(Command::ToggleCursor);
+                        self.show_hud_notification("MOUSE CURSOR", if cur { "Visible in recording" } else { "Hidden from recording" }, crate::overlay::ToastIcon::Cursor);
+                    }
+                });
+            });
         });
 
         ui.add_space(10.0);
 
-        render_section_card(ui, "Mouse Cursor", accent, |ui| {
+        render_section_card(ui, "Save Directory", accent, |ui| {
+            ui.label(egui::RichText::new("Destination folder for saved replay clips:").size(11.5).color(Color32::from_rgb(180, 185, 190)));
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                let edit_w = (ui.available_width() - 80.0 - 60.0 - ui.spacing().item_spacing.x * 2.0).max(60.0);
+                ui.add(egui::TextEdit::singleline(&mut self.output_dir).desired_width(edit_w));
+                if squared_button_sized(ui, "Browse", false, accent, Some(egui::vec2(76.0, 26.0))) {
+                    pick_folder(&self.output_dir, self.folder_tx.clone(), self.folder_picking_active.clone());
+                }
+                if squared_button_sized(ui, "Open", false, accent, Some(egui::vec2(56.0, 26.0))) {
+                    open_folder(&ScytheConfig::expand_tilde(&self.output_dir));
+                }
+            });
+        });
+
+        ui.add_space(10.0);
+
+        render_section_card(ui, "Audio Capture Mode", accent, |ui| {
+            ui.horizontal(|ui| {
+                let modes = [("system", "System Audio"), ("mic", "Microphone"), ("both", "Both"), ("muted", "Muted")];
+                for (idx, (_, m_label)) in modes.iter().enumerate() {
+                    if squared_button(ui, m_label, self.audio_mode_idx == idx, accent) {
+                        self.audio_mode_idx = idx;
+                    }
+                }
+            });
+        });
+    }
+
+    fn render_tab_record(&mut self, ui: &mut egui::Ui, accent: Color32) {
+        render_section_card(ui, "Recording Video Parameters", accent, |ui| {
+            ui.label(egui::RichText::new("Target framerate (15 - 360 FPS):").size(11.5).color(Color32::from_rgb(180, 185, 190)));
+            ui.add_space(4.0);
+            numeric_input_box(ui, &mut self.fps_input_str, &mut self.target_fps, 15, 360, 5, "FPS", accent);
+
+            ui.add_space(8.0);
+            ui.label(egui::RichText::new("Recording bitrate (5 - 150 Mbps):").size(11.5).color(Color32::from_rgb(180, 185, 190)));
+            ui.add_space(4.0);
+            numeric_input_box(ui, &mut self.bitrate_input_str, &mut self.bitrate_mbps, 5, 150, 5, "Mbps", accent);
+
+            ui.add_space(8.0);
+            ui.label(egui::RichText::new("Encoder Codec:").size(11.5).color(Color32::from_rgb(180, 185, 190)));
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                for (k, label) in [("h264", "H.264"), ("hevc", "HEVC (H.265)"), ("av1", "AV1")] {
+                    if squared_button(ui, label, self.video_codec == k, accent) {
+                        self.video_codec = k.to_string();
+                    }
+                }
+            });
+
+            ui.add_space(8.0);
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new("Record mouse cursor in video").size(12.0).color(Color32::WHITE));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -2022,10 +2143,29 @@ impl ScytheOverlayApp {
                 });
             });
         });
-    }
 
-    fn render_tab_audio(&mut self, ui: &mut egui::Ui, accent: Color32) {
-        render_section_card(ui, "Audio Capture Source", accent, |ui| {
+        ui.add_space(10.0);
+
+        render_section_card(ui, "Save Directory", accent, |ui| {
+            ui.label(egui::RichText::new("Destination folder for normal recordings:").size(11.5).color(Color32::from_rgb(180, 185, 190)));
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                let edit_w = (ui.available_width() - 80.0 - 60.0 - ui.spacing().item_spacing.x * 2.0).max(60.0);
+                ui.add(egui::TextEdit::singleline(&mut self.output_dir).desired_width(edit_w));
+                if squared_button_sized(ui, "Browse", false, accent, Some(egui::vec2(76.0, 26.0))) {
+                    pick_folder(&self.output_dir, self.folder_tx.clone(), self.folder_picking_active.clone());
+                }
+                if squared_button_sized(ui, "Open", false, accent, Some(egui::vec2(56.0, 26.0))) {
+                    open_folder(&ScytheConfig::expand_tilde(&self.output_dir));
+                }
+            });
+        });
+
+        ui.add_space(10.0);
+
+        render_section_card(ui, "Audio Capture & Volume Levels", accent, |ui| {
+            ui.label(egui::RichText::new("Audio source mode:").size(11.5).color(Color32::from_rgb(180, 185, 190)));
+            ui.add_space(4.0);
             ui.horizontal(|ui| {
                 let modes = [("system", "System Audio"), ("mic", "Microphone"), ("both", "Both"), ("muted", "Muted")];
                 for (idx, (_, m_label)) in modes.iter().enumerate() {
@@ -2034,11 +2174,8 @@ impl ScytheOverlayApp {
                     }
                 }
             });
-        });
 
-        ui.add_space(10.0);
-
-        render_section_card(ui, "Volume Levels & Live Meters", accent, |ui| {
+            ui.add_space(8.0);
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new("System Audio:").size(12.0).color(Color32::WHITE));
                 let mut sv = self.system_volume_pct;
@@ -2049,8 +2186,7 @@ impl ScytheOverlayApp {
             ui.add_space(2.0);
             render_vu_meter(ui, self.sys_vu, ui.available_width() - 8.0, 12.0, "SYS");
 
-            ui.add_space(8.0);
-
+            ui.add_space(6.0);
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new("Microphone:").size(12.0).color(Color32::WHITE));
                 let mut mv = self.mic_volume_pct;
@@ -2063,8 +2199,128 @@ impl ScytheOverlayApp {
         });
     }
 
-    fn render_tab_shortcuts(&mut self, ui: &mut egui::Ui, accent: Color32) {
-        render_section_card(ui, "Global Hotkeys", accent, |ui| {
+    fn render_tab_livestream(&mut self, ui: &mut egui::Ui, accent: Color32) {
+        render_section_card(ui, "Broadcast Service", accent, |ui| {
+            let services = ["Twitch", "YouTube", "Kick", "Custom RTMP"];
+            ui.horizontal(|ui| {
+                for (idx, &srv) in services.iter().enumerate() {
+                    if squared_button(ui, srv, self.stream_service_idx == idx, accent) {
+                        self.stream_service_idx = idx;
+                        match idx {
+                            0 => self.stream_url = "rtmp://live.twitch.tv/app/".to_string(),
+                            1 => self.stream_url = "rtmp://a.rtmp.youtube.com/live2/".to_string(),
+                            2 => self.stream_url = "rtmp://fa723fc1b171.global-contribute.live-video.net/app/".to_string(),
+                            _ => {}
+                        }
+                    }
+                }
+            });
+
+            ui.add_space(8.0);
+            ui.label(egui::RichText::new("RTMP Server URL:").size(11.5).color(Color32::WHITE));
+            ui.add_space(2.0);
+            ui.add(egui::TextEdit::singleline(&mut self.stream_url).desired_width(ui.available_width() - 8.0));
+
+            ui.add_space(8.0);
+            ui.label(egui::RichText::new("Stream Key:").size(11.5).color(Color32::WHITE));
+            ui.add_space(2.0);
+            ui.add(egui::TextEdit::singleline(&mut self.stream_key).password(true).desired_width(ui.available_width() - 8.0));
+        });
+
+        ui.add_space(10.0);
+
+        render_section_card(ui, "Stream Quality Parameters", accent, |ui| {
+            ui.label(egui::RichText::new("Stream framerate (15 - 144 FPS):").size(11.5).color(Color32::from_rgb(180, 185, 190)));
+            ui.add_space(4.0);
+            numeric_input_box(ui, &mut self.fps_input_str, &mut self.target_fps, 15, 144, 5, "FPS", accent);
+
+            ui.add_space(8.0);
+            ui.label(egui::RichText::new("Stream bitrate (2 - 25 Mbps):").size(11.5).color(Color32::from_rgb(180, 185, 190)));
+            ui.add_space(4.0);
+            numeric_input_box(ui, &mut self.bitrate_input_str, &mut self.bitrate_mbps, 2, 25, 1, "Mbps", accent);
+        });
+    }
+
+    fn render_tab_general(&mut self, ui: &mut egui::Ui, accent: Color32) {
+        render_section_card(ui, "Interface Accent Theme", accent, |ui| {
+            let palettes: [(&str, &str, Color32); 8] = [
+                ("amd", "AMD Red", Color32::from_rgb(221, 0, 49)),
+                ("nvidia", "NVIDIA Green", Color32::from_rgb(118, 185, 0)),
+                ("intel", "Intel Blue", Color32::from_rgb(8, 109, 183)),
+                ("blue", "Charming Blue", Color32::from_rgb(56, 189, 248)),
+                ("green", "Emerald Green", Color32::from_rgb(34, 197, 94)),
+                ("yellow", "Solar Yellow", Color32::from_rgb(250, 204, 21)),
+                ("purple", "Royal Purple", Color32::from_rgb(168, 85, 247)),
+                ("pink", "Neon Pink", Color32::from_rgb(244, 63, 94)),
+            ];
+
+            let total_w = ui.available_width();
+            let gap = 6.0_f32;
+            let cols = 4;
+            let btn_w = ((total_w - (cols - 1) as f32 * gap) / cols as f32).floor();
+            let btn_h = 30.0_f32;
+
+            for (chunk_idx, chunk) in palettes.chunks(cols).enumerate() {
+                if chunk_idx > 0 {
+                    ui.add_space(gap);
+                }
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = gap;
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    for &(id, name, col) in chunk {
+                        let is_sel = self.config.accent_color.to_lowercase() == id;
+                        let (rect, resp) = ui.allocate_exact_size(egui::vec2(btn_w, btn_h), egui::Sense::click());
+                        let is_hovered = resp.hovered();
+
+                        let bg = if is_sel {
+                            col
+                        } else if is_hovered {
+                            Color32::from_rgba_unmultiplied(255, 255, 255, 18)
+                        } else {
+                            Color32::from_rgba_unmultiplied(0, 0, 0, 140)
+                        };
+
+                        let stroke = if is_sel {
+                            Stroke::new(1.5_f32, Color32::WHITE)
+                        } else if is_hovered {
+                            Stroke::new(1.5_f32, col)
+                        } else {
+                            Stroke::new(1.0_f32, col)
+                        };
+
+                        let text_col = if is_sel {
+                            if col.r() as u16 + col.g() as u16 + col.b() as u16 > 400 {
+                                Color32::BLACK
+                            } else {
+                                Color32::WHITE
+                            }
+                        } else {
+                            Color32::from_rgb(225, 225, 230)
+                        };
+
+                        ui.painter().rect_filled(rect, CornerRadius::same(5), bg);
+                        ui.painter().rect_stroke(rect, CornerRadius::same(5), stroke, egui::StrokeKind::Inside);
+                        ui.painter().text(
+                            rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            name,
+                            FontId::proportional(11.0),
+                            text_col,
+                        );
+
+                        if resp.clicked() {
+                            self.config.accent_color = id.to_string();
+                            let _ = self.config.save();
+                            self.show_hud_notification("THEME ACCENT", &format!("Selected: {}", name), crate::overlay::ToastIcon::Info);
+                        }
+                    }
+                });
+            }
+        });
+
+        ui.add_space(10.0);
+
+        render_section_card(ui, "Global Keyboard Shortcuts", accent, |ui| {
             let binds = [
                 (KeybindAction::Menu, "Menu Overlay", &self.config.menu_hotkey),
                 (KeybindAction::SaveReplay, "Save Instant Replay", &self.config.save_hotkey),
@@ -2125,148 +2381,6 @@ impl ScytheOverlayApp {
                     self.show_hud_notification("KEYBINDS", "Restored default hotkeys", crate::overlay::ToastIcon::Info);
                 }
             });
-        });
-    }
-
-    fn render_tab_replay_storage(&mut self, ui: &mut egui::Ui, accent: Color32) {
-        render_section_card(ui, "Instant Replay Buffer", accent, |ui| {
-            ui.label(egui::RichText::new("Buffer Duration (5 - 1800 seconds):").size(11.5).color(Color32::from_rgb(180, 185, 190)));
-            ui.add_space(4.0);
-            numeric_input_box(ui, &mut self.replay_sec_input_str, &mut self.replay_sec, 5, 1800, 10, "sec", accent);
-
-            let mins = self.replay_sec / 60;
-            let secs = self.replay_sec % 60;
-            let est_mb = ((self.replay_sec as f64) * (self.bitrate_mbps as f64 * 1000.0)) / 8192.0;
-            ui.add_space(4.0);
-            ui.label(
-                egui::RichText::new(format!("Duration: {}m {:02}s  |  Estimated RAM footprint: {:.1} MB", mins, secs, est_mb))
-                    .size(11.0)
-                    .color(Color32::from_rgb(150, 155, 165)),
-            );
-        });
-
-        ui.add_space(10.0);
-
-        render_section_card(ui, "Save Directory", accent, |ui| {
-            ui.label(egui::RichText::new("Destination folder for recordings and replays:").size(11.5).color(Color32::from_rgb(180, 185, 190)));
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                let edit_w = (ui.available_width() - 80.0 - 60.0 - ui.spacing().item_spacing.x * 2.0).max(60.0);
-                ui.add(egui::TextEdit::singleline(&mut self.output_dir).desired_width(edit_w));
-                if squared_button_sized(ui, "Browse", false, accent, Some(egui::vec2(76.0, 26.0))) {
-                    pick_folder(&self.output_dir, self.folder_tx.clone(), self.folder_picking_active.clone());
-                }
-                if squared_button_sized(ui, "Open", false, accent, Some(egui::vec2(56.0, 26.0))) {
-                    open_folder(&ScytheConfig::expand_tilde(&self.output_dir));
-                }
-            });
-        });
-    }
-
-    fn render_tab_livestream(&mut self, ui: &mut egui::Ui, accent: Color32) {
-        render_section_card(ui, "Broadcast Service", accent, |ui| {
-            let services = ["Twitch", "YouTube", "Kick", "Custom RTMP"];
-            ui.horizontal(|ui| {
-                for (idx, &srv) in services.iter().enumerate() {
-                    if squared_button(ui, srv, self.stream_service_idx == idx, accent) {
-                        self.stream_service_idx = idx;
-                        match idx {
-                            0 => self.stream_url = "rtmp://live.twitch.tv/app/".to_string(),
-                            1 => self.stream_url = "rtmp://a.rtmp.youtube.com/live2/".to_string(),
-                            2 => self.stream_url = "rtmp://fa723fc1b171.global-contribute.live-video.net/app/".to_string(),
-                            _ => {}
-                        }
-                    }
-                }
-            });
-
-            ui.add_space(8.0);
-            ui.label(egui::RichText::new("RTMP Server URL:").size(11.5).color(Color32::WHITE));
-            ui.add_space(2.0);
-            ui.add(egui::TextEdit::singleline(&mut self.stream_url).desired_width(ui.available_width() - 8.0));
-
-            ui.add_space(8.0);
-            ui.label(egui::RichText::new("Stream Key:").size(11.5).color(Color32::WHITE));
-            ui.add_space(2.0);
-            ui.add(egui::TextEdit::singleline(&mut self.stream_key).password(true).desired_width(ui.available_width() - 8.0));
-        });
-    }
-
-    fn render_tab_appearance_system(&mut self, ui: &mut egui::Ui, accent: Color32) {
-        render_section_card(ui, "Interface Accent Theme", accent, |ui| {
-            let palettes: [(&str, &str, Color32); 8] = [
-                ("amd", "AMD Red", Color32::from_rgb(221, 0, 49)),
-                ("nvidia", "NVIDIA Green", Color32::from_rgb(118, 185, 0)),
-                ("intel", "Intel Blue", Color32::from_rgb(8, 109, 183)),
-                ("blue", "Charming Blue", Color32::from_rgb(56, 189, 248)),
-                ("green", "Emerald Green", Color32::from_rgb(34, 197, 94)),
-                ("yellow", "Solar Yellow", Color32::from_rgb(250, 204, 21)),
-                ("purple", "Royal Purple", Color32::from_rgb(168, 85, 247)),
-                ("pink", "Neon Pink", Color32::from_rgb(244, 63, 94)),
-            ];
-
-            let total_w = ui.available_width();
-            let gap = 6.0_f32;
-            let cols = 4;
-            let btn_w = ((total_w - (cols - 1) as f32 * gap) / cols as f32).floor();
-            let btn_h = 30.0_f32;
-
-            for (chunk_idx, chunk) in palettes.chunks(cols).enumerate() {
-                if chunk_idx > 0 {
-                    ui.add_space(gap);
-                }
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = gap;
-                    ui.spacing_mut().item_spacing.y = 0.0;
-                    for &(id, name, col) in chunk {
-                        let is_sel = self.config.accent_color.to_lowercase() == id;
-                        let (rect, resp) = ui.allocate_exact_size(egui::vec2(btn_w, btn_h), egui::Sense::click());
-                        let is_hovered = resp.hovered();
-
-                        let bg = if is_sel {
-                            col
-                        } else if is_hovered {
-                            Color32::from_rgba_unmultiplied(255, 255, 255, 18)
-                        } else {
-                            Color32::from_rgba_unmultiplied(0, 0, 0, 140)
-                        };
-
-                        let stroke = if is_sel {
-                            Stroke::new(1.5_f32, Color32::WHITE)
-                        } else if is_hovered {
-                            Stroke::new(1.5_f32, col)
-                        } else {
-                            Stroke::new(1.0_f32, col)
-                        };
-
-                        let text_col = if is_sel {
-                            if col.r() as u16 + col.g() as u16 + col.b() as u16 > 400 {
-                                Color32::BLACK
-                            } else {
-                                Color32::WHITE
-                            }
-                        } else {
-                            Color32::from_rgb(225, 225, 230)
-                        };
-
-                        ui.painter().rect_filled(rect, CornerRadius::same(3), bg);
-                        ui.painter().rect_stroke(rect, CornerRadius::same(3), stroke, egui::StrokeKind::Inside);
-                        ui.painter().text(
-                            rect.center(),
-                            egui::Align2::CENTER_CENTER,
-                            name,
-                            FontId::proportional(11.0),
-                            text_col,
-                        );
-
-                        if resp.clicked() {
-                            self.config.accent_color = id.to_string();
-                            let _ = self.config.save();
-                            self.show_hud_notification("THEME ACCENT", &format!("Selected: {}", name), crate::overlay::ToastIcon::Info);
-                        }
-                    }
-                });
-            }
         });
 
         ui.add_space(10.0);
@@ -2590,22 +2704,22 @@ impl ScytheOverlayApp {
                 let card_w = 340.0_f32;
                 let card_h = 56.0_f32;
 
-                // Silky smooth quintic decel entrance & cubic exit slide
-                let slide_x = if elapsed < 0.38 {
-                    let t = (elapsed / 0.38).min(1.0);
-                    let ease = 1.0 - (1.0 - t).powi(4);
-                    (1.0 - ease) * card_w
-                } else if elapsed < total_dur - 0.35 {
+                // Silky smooth cubic ease-out entrance & swift smooth-haste exit slide
+                let slide_x = if elapsed < 0.28 {
+                    let t = (elapsed / 0.28).min(1.0);
+                    let ease = 1.0 - (1.0 - t).powi(3);
+                    (1.0 - ease) * (card_w + 30.0)
+                } else if elapsed < total_dur - 0.20 {
                     0.0
                 } else {
-                    let t = ((elapsed - (total_dur - 0.35)) / 0.35).min(1.0);
-                    let ease = t.powi(3);
-                    ease * card_w
+                    let t = ((elapsed - (total_dur - 0.20)) / 0.20).clamp(0.0, 1.0);
+                    let ease = t * t * (3.0 - 2.0 * t);
+                    ease * (card_w + 40.0)
                 };
 
-                // Dynamic fade transition
-                let fade_in = (elapsed / 0.22).clamp(0.0, 1.0);
-                let fade_out = ((total_dur - elapsed) / 0.32).clamp(0.0, 1.0);
+                // Dynamic fade transition: silky in, rapid out
+                let fade_in = (elapsed / 0.16).clamp(0.0, 1.0);
+                let fade_out = ((total_dur - elapsed) / 0.20).clamp(0.0, 1.0);
                 let anim_alpha = fade_in.min(fade_out);
 
                 let screen_w = ui.available_width();
@@ -2850,23 +2964,23 @@ fn render_scythe_notification_card(
     if bloom > 0.01 {
         painter.rect_stroke(
             rect.expand(2.0),
-            CornerRadius::ZERO,
+            CornerRadius::same(12),
             Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(active_color.r(), active_color.g(), active_color.b(), (bloom * 80.0 * anim_alpha) as u8)),
             egui::StrokeKind::Outside,
         );
     }
 
-    // 2. Deep obsidian dark glass card fill (pitch-black aesthetic)
+    // 2. Deep obsidian dark glass card fill (pitch-black aesthetic with smooth rounded corners)
     painter.rect_filled(
         rect,
-        CornerRadius::ZERO,
+        CornerRadius::same(10),
         Color32::from_rgba_unmultiplied(10, 11, 14, (246.0 * anim_alpha) as u8),
     );
 
-    // 3. 1.0px sharp border framing the notification card
+    // 3. 1.0px smooth border framing the notification card
     painter.rect_stroke(
         rect,
-        CornerRadius::ZERO,
+        CornerRadius::same(10),
         Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(42, 45, 52, (180.0 * anim_alpha) as u8)),
         egui::StrokeKind::Inside,
     );
@@ -2875,7 +2989,7 @@ fn render_scythe_notification_card(
     let top_bar_rect = egui::Rect::from_min_size(rect.left_top(), Vec2::new(rect.width(), 3.0));
     painter.rect_filled(
         top_bar_rect,
-        CornerRadius::ZERO,
+        CornerRadius { nw: 9, ne: 9, sw: 0, se: 0 },
         Color32::from_rgba_unmultiplied(active_color.r(), active_color.g(), active_color.b(), (255.0 * anim_alpha) as u8),
     );
 
@@ -2893,12 +3007,12 @@ fn render_scythe_notification_card(
     );
     painter.rect_filled(
         badge_rect,
-        CornerRadius::ZERO,
+        CornerRadius::same(7),
         Color32::from_rgba_unmultiplied(6, 7, 9, (255.0 * anim_alpha) as u8),
     );
     painter.rect_stroke(
         badge_rect,
-        CornerRadius::ZERO,
+        CornerRadius::same(7),
         Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(active_color.r(), active_color.g(), active_color.b(), (110.0 * anim_alpha) as u8)),
         egui::StrokeKind::Inside,
     );
@@ -3397,21 +3511,22 @@ impl eframe::App for ShadowPlayToastApp {
         let card_w = 340.0_f32;
         let card_h = 56.0_f32;
 
-        let slide_x = if elapsed < 0.38 {
-            let t = (elapsed / 0.38).min(1.0);
-            let ease = 1.0 - (1.0 - t).powi(4);
-            (1.0 - ease) * card_w
-        } else if elapsed < total_dur - 0.35 {
+        // Silky smooth cubic ease-out entrance & swift smooth-haste exit slide
+        let slide_x = if elapsed < 0.28 {
+            let t = (elapsed / 0.28).min(1.0);
+            let ease = 1.0 - (1.0 - t).powi(3);
+            (1.0 - ease) * (card_w + 30.0)
+        } else if elapsed < total_dur - 0.20 {
             0.0
         } else {
-            let t = ((elapsed - (total_dur - 0.35)) / 0.35).min(1.0);
-            let ease = t.powi(3);
-            ease * card_w
+            let t = ((elapsed - (total_dur - 0.20)) / 0.20).clamp(0.0, 1.0);
+            let ease = t * t * (3.0 - 2.0 * t);
+            ease * (card_w + 40.0)
         };
 
-        // Dynamic fade transition
-        let fade_in = (elapsed / 0.22).clamp(0.0, 1.0);
-        let fade_out = ((total_dur - elapsed) / 0.32).clamp(0.0, 1.0);
+        // Dynamic fade transition: silky in, rapid out
+        let fade_in = (elapsed / 0.16).clamp(0.0, 1.0);
+        let fade_out = ((total_dur - elapsed) / 0.20).clamp(0.0, 1.0);
         let anim_alpha = fade_in.min(fade_out);
 
         let mut visuals = egui::Visuals::dark();
