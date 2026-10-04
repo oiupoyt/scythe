@@ -1270,6 +1270,13 @@ impl ScytheOverlayApp {
     }
 
     pub fn show_hud_notification(&mut self, title: &str, subtitle: &str, icon: crate::overlay::ToastIcon) {
+        self.in_overlay_toast = Some(InOverlayToast {
+            title: title.to_string(),
+            subtitle: subtitle.to_string(),
+            icon,
+            created_at: Instant::now(),
+            duration: Duration::from_millis(2800),
+        });
         self.hud_notification = Some(HudNotification {
             title: title.to_string(),
             subtitle: subtitle.to_string(),
@@ -3670,5 +3677,16 @@ mod tests {
             assert!(pos_x + modal_w <= screen_w);
             assert!(pos_y + modal_h <= screen_h);
         }
+    }
+
+    #[test]
+    fn test_cubic_ease_out_progress() {
+        let ease_out = |t: f32| -> f32 {
+            let inv = 1.0 - t.clamp(0.0, 1.0);
+            1.0 - inv * inv * inv
+        };
+        assert_eq!(ease_out(0.0), 0.0);
+        assert_eq!(ease_out(1.0), 1.0);
+        assert!(ease_out(0.5) > 0.5); // Fast start, gentle deceleration
     }
 }
