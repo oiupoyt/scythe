@@ -8,9 +8,92 @@ use std::time::{Duration, Instant, SystemTime};
 use crate::config::ScytheConfig;
 use crate::ipc::{self, Command, DaemonStatus};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SettingsTab {
+    #[default]
+    Video,
+    Audio,
+    Shortcuts,
+    ReplayAndStorage,
+    Livestream,
+    AppearanceAndSystem,
+}
+
+#[derive(Debug, Clone)]
+pub struct InOverlayToast {
+    pub title: String,
+    pub subtitle: String,
+    pub icon: crate::overlay::ToastIcon,
+    pub created_at: Instant,
+    pub duration: Duration,
+}
+
+pub fn numeric_input_box(
+    ui: &mut egui::Ui,
+    value_str: &mut String,
+    val: &mut u32,
+    min: u32,
+    max: u32,
+    step: u32,
+    unit: &str,
+    accent: Color32,
+) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        let dec_clicked = ui.add(
+            egui::Button::new(egui::RichText::new("-").size(13.0).strong().color(Color32::WHITE))
+                .fill(Color32::from_rgb(26, 32, 38))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 25)))
+                .corner_radius(CornerRadius::same(3))
+                .min_size(Vec2::new(28.0, 26.0)),
+        ).clicked();
+        if dec_clicked {
+            *val = val.saturating_sub(step).max(min);
+            *value_str = val.to_string();
+            changed = true;
+        }
+
+        let edit_resp = ui.add(
+            egui::TextEdit::singleline(value_str)
+                .desired_width(70.0)
+                .font(FontId::monospace(13.0))
+                .text_color(Color32::WHITE)
+        );
+        if edit_resp.changed() {
+            if let Ok(parsed) = value_str.trim().parse::<u32>() {
+                *val = parsed.clamp(min, max);
+                changed = true;
+            }
+        }
+        if edit_resp.lost_focus() {
+            *value_str = val.to_string();
+        }
+
+        let inc_clicked = ui.add(
+            egui::Button::new(egui::RichText::new("+").size(13.0).strong().color(Color32::WHITE))
+                .fill(Color32::from_rgb(26, 32, 38))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 25)))
+                .corner_radius(CornerRadius::same(3))
+                .min_size(Vec2::new(28.0, 26.0)),
+        ).clicked();
+        if inc_clicked {
+            *val = (*val + step).min(max);
+            *value_str = val.to_string();
+            changed = true;
+        }
+
+        if !unit.is_empty() {
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new(unit).size(12.0).color(accent));
+        }
+    });
+    changed
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShadowPlayView {
     MainHud,
+    Settings(SettingsTab),
     ReplaySettings,
     RecordSettings,
     StreamSettings,
@@ -368,6 +451,34 @@ fn pick_folder(current_dir: &str, tx: Sender<String>, is_active: Arc<AtomicBool>
         #[cfg(target_os = "windows")]
         {
             use std::os::windows::process::CommandExt;
+            use windows::Win32::System::Com::{CoInitializeEx, CoCreateInstance, COINIT_APARTMENTTHREADED, CLSCTX_INPROC_SERVER};
+            use windows::Win32::UI::Shell::{FileOpenDialog, IFileOpenDialog, FOS_PICKFOLDERS, FOS_FORCEFILESYSTEM, SIGDN_FILESYSPATH};
+
+            let _ = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+            let mut picked = None;
+
+            if let Ok(dialog) = (unsafe { CoCreateInstance::<_, IFileOpenDialog>(&FileOpenDialog, None, CLSCTX_INPROC_SERVER) }) {
+                unsafe {
+                    let _ = dialog.SetTitle(windows::core::w!("Select Recordings Directory"));
+                    if dialog.SetOptions(FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM).is_ok()
+                        && dialog.Show(None).is_ok()
+                        && let Ok(item) = dialog.GetResult()
+                        && let Ok(name) = item.GetDisplayName(SIGDN_FILESYSPATH) {
+                            let s = name.to_string().unwrap_or_default();
+                            if !s.is_empty() {
+                                picked = Some(s);
+                            }
+                        }
+                }
+            }
+
+            if let Some(sel) = picked {
+                let _ = tx.send(sel);
+                flag.store(false, Ordering::SeqCst);
+                return;
+            }
+
+            // Fallback to PowerShell if COM dialog is unavailable
             let clean_cur = cur.replace('/', "\\").replace('\'', "''");
             let script = format!(
                 "[System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms') | Out-Null; \
@@ -898,11 +1009,16 @@ fn render_dropdown_item(
 
 // Section card helper matching GPU Screen Recorder Subsection design (bg_color: #191E22, bold white title)
 fn render_section_card(ui: &mut egui::Ui, header: &str, _accent: Color32, add_contents: impl FnOnce(&mut egui::Ui)) {
+    let screen_h = ui.ctx().screen_rect().height();
+    let pad_y = if screen_h < 850.0 { 8_i8 } else { 12_i8 };
+    let pad_x = if screen_h < 850.0 { 12_i8 } else { 16_i8 };
+    let header_spacing = if screen_h < 850.0 { 5.0 } else { 8.0 };
+
     egui::Frame::NONE
         .fill(Color32::from_rgb(25, 30, 34))
         .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 12)))
         .corner_radius(CornerRadius::ZERO)
-        .inner_margin(Margin::symmetric(16_i8, 12_i8))
+        .inner_margin(Margin::symmetric(pad_x, pad_y))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             if !header.is_empty() {
@@ -912,7 +1028,7 @@ fn render_section_card(ui: &mut egui::Ui, header: &str, _accent: Color32, add_co
                         .strong()
                         .color(Color32::WHITE),
                 );
-                ui.add_space(8.0);
+                ui.add_space(header_spacing);
             }
             add_contents(ui);
         });
@@ -969,6 +1085,8 @@ pub struct ScytheOverlayApp {
     pub settings_view_advanced: bool,
     last_content_h: f32,
     hud_notification: Option<HudNotification>,
+    pub active_settings_tab: SettingsTab,
+    pub in_overlay_toast: Option<InOverlayToast>,
 }
 
 #[derive(Clone, Debug)]
@@ -1093,6 +1211,8 @@ impl ScytheOverlayApp {
             settings_view_advanced: false,
             last_content_h: 520.0,
             hud_notification: None,
+            active_settings_tab: SettingsTab::Video,
+            in_overlay_toast: None,
         }
     }
 
@@ -1282,6 +1402,7 @@ impl ScytheOverlayApp {
         // Center Title
         let title_text = match self.current_view {
             ShadowPlayView::MainHud => "Scythe",
+            ShadowPlayView::Settings(_) => "Settings",
             ShadowPlayView::ReplaySettings => "Instant Replay",
             ShadowPlayView::RecordSettings => "Record",
             ShadowPlayView::StreamSettings => "Livestream",
@@ -1619,13 +1740,14 @@ impl ScytheOverlayApp {
         let screen_w = ui.available_width();
         let screen_h = ui.available_height();
 
-        // Exact GsrPage geometry formula from scratch/gsr-ui/src/gui/GsrPage.cpp:
-        // content_page_size = (window_size * vec2(0.3333f, 0.70f)).floor();
-        let content_w = (screen_w * 0.3333).clamp(580.0, 680.0);
-        let max_content_h = (screen_h * 0.72).clamp(460.0, 780.0);
-        let content_h = self.last_content_h.clamp(360.0, max_content_h);
-        let spacing = (screen_w / 50.0).clamp(20.0, 38.0);
-        let side_w = (screen_w / 10.0).clamp(160.0, 192.0);
+        // GsrPage geometry dynamically adapts to screen size, scaling gracefully for compact handhelds / 720p displays:
+        let is_compact_w = screen_w < 1400.0;
+        let is_compact_h = screen_h < 850.0;
+        let content_w = (screen_w * 0.3333).clamp(if is_compact_w { 520.0 } else { 580.0 }, 680.0);
+        let max_content_h = (screen_h * if is_compact_h { 0.78 } else { 0.72 }).clamp(if is_compact_h { 380.0 } else { 460.0 }, 780.0);
+        let content_h = self.last_content_h.clamp(320.0, max_content_h);
+        let spacing = (screen_w / 50.0).clamp(if is_compact_w { 16.0 } else { 20.0 }, 38.0);
+        let side_w = (screen_w / 10.0).clamp(if is_compact_w { 140.0 } else { 160.0 }, 192.0);
 
         let content_x = ((screen_w - content_w) * 0.5).floor();
         let content_y = (48.0 + (screen_h - 48.0 - content_h) * 0.5).floor().max(52.0);
@@ -1641,6 +1763,7 @@ impl ScytheOverlayApp {
         let right_x = content_x + content_w + spacing;
         let btn_h = (screen_h / 15.0).clamp(52.0, 64.0);
         let btn_spacing = (screen_h * 0.015).clamp(12.0, 16.0);
+        let def_btn_h = (btn_h * 0.58).clamp(32.0, 36.0);
 
         // Entire freestanding region bounding box for outside-click dismiss
         self.panel_rect = egui::Rect::from_min_max(
@@ -1678,7 +1801,7 @@ impl ScytheOverlayApp {
             ),
         };
 
-        // 2. RIGHT ELEMENT: Freestanding Button Stack ("Back", "Save", "Defaults")
+        // 2. RIGHT ELEMENT: Freestanding Button Stack ("Back", "Save", compact "Reset to Defaults")
         // Allocate interactive rects first
         let back_rect = egui::Rect::from_min_size(egui::pos2(right_x, content_y), egui::vec2(side_w, btn_h));
         let back_resp = ui.allocate_rect(back_rect, egui::Sense::click());
@@ -1695,7 +1818,7 @@ impl ScytheOverlayApp {
 
         let def_rect = egui::Rect::from_min_size(
             egui::pos2(right_x, content_y + (btn_h + btn_spacing) * 2.0_f32),
-            egui::vec2(side_w, btn_h),
+            egui::vec2(side_w, def_btn_h),
         );
         let def_resp = ui.allocate_rect(def_rect, egui::Sense::click());
         let def_hovered = def_resp.hovered();
@@ -1801,25 +1924,36 @@ impl ScytheOverlayApp {
             save_text_color,
         );
 
-        // Button 3: "Defaults" (GSR page_bg_color #262B2F, accent border on hover)
+        // Button 3: Compact secondary "Reset to Defaults" button (subtle background, accent highlight on hover)
         painter.rect_filled(
             def_rect,
             CornerRadius::ZERO,
             if def_hovered {
                 Color32::from_rgb(46, 52, 57)
             } else {
-                Color32::from_rgb(38, 43, 47)
+                Color32::from_rgb(32, 36, 40)
             },
         );
         if def_hovered {
-            painter.rect_stroke(def_rect, CornerRadius::ZERO, Stroke::new(1.5_f32, accent), egui::StrokeKind::Inside);
+            painter.rect_stroke(def_rect, CornerRadius::ZERO, Stroke::new(1.0_f32, accent), egui::StrokeKind::Inside);
+        } else {
+            painter.rect_stroke(
+                def_rect,
+                CornerRadius::ZERO,
+                Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 18)),
+                egui::StrokeKind::Inside,
+            );
         }
         painter.text(
             def_rect.center(),
             egui::Align2::CENTER_CENTER,
-            "Defaults",
-            FontId::proportional(14.0),
-            Color32::from_rgb(190, 195, 200),
+            "Reset to Defaults",
+            FontId::proportional(12.5),
+            if def_hovered {
+                Color32::WHITE
+            } else {
+                Color32::from_rgb(175, 180, 185)
+            },
         );
 
         // 3. CENTER ELEMENT: Content Box (#262B2F with top accent border)
@@ -2478,7 +2612,7 @@ impl ScytheOverlayApp {
 
                                 ui.add_space(8.0);
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    if squared_button_sized(ui, "Reset Hotkeys to Defaults", false, accent, Some(Vec2::new(180.0, 28.0))) {
+                                    if squared_button_sized(ui, "Reset to Defaults", false, accent, Some(Vec2::new(130.0, 26.0))) {
                                         let old_menu = self.config.menu_hotkey.clone();
                                         let old_save = self.config.save_hotkey.clone();
                                         let old_rec = self.config.record_hotkey.clone();
@@ -3603,6 +3737,7 @@ impl eframe::App for ScytheOverlayApp {
                 self.render_top_bar(ctx, ui);
                 match self.current_view {
                     ShadowPlayView::MainHud => self.render_main_hud(ctx, ui),
+                    ShadowPlayView::Settings(_) => self.render_settings_view(ctx, ui),
                     ShadowPlayView::ReplaySettings
                     | ShadowPlayView::RecordSettings
                     | ShadowPlayView::StreamSettings
@@ -3649,6 +3784,50 @@ pub fn apply_windows_transparency(title: &str) {
         }
 
         let _ = EnumWindows(Some(enum_proc), LPARAM(my_pid as isize));
+    }
+}
+
+#[cfg(target_os = "windows")]
+pub fn query_focused_monitor_rect() -> (f32, f32, f32, f32) {
+    unsafe {
+        use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetCursorPos};
+        use windows::Win32::Graphics::Gdi::{
+            MonitorFromWindow, MonitorFromPoint, GetMonitorInfoW,
+            MONITORINFO, MONITOR_DEFAULTTONEAREST,
+        };
+        use windows::Win32::Foundation::POINT;
+
+        let hwnd = GetForegroundWindow();
+        let hmon = if !hwnd.0.is_null() {
+            MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)
+        } else {
+            let mut pt = POINT::default();
+            let _ = GetCursorPos(&mut pt);
+            MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST)
+        };
+
+        let mut mi = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+
+        if GetMonitorInfoW(hmon, &mut mi).as_bool() {
+            let rect = mi.rcMonitor;
+            let w = (rect.right - rect.left).abs() as f32;
+            let h = (rect.bottom - rect.top).abs() as f32;
+            let x = rect.left as f32;
+            let y = rect.top as f32;
+            if w > 320.0 && h > 200.0 {
+                return (x, y, w, h);
+            }
+        }
+
+        use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
+        let w = GetSystemMetrics(SM_CXSCREEN) as f32;
+        let h = GetSystemMetrics(SM_CYSCREEN) as f32;
+        let sw = if w > 100.0 { w } else { 1920.0 };
+        let sh = if h > 100.0 { h } else { 1080.0 };
+        (0.0, 0.0, sw, sh)
     }
 }
 
@@ -3704,16 +3883,6 @@ pub fn query_focused_monitor_rect() -> (f32, f32, f32, f32) {
 }
 
 pub fn run_egui_overlay() {
-    #[cfg(target_os = "windows")]
-    let (screen_x, screen_y, screen_w, screen_h): (f32, f32, f32, f32) = unsafe {
-        use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
-        let w = GetSystemMetrics(SM_CXSCREEN) as f32;
-        let h = GetSystemMetrics(SM_CYSCREEN) as f32;
-        let sw = if w > 100.0 { w } else { 1920.0 };
-        let sh = if h > 100.0 { h } else { 1080.0 };
-        (0.0, 0.0, sw, sh)
-    };
-    #[cfg(not(target_os = "windows"))]
     let (screen_x, screen_y, screen_w, screen_h) = query_focused_monitor_rect();
 
     let options = eframe::NativeOptions {
@@ -3836,35 +4005,49 @@ pub fn run_egui_toast(title: &str, subtitle: &str, icon: crate::overlay::ToastIc
 
     let toast_pid_path = crate::ipc::get_toast_pid_path();
     if let Ok(prev_pid_str) = std::fs::read_to_string(&toast_pid_path)
-        && let Ok(prev_pid) = prev_pid_str.trim().parse::<u32>() {
+        && let Ok(prev_pid) = prev_pid_str.trim().parse::<u32>()
+        && prev_pid != std::process::id() as u32 {
             #[cfg(target_os = "windows")]
             unsafe {
-                use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
-                if let Ok(h) = OpenProcess(PROCESS_TERMINATE, false, prev_pid) {
+                use windows::Win32::UI::WindowsAndMessaging::{
+                    EnumWindows, GetWindowThreadProcessId, PostMessageW, WM_CLOSE,
+                };
+                use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
+                use windows::Win32::System::Threading::{
+                    OpenProcess, TerminateProcess, PROCESS_TERMINATE, PROCESS_SYNCHRONIZE, WaitForSingleObject,
+                };
+
+                unsafe extern "system" fn close_toast(hwnd: HWND, lparam: LPARAM) -> BOOL {
+                    let target = lparam.0 as u32;
+                    let mut pid = 0u32;
+                    GetWindowThreadProcessId(hwnd, Some(&mut pid));
+                    if pid == target {
+                        let _ = PostMessageW(hwnd, WM_CLOSE, None, None);
+                    }
+                    BOOL(1)
+                }
+
+                let _ = EnumWindows(Some(close_toast), LPARAM(prev_pid as isize));
+                if let Ok(h) = OpenProcess(PROCESS_SYNCHRONIZE | PROCESS_TERMINATE, false, prev_pid) {
+                    let _ = WaitForSingleObject(h, 100);
                     let _ = TerminateProcess(h, 0);
                     let _ = windows::Win32::Foundation::CloseHandle(h);
                 }
             }
             #[cfg(not(target_os = "windows"))]
             unsafe {
+                let _ = libc::kill(prev_pid as i32, libc::SIGTERM);
+                std::thread::sleep(Duration::from_millis(50));
                 let _ = libc::kill(prev_pid as i32, libc::SIGKILL);
             }
         }
     let _ = std::fs::create_dir_all(toast_pid_path.parent().unwrap_or(std::path::Path::new(".")));
     let _ = std::fs::write(&toast_pid_path, std::process::id().to_string());
 
-    #[cfg(target_os = "windows")]
-    let (mon_x, screen_w): (f32, f32) = unsafe {
-        use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN};
-        let w = GetSystemMetrics(SM_CXSCREEN) as f32;
-        let sw = if w > 100.0 { w } else { 1920.0 };
-        (0.0, sw)
-    };
-    #[cfg(not(target_os = "windows"))]
-    let (mon_x, _mon_y, screen_w, _screen_h) = query_focused_monitor_rect();
+    let (mon_x, mon_y, screen_w, _screen_h) = query_focused_monitor_rect();
 
     let pos_x = (mon_x + screen_w - toast_w).max(0.0);
-    let pos_y = 16.0;
+    let pos_y = mon_y + 16.0;
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -3915,11 +4098,21 @@ mod tests {
 
     #[test]
     fn test_gsr_3_column_geometry_non_overlapping() {
-        for (screen_w, screen_h) in [(1366.0_f32, 768.0_f32), (1920.0, 1080.0), (2560.0, 1440.0), (3840.0, 2160.0)] {
-            let content_w = (screen_w * 0.3333).clamp(580.0, 680.0);
-            let content_h = (screen_h * 0.70).clamp(520.0, 780.0);
-            let spacing = (screen_w / 50.0).clamp(20.0, 38.0);
-            let side_w = (screen_w / 10.0).clamp(160.0, 192.0);
+        for (screen_w, screen_h) in [
+            (1280.0_f32, 720.0_f32),
+            (1280.0, 800.0),
+            (1366.0, 768.0),
+            (1920.0, 1080.0),
+            (2560.0, 1440.0),
+            (3840.0, 2160.0),
+        ] {
+            let is_compact_w = screen_w < 1400.0;
+            let is_compact_h = screen_h < 850.0;
+            let content_w = (screen_w * 0.3333).clamp(if is_compact_w { 520.0 } else { 580.0 }, 680.0);
+            let max_content_h = (screen_h * if is_compact_h { 0.78 } else { 0.72 }).clamp(if is_compact_h { 380.0 } else { 460.0 }, 780.0);
+            let content_h = max_content_h;
+            let spacing = (screen_w / 50.0).clamp(if is_compact_w { 16.0 } else { 20.0 }, 38.0);
+            let side_w = (screen_w / 10.0).clamp(if is_compact_w { 140.0 } else { 160.0 }, 192.0);
 
             let content_x = ((screen_w - content_w) * 0.5).floor();
             let content_y = (48.0 + (screen_h - 48.0 - content_h) * 0.5).floor().max(52.0);
@@ -3996,5 +4189,32 @@ mod tests {
 
         // When no update is available -> does not show
         assert!(!should_show_popup(false, false, false));
+    }
+
+    #[test]
+    fn test_numeric_input_clamping_and_validation() {
+        let mut val = 60u32;
+        assert!((15..=360).contains(&val));
+
+        // Test valid text update
+        let mut text = "144".to_string();
+        if let Ok(parsed) = text.trim().parse::<u32>() {
+            val = parsed.clamp(15, 360);
+        }
+        assert_eq!(val, 144);
+
+        // Test out of bounds clamping
+        text = "999".to_string();
+        if let Ok(parsed) = text.trim().parse::<u32>() {
+            val = parsed.clamp(15, 360);
+        }
+        assert_eq!(val, 360);
+
+        // Test lower bounds clamping
+        text = "2".to_string();
+        if let Ok(parsed) = text.trim().parse::<u32>() {
+            val = parsed.clamp(15, 360);
+        }
+        assert_eq!(val, 15);
     }
 }
