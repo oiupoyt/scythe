@@ -6,6 +6,26 @@ This checklist tracks known bugs, UI refinements, optimizations, and technical d
 
 ## 1. UI Refinements & Imperfections
 
+- [x] **Smooth Rounded Modal Corners, Anti-Aliased Framing & Pinned Footer**:
+  - **Issue**: The settings container previously had sharp/choppy corners and the footer controls were not pinned cleanly to the bottom.
+  - **Resolution**: Upgraded [src/overlay_egui.rs](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/src/overlay_egui.rs) modal framing to `CornerRadius::same(12)` with anti-aliased 1px stroke, matching curved top accent header (`CornerRadius { nw: 11, ne: 11, sw: 0, se: 0 }`), matching curved sidebar (`CornerRadius { nw: 11, ne: 0, sw: 11, se: 0 }`), and inner card rounding (`CornerRadius::same(8)`). Pinned "Scythe v0.2.17" and "Reset to Defaults" strictly to the bottom end of the sidebar via `egui::Layout::bottom_up`.
+
+- [x] **Four Dedicated Independent Settings Menus**:
+  - **Issue**: Settings options were previously mixed across different tabs rather than dedicated to the specific feature chosen.
+  - **Resolution**: Refactored `SettingsTab` into 4 dedicated menus:
+    1. **Instant Replay**: Buffer Duration (numeric box + RAM footprint badge), Replay FPS, Replay Bitrate, Codec, Cursor toggle, Save Directory, Audio Source.
+    2. **Normal Recording**: Record FPS, Record Bitrate, Codec, Cursor toggle, Save Directory, Audio Source & Volume sliders with live VU meters.
+    3. **Broadcast LIVE**: Service selector, Server URL, Stream Key (masked with unmask toggle), Stream FPS, Stream Bitrate, Audio Source.
+    4. **General Settings**: Accent Color Theme chips, Keyboard Shortcuts (interactive listener cards), Startup integration, Software Updates.
+
+- [x] **Floating Frosted Glass Dropdowns on HUD Cards**:
+  - **Issue**: Dropdowns beneath HUD cards were harsh black rectangles flush against the cards.
+  - **Resolution**: Rebuilt dropdowns with floating glass containers (`CornerRadius::same(10)`, `#10141A` at 97% opacity, 1px soft stroke, 2.5px top accent line). Dropdown items feature smooth `CornerRadius::same(6)` hover pills, clean typography, right-aligned hotkey badges, and direct links to each feature's dedicated settings menu.
+
+- [x] **Silky Ease-In and Smooth Haste Exit Notification Animations**:
+  - **Issue**: Notifications felt sluggish on exit and lacked snappy responsiveness.
+  - **Resolution**: Implemented silky cubic ease-out entrance (`1.0 - (1.0 - t).powi(3)`) over 280ms, a legible hold, and a swift smooth-haste exit slide over 200ms with smoothstep acceleration (`t * t * (3.0 - 2.0 * t)`). Styled notification cards with `CornerRadius::same(10)` and curved top accent bar.
+
 - [x] **NVIDIA ShadowPlay Settings Modal Complete Ground-Up Rewrite**:
   - **Issue**: The previous settings page used an unwieldy 3-column freestanding layout that was visually fragmented, cluttered, and confusing to navigate across different categories.
   - **Resolution**: Rebuilt the entire settings view in [src/overlay_egui.rs](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/src/overlay_egui.rs) as a centered, obsidian-glass ShadowPlay split modal with a dedicated left category navigation sidebar (`Video`, `Audio`, `Shortcuts`, `Replay & Storage`, `Livestream`, `Themes & System`). Replaced cluttered pill grids and sliders with direct, smooth numeric input fields with unit tags and stepper controls.
