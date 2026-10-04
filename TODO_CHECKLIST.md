@@ -6,9 +6,27 @@ This checklist tracks known bugs, UI refinements, optimizations, and technical d
 
 ## 1. UI Refinements & Imperfections
 
-- [x] **Smooth Rounded Modal Corners, Anti-Aliased Framing & Pinned Footer**:
-  - **Issue**: The settings container previously had sharp/choppy corners and the footer controls were not pinned cleanly to the bottom.
-  - **Resolution**: Upgraded [src/overlay_egui.rs](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/src/overlay_egui.rs) modal framing to `CornerRadius::same(12)` with anti-aliased 1px stroke, matching curved top accent header (`CornerRadius { nw: 11, ne: 11, sw: 0, se: 0 }`), matching curved sidebar (`CornerRadius { nw: 11, ne: 0, sw: 11, se: 0 }`), and inner card rounding (`CornerRadius::same(8)`). Pinned "Scythe v0.2.17" and "Reset to Defaults" strictly to the bottom end of the sidebar via `egui::Layout::bottom_up`.
+- [x] **Sharp Dark Slate Window Architecture with Drop Shadows (Matching GSR Screenshots)**:
+  - **Issue**: The UI previously had curved/rounded edges and embedded horizontal accent bars that felt uncharacteristic of native GPU screen recorder overlays.
+  - **Resolution**: Redesigned all overlay windows in [src/overlay_egui.rs](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/src/overlay_egui.rs) to match the visual language of the provided GPU Screen Recorder screenshots:
+    - Deep charcoal slate background (`#15191E`), crisp `#1D2228` section cards, and `#14181E` inset boxes.
+    - Zero roundness (`CornerRadius::ZERO`) across all windows, buttons, segmented pills, toggle switches, and inputs.
+    - Added multi-layered deep drop shadow effects (`draw_window_shadow`) behind the floating settings window and dropdown menus.
+    - Removed all top horizontal accent bars from the settings modal and card dropdowns.
+
+- [x] **Dedicated Screenshot Feature & Settings Panel**:
+  - **Issue**: Screenshot functionality lacked a dedicated settings panel and CLI access.
+  - **Resolution**:
+    - Added a dedicated **Screenshot Settings** menu (`SettingsTab::Screenshot`) with destination folder configuration (Browse & Open), format selection (`PNG (Lossless)` vs `JPEG`), cursor capture toggle, hotkey display, CLI command reference (`scythe-ui --screenshot`), and instant capture trigger.
+    - Added `scythe-ui --screenshot` CLI command and registered global hotkey (`Ctrl+Shift+S`) across Hyprland and Windows/X11.
+
+- [x] **Comprehensive Customizability & Options Expansion**:
+  - **Issue**: Settings lacked granular capture and audio controls shown in GPU Screen Recorder.
+  - **Resolution**: Expanded settings across all 5 menus:
+    - **Instant Replay**: Replay duration (sec/formatted time), RAM vs Disk storage selection, low-power mode toggle, game-based naming, replay notification toggles, autostart rules (on startup, on game launch, power supply condition), and video bitrate in Kbps/Mbps.
+    - **Normal Recording**: Capture source selection (`Focused monitor`, `Monitor eDP-1`, `Window`, `Region`), resolution change toggle, audio track management with output/input/application audio routing, audio codecs (`Opus` vs `AAC`), volume sliders with live meters, and color range (`Full` vs `Limited`).
+    - **Broadcast LIVE**: Streaming services (`Twitch`, `YouTube`, `Kick`, `Custom RTMP`), URL, masked stream key with eye toggle, and streaming quality parameters.
+    - **General Settings**: Interface accent palette chips, global keyboard shortcuts rebinding, and autostart toggles.
 
 - [x] **Four Dedicated Independent Settings Menus**:
   - **Issue**: Settings options were previously mixed across different tabs rather than dedicated to the specific feature chosen.
