@@ -183,6 +183,7 @@ pub fn register_hyprland_binds(config: &ScytheConfig) {
         (&config.save_hotkey, "scythe-ui --save"),
         (&config.record_hotkey, "scythe-ui --record"),
         (&config.cursor_hotkey, "scythe-ui --cursor"),
+        (&config.screenshot_hotkey, "scythe-ui --screenshot"),
     ];
 
     for (hotkey, cmd) in binds {

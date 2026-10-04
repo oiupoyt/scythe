@@ -22,6 +22,13 @@ fn default_accent_color() -> String { "blue".to_string() }
 
 fn default_stream_service() -> String { "twitch".to_string() }
 fn default_stream_url() -> String { "rtmp://live.twitch.tv/app/".to_string() }
+fn default_screenshot_hotkey() -> String { "Ctrl+Shift+S".to_string() }
+fn default_screenshot_format() -> String { "png".to_string() }
+fn default_capture_source() -> String { "focused".to_string() }
+fn default_video_quality_mode() -> String { "cbr".to_string() }
+fn default_color_range() -> String { "limited".to_string() }
+fn default_audio_codec() -> String { "opus".to_string() }
+fn default_replay_storage() -> String { "ram".to_string() }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ScytheConfig {
@@ -83,6 +90,30 @@ pub struct ScytheConfig {
     pub stream_url: String,
     #[serde(default)]
     pub stream_key: String,
+
+    #[serde(default = "default_screenshot_hotkey")]
+    pub screenshot_hotkey: String,
+    #[serde(default = "ScytheConfig::default_screenshot_directory")]
+    pub screenshot_directory: String,
+    #[serde(default = "default_screenshot_format")]
+    pub screenshot_format: String,
+    #[serde(default)]
+    pub screenshot_cursor: bool,
+
+    #[serde(default = "default_capture_source")]
+    pub capture_source: String,
+    #[serde(default = "default_video_quality_mode")]
+    pub video_quality_mode: String,
+    #[serde(default = "default_color_range")]
+    pub color_range: String,
+    #[serde(default = "default_audio_codec")]
+    pub audio_codec: String,
+    #[serde(default = "default_replay_storage")]
+    pub replay_storage: String,
+    #[serde(default)]
+    pub record_low_power: bool,
+    #[serde(default = "default_true")]
+    pub show_replay_notifications: bool,
 }
 
 pub type VrecConfig = ScytheConfig;
@@ -120,6 +151,19 @@ impl Default for ScytheConfig {
             stream_service: "twitch".to_string(),
             stream_url: "rtmp://live.twitch.tv/app/".to_string(),
             stream_key: String::new(),
+
+            screenshot_hotkey: default_screenshot_hotkey(),
+            screenshot_directory: Self::default_screenshot_directory(),
+            screenshot_format: default_screenshot_format(),
+            screenshot_cursor: false,
+
+            capture_source: default_capture_source(),
+            video_quality_mode: default_video_quality_mode(),
+            color_range: default_color_range(),
+            audio_codec: default_audio_codec(),
+            replay_storage: default_replay_storage(),
+            record_low_power: false,
+            show_replay_notifications: true,
         }
     }
 }
@@ -133,6 +177,16 @@ impl ScytheConfig {
             return home.join("Videos").to_string_lossy().to_string();
         }
         "~/Videos".to_string()
+    }
+
+    pub fn default_screenshot_directory() -> String {
+        if let Some(pic) = dirs::picture_dir() {
+            return pic.join("Screenshots").to_string_lossy().to_string();
+        }
+        if let Some(home) = dirs::home_dir() {
+            return home.join("Pictures").join("Screenshots").to_string_lossy().to_string();
+        }
+        Self::default_output_directory()
     }
 
     pub fn config_path() -> PathBuf {

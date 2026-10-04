@@ -302,6 +302,54 @@ fn handle_save_replay() -> Result<(), Box<dyn std::error::Error + Send + Sync>> 
     send_with_notification(Command::SaveReplay, "INSTANT REPLAY", "Saved to Videos", ToastIcon::Replay)
 }
 
+fn handle_screenshot() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let cfg = scythe::config::ScytheConfig::load();
+    let dir = scythe::config::ScytheConfig::expand_tilde(&cfg.screenshot_directory);
+    let _ = std::fs::create_dir_all(&dir);
+
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+    let ext = if cfg.screenshot_format.to_lowercase() == "jpg" || cfg.screenshot_format.to_lowercase() == "jpeg" { "jpg" } else { "png" };
+    let filename = format!("Screenshot_{}.{}", now, ext);
+    let out_path = dir.join(&filename);
+
+    #[cfg(target_os = "linux")]
+    {
+        let mut grim = std::process::Command::new("grim");
+        if cfg.screenshot_cursor {
+            grim.arg("-c");
+        }
+        if ext == "jpg" {
+            grim.args(["-t", "jpeg", "-q", "90"]);
+        }
+        grim.arg(&out_path);
+        let res = grim.status();
+        if res.is_ok() && out_path.exists() {
+            show_shadowplay_toast("SCREENSHOT", &format!("Saved to {}", filename), ToastIcon::Screenshot);
+            return Ok(());
+        }
+        let _ = std::process::Command::new("import").args(["-window", "root"]).arg(&out_path).status();
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let ps_cmd = format!(
+            "Add-Type -AssemblyName System.Windows.Forms,System.Drawing; \
+             $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds; \
+             $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height; \
+             $g = [System.Drawing.Graphics]::FromImage($bmp); \
+             $g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size); \
+             $bmp.Save('{}'); $g.Dispose(); $bmp.Dispose()",
+            out_path.to_string_lossy().replace('/', "\\")
+        );
+        let _ = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", &ps_cmd])
+            .status();
+    }
+
+    show_shadowplay_toast("SCREENSHOT", &format!("Saved to {}", filename), ToastIcon::Screenshot);
+    Ok(())
+}
+
 fn handle_toggle_streaming() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     ensure_daemon_running();
     let cfg = scythe::config::ScytheConfig::load();
@@ -357,6 +405,9 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             "--notify-stop" => {
                 show_shadowplay_toast("RECORDING", "Recording saved", ToastIcon::Save);
                 return Ok(());
+            }
+            "--screenshot" => {
+                return handle_screenshot();
             }
             "--toast" => {
                 let title = args.get(2).map(|s| s.as_str()).unwrap_or("SCYTHE");
@@ -514,10 +565,19 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
     };
 
+    #[derive(Default)]
+    struct RegisteredIds {
+        menu: Option<u32>,
+        save: Option<u32>,
+        rec: Option<u32>,
+        cur: Option<u32>,
+        shot: Option<u32>,
+    }
+
     let mut current_config = scythe::config::ScytheConfig::load();
     let mut registered_hotkeys: Vec<HotKey> = Vec::new();
 
-    let register_all = |mgr: &GlobalHotKeyManager, cfg: &scythe::config::ScytheConfig, reg: &mut Vec<HotKey>| -> (Option<u32>, Option<u32>, Option<u32>, Option<u32>) {
+    let register_all = |mgr: &GlobalHotKeyManager, cfg: &scythe::config::ScytheConfig, reg: &mut Vec<HotKey>| -> RegisteredIds {
         for hk in reg.drain(..) {
             let _ = mgr.unregister(hk);
         }
@@ -526,40 +586,43 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let m_save = scythe::hotkey::parse_hotkey(&cfg.save_hotkey).or_else(|| Some(HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyR)));
         let m_rec = scythe::hotkey::parse_hotkey(&cfg.record_hotkey).or_else(|| Some(HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::F9)));
         let m_cur = scythe::hotkey::parse_hotkey(&cfg.cursor_hotkey).or_else(|| Some(HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::F10)));
+        let m_shot = scythe::hotkey::parse_hotkey(&cfg.screenshot_hotkey).or_else(|| Some(HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyS)));
 
-        let mut id_menu = None;
-        let mut id_save = None;
-        let mut id_rec = None;
-        let mut id_cur = None;
+        let mut ids = RegisteredIds::default();
 
         if !is_on_hyprland
             && let Some(hk) = m_menu {
-                id_menu = Some(hk.id());
+                ids.menu = Some(hk.id());
                 let _ = mgr.register(hk);
                 reg.push(hk);
             }
         if let Some(hk) = m_save {
-            id_save = Some(hk.id());
+            ids.save = Some(hk.id());
             let _ = mgr.register(hk);
             reg.push(hk);
         }
         if let Some(hk) = m_rec {
-            id_rec = Some(hk.id());
+            ids.rec = Some(hk.id());
             let _ = mgr.register(hk);
             reg.push(hk);
         }
         if let Some(hk) = m_cur {
-            id_cur = Some(hk.id());
+            ids.cur = Some(hk.id());
             let _ = mgr.register(hk);
             reg.push(hk);
         }
-        (id_menu, id_save, id_rec, id_cur)
+        if let Some(hk) = m_shot {
+            ids.shot = Some(hk.id());
+            let _ = mgr.register(hk);
+            reg.push(hk);
+        }
+        ids
     };
 
-    let (mut id_menu, mut id_save, mut id_rec, mut id_cur) = register_all(&manager, &current_config, &mut registered_hotkeys);
+    let mut current_ids = register_all(&manager, &current_config, &mut registered_hotkeys);
 
-    println!("Listening for global hotkeys (Overlay: {}, Replay: {}, Record: {}, Cursor: {})...",
-        current_config.menu_hotkey, current_config.save_hotkey, current_config.record_hotkey, current_config.cursor_hotkey);
+    println!("Listening for global hotkeys (Overlay: {}, Replay: {}, Record: {}, Cursor: {}, Screenshot: {})...",
+        current_config.menu_hotkey, current_config.save_hotkey, current_config.record_hotkey, current_config.cursor_hotkey, current_config.screenshot_hotkey);
 
     let receiver = GlobalHotKeyEvent::receiver();
     let mut last_config_check = std::time::Instant::now();
@@ -584,13 +647,10 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 || new_cfg.save_hotkey != current_config.save_hotkey
                 || new_cfg.record_hotkey != current_config.record_hotkey
                 || new_cfg.cursor_hotkey != current_config.cursor_hotkey
+                || new_cfg.screenshot_hotkey != current_config.screenshot_hotkey
             {
                 current_config = new_cfg;
-                let (im, is, ir, ic) = register_all(&manager, &current_config, &mut registered_hotkeys);
-                id_menu = im;
-                id_save = is;
-                id_rec = ir;
-                id_cur = ic;
+                current_ids = register_all(&manager, &current_config, &mut registered_hotkeys);
             }
         }
 
@@ -598,22 +658,26 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             if event.state != HotKeyState::Pressed {
                 continue;
             }
-            if Some(event.id) == id_menu {
+            if Some(event.id) == current_ids.menu {
                 std::thread::spawn(|| {
                     ensure_daemon_running();
                     let _ = get_ui_cmd().arg("--menu").spawn();
                 });
-            } else if Some(event.id) == id_save {
+            } else if Some(event.id) == current_ids.save {
                 std::thread::spawn(|| {
                     let _ = handle_save_replay();
                 });
-            } else if Some(event.id) == id_rec {
+            } else if Some(event.id) == current_ids.rec {
                 std::thread::spawn(|| {
                     let _ = handle_toggle_recording();
                 });
-            } else if Some(event.id) == id_cur {
+            } else if Some(event.id) == current_ids.cur {
                 std::thread::spawn(|| {
                     let _ = handle_toggle_cursor();
+                });
+            } else if Some(event.id) == current_ids.shot {
+                std::thread::spawn(|| {
+                    let _ = handle_screenshot();
                 });
             }
         }
