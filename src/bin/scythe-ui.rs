@@ -1,4 +1,5 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+#![allow(clippy::chunks_exact_to_as_chunks)]
 
 use scythe::ipc::{Command, send_command, query_status};
 use scythe::overlay::{show_shadowplay_toast, ToastIcon};
@@ -122,14 +123,36 @@ fn check_and_toggle_overlay() -> bool {
             if let Ok(pid) = content.trim().parse::<u32>() {
                 if pid != std::process::id() {
                     unsafe {
-                        use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
-                        use windows::Win32::Foundation::CloseHandle;
-                        if let Ok(h) = OpenProcess(PROCESS_TERMINATE, false, pid) {
-                            let _ = TerminateProcess(h, 0);
-                            let _ = CloseHandle(h);
-                            let _ = std::fs::remove_file(&pid_path);
-                            return true;
+                        use windows::Win32::UI::WindowsAndMessaging::{
+                            EnumWindows, GetWindowThreadProcessId, PostMessageW, WM_CLOSE,
+                        };
+                        use windows::Win32::Foundation::{BOOL, HWND, LPARAM, CloseHandle};
+                        use windows::Win32::System::Threading::{
+                            OpenProcess, TerminateProcess, PROCESS_TERMINATE, PROCESS_SYNCHRONIZE, WaitForSingleObject,
+                        };
+
+                        unsafe extern "system" fn close_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+                            let target = lparam.0 as u32;
+                            let mut pid = 0u32;
+                            GetWindowThreadProcessId(hwnd, Some(&mut pid));
+                            if pid == target {
+                                let _ = PostMessageW(hwnd, WM_CLOSE, None, None);
+                            }
+                            BOOL(1)
                         }
+
+                        let _ = EnumWindows(Some(close_proc), LPARAM(pid as isize));
+
+                        // Wait up to 150ms for graceful shutdown before fallback termination
+                        if let Ok(h) = OpenProcess(PROCESS_SYNCHRONIZE | PROCESS_TERMINATE, false, pid) {
+                            let wait_res = WaitForSingleObject(h, 150);
+                            if wait_res.0 != 0 {
+                                let _ = TerminateProcess(h, 0);
+                            }
+                            let _ = CloseHandle(h);
+                        }
+                        let _ = std::fs::remove_file(&pid_path);
+                        return true;
                     }
                 }
             }
@@ -594,6 +617,14 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 });
             }
         }
-        std::thread::sleep(std::time::Duration::from_millis(20));
+        #[cfg(target_os = "windows")]
+        unsafe {
+            use windows::Win32::UI::WindowsAndMessaging::{
+                MsgWaitForMultipleObjectsEx, QS_ALLINPUT, MWMO_INPUTAVAILABLE,
+            };
+            let _ = MsgWaitForMultipleObjectsEx(None, 200, QS_ALLINPUT.0, MWMO_INPUTAVAILABLE);
+        }
+        #[cfg(not(target_os = "windows"))]
+        std::thread::sleep(std::time::Duration::from_millis(30));
     }
 }

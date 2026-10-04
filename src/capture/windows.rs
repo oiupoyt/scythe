@@ -32,8 +32,9 @@ pub struct WindowsCapture {
     pub width: u32,
     pub height: u32,
     pub last_stride: u32,
-    buffer_pool: Vec<Option<Arc<Vec<u8>>>>,
+    buffer_pool: Vec<Arc<Vec<u8>>>,
     last_frame: Option<Arc<Vec<u8>>>,
+    last_reinit_attempt: std::time::Instant,
 }
 
 #[cfg(target_os = "windows")]
@@ -52,13 +53,21 @@ impl WindowsCapture {
 
             let mut a_idx = 0;
             'adapter_loop: while let Ok(adapter) = factory.EnumAdapters1(a_idx) {
+                if let Ok(desc1) = adapter.GetDesc1() {
+                    // Skip software rasterizers (e.g. Microsoft Basic Render Driver) when hardware GPU exists
+                    if (desc1.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0) != 0 {
+                        a_idx += 1;
+                        continue;
+                    }
+                }
                 let mut o_idx = 0;
                 while let Ok(output) = adapter.EnumOutputs(o_idx) {
                     if let Ok(output1) = output.cast::<IDXGIOutput1>() {
                         if let Ok(desc) = output1.GetDesc() {
+                            let is_attached = desc.AttachedToDesktop.as_bool();
                             let width = (desc.DesktopCoordinates.right - desc.DesktopCoordinates.left).unsigned_abs();
                             let height = (desc.DesktopCoordinates.bottom - desc.DesktopCoordinates.top).unsigned_abs();
-                            if width > 0 && height > 0 {
+                            if is_attached && width > 0 && height > 0 {
                                 if let Ok(adapter_base) = adapter.cast::<IDXGIAdapter>() {
                                     let mut device: Option<ID3D11Device> = None;
                                     let mut context: Option<ID3D11DeviceContext> = None;
@@ -133,15 +142,19 @@ impl WindowsCapture {
                 width,
                 height,
                 last_stride: width * 4,
-                buffer_pool: Vec::with_capacity(4),
+                buffer_pool: Vec::with_capacity(8),
                 last_frame: None,
+                last_reinit_attempt: std::time::Instant::now() - std::time::Duration::from_secs(5),
             })
         }
     }
 
     fn reinit_duplication(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if self.last_reinit_attempt.elapsed() < std::time::Duration::from_millis(250) {
+            return Err("Reinitialization throttled".into());
+        }
+        self.last_reinit_attempt = std::time::Instant::now();
         self.duplication = None;
-        std::thread::sleep(std::time::Duration::from_millis(50));
         if let Ok(new_cap) = WindowsCapture::new() {
             self.device = new_cap.device;
             self.context = new_cap.context;
@@ -196,14 +209,12 @@ impl FrameSource for WindowsCapture {
                             let target_stride = (self.width * 4) as usize;
                             let total_bytes = target_stride * self.height as usize;
 
-                            // Acquire buffer from pool
+                            // Acquire buffer from pool or allocate if pool has room
                             let mut arc_buf = None;
-                            for slot in &mut self.buffer_pool {
-                                if let Some(buf) = slot {
-                                    if Arc::strong_count(buf) == 1 {
-                                        arc_buf = slot.take();
-                                        break;
-                                    }
+                            for i in 0..self.buffer_pool.len() {
+                                if Arc::strong_count(&self.buffer_pool[i]) == 1 {
+                                    arc_buf = Some(self.buffer_pool.swap_remove(i));
+                                    break;
                                 }
                             }
                             let mut arc_buf = arc_buf.unwrap_or_else(|| Arc::new(vec![0u8; total_bytes]));
@@ -234,8 +245,8 @@ impl FrameSource for WindowsCapture {
                             self.last_frame = Some(Arc::clone(&arc_buf));
                             self.last_stride = target_stride as u32;
 
-                            if self.buffer_pool.len() < 4 {
-                                self.buffer_pool.push(Some(arc_buf));
+                            if self.buffer_pool.len() < 8 {
+                                self.buffer_pool.push(arc_buf);
                             }
 
                             return Ok(Frame::Raw {
@@ -254,14 +265,12 @@ impl FrameSource for WindowsCapture {
                     Err(e) if e.code() == DXGI_ERROR_ACCESS_LOST
                         || e.code() == DXGI_ERROR_ACCESS_DENIED
                         || e.code() == DXGI_ERROR_INVALID_CALL => {
-                        let _ = dup.ReleaseFrame();
                         drop(dup);
                         self.duplication = None;
                         let _ = self.reinit_duplication();
                         break;
                     }
                     Err(e) => {
-                        let _ = dup.ReleaseFrame();
                         drop(dup);
                         self.duplication = None;
                         let _ = self.reinit_duplication();

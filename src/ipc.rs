@@ -93,6 +93,18 @@ pub fn read_active_ipc_port() -> u16 {
     42069
 }
 
+#[cfg(windows)]
+pub fn get_candidate_ipc_ports() -> Vec<u16> {
+    let active_port = read_active_ipc_port();
+    let mut ports = vec![active_port];
+    for p in [42069, 42070, 42071, 42072] {
+        if !ports.contains(&p) {
+            ports.push(p);
+        }
+    }
+    ports
+}
+
 pub fn is_daemon_running() -> bool {
     query_status().is_ok()
 }
@@ -133,8 +145,7 @@ pub fn send_command(cmd: Command) -> Result<(), Box<dyn std::error::Error + Send
         #[cfg(windows)]
         {
             use std::net::{SocketAddr, TcpStream};
-            let active_port = read_active_ipc_port();
-            let candidate_ports = [active_port, 42069, 42070, 42071, 42072];
+            let candidate_ports = get_candidate_ipc_ports();
             for &port in &candidate_ports {
                 if let Ok(addr) = format!("127.0.0.1:{}", port).parse::<SocketAddr>() {
                     if let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(150)) {
@@ -203,8 +214,7 @@ pub fn query_status() -> Result<DaemonStatus, Box<dyn std::error::Error + Send +
         #[cfg(windows)]
         let stream_res = {
             use std::net::{SocketAddr, TcpStream};
-            let active_port = read_active_ipc_port();
-            let candidate_ports = [active_port, 42069, 42070, 42071, 42072];
+            let candidate_ports = get_candidate_ipc_ports();
             let mut conn = None;
             for &port in &candidate_ports {
                 if let Ok(addr) = format!("127.0.0.1:{}", port).parse::<SocketAddr>() {

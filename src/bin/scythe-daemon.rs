@@ -1,4 +1,5 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+#![allow(clippy::chunks_exact_to_as_chunks)]
 
 use scythe::capture::{Frame, FrameSource};
 use scythe::encoder::VideoEncoder;
@@ -105,7 +106,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         {
             Ok(file) => {
                 use std::os::unix::io::AsRawFd;
-                let res = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+                let mut res = -1;
+                for _ in 0..15 {
+                    res = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+                    if res == 0 {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(80));
+                }
                 if res != 0 {
                     eprintln!("Another instance of scythe-daemon is already running. Exiting.");
                     return Ok(());
@@ -616,8 +624,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                     let filename = scythe::config::ScytheConfig::format_video_filename("Recording", "mp4");
                                     let full_path = config.resolve_save_path(&filename);
                                     let audio_codec_ctx = audio_codec_ctx_ptr.map(|p| p as *mut ffmpeg_next::ffi::AVCodecContext);
-                                    normal_muxer = unsafe { Muxer::new(&full_path, codec_ctx, audio_codec_ctx).ok() };
-                                    println!("Started normal recording to {}", full_path);
+                                    match unsafe { Muxer::new(&full_path, codec_ctx, audio_codec_ctx) } {
+                                        Ok(m) => {
+                                            normal_muxer = Some(m);
+                                            println!("Started normal recording to {}", full_path);
+                                        }
+                                        Err(e) => {
+                                            eprintln!("Failed to start normal recording to {}: {}", full_path, e);
+                                            normal_recording = false;
+                                            rec_state_clone.store(false, Ordering::SeqCst);
+                                            rec_start_clone.store(0, Ordering::SeqCst);
+                                        }
+                                    }
                                 } else if normal_waiting_keyframe {
                                     normal_keyframe_timeout += 1;
                                 }
@@ -663,17 +681,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                 let new_config = scythe::config::ScytheConfig::load();
                                 let video_changed = new_config.show_cursor != config.show_cursor
                                     || new_config.fps != config.fps
-                                    || new_config.video_codec != config.video_codec
-                                    || new_config.record_bitrate_kbps != config.record_bitrate_kbps
-                                    || new_config.replay_bitrate_kbps != config.replay_bitrate_kbps
-                                    || new_config.replay_enabled != config.replay_enabled;
+                                    || new_config.video_codec != config.video_codec;
 
                                 if video_changed {
-                                    println!("Core video settings changed (fps/codec/bitrate/cursor/replay). Restarting daemon for new capture session...");
+                                    println!("Core video settings changed (fps/codec/cursor). Restarting daemon for new capture session...");
                                     if let Some(mut m) = normal_muxer.take() {
                                         let _ = m.finalize();
                                     }
                                     let _ = stream_sender.take();
+                                    #[cfg(unix)]
+                                    {
+                                        if let Ok(status) = std::process::Command::new("systemctl")
+                                            .args(["--user", "is-active", "--quiet", "scythe-daemon.service"])
+                                            .status()
+                                            && status.success() {
+                                                let _ = std::process::Command::new("systemctl")
+                                                    .args(["--user", "restart", "scythe-daemon.service"])
+                                                    .spawn();
+                                                std::thread::sleep(std::time::Duration::from_millis(100));
+                                                std::process::exit(0);
+                                        }
+                                    }
                                     if let Ok(exe) = std::env::current_exe() {
                                         let mut cmd = std::process::Command::new(exe);
                                         cmd.stdin(std::process::Stdio::null())
@@ -748,6 +776,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                     normal_recording = true;
                                     normal_waiting_keyframe = true;
                                     normal_keyframe_timeout = 0;
+                                    has_new_frame = true;
                                     encoder.force_keyframe();
                                     rec_state_clone.store(true, Ordering::SeqCst);
                                     rec_base_audio_pts = -1;
@@ -790,6 +819,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                     normal_recording = true;
                                     normal_waiting_keyframe = true;
                                     normal_keyframe_timeout = 0;
+                                    has_new_frame = true;
                                     encoder.force_keyframe();
                                     rec_state_clone.store(true, Ordering::SeqCst);
                                     rec_base_audio_pts = -1;
@@ -976,9 +1006,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     if now + jitter_margin >= next_frame_time {
                         let elapsed = now.duration_since(stream_start);
                         let raw_pts = (elapsed.as_secs_f64() * config.fps as f64).round() as i64;
-                        let pts = if (raw_pts - last_video_pts).abs() <= 1 {
-                            last_video_pts + 1
-                        } else if raw_pts > last_video_pts {
+                        let pts = if last_video_pts < 0 {
+                            0
+                        } else if raw_pts > last_video_pts + 4 {
                             raw_pts
                         } else {
                             last_video_pts + 1
@@ -1051,9 +1081,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     if now.duration_since(last_frame_encoded_time) >= target_frame_duration.saturating_sub(jitter_margin) {
                         let elapsed = now.duration_since(stream_start);
                         let raw_pts = (elapsed.as_secs_f64() * config.fps as f64).round() as i64;
-                        let pts = if (raw_pts - last_video_pts).abs() <= 1 {
-                            last_video_pts + 1
-                        } else if raw_pts > last_video_pts {
+                        let pts = if last_video_pts < 0 {
+                            0
+                        } else if raw_pts > last_video_pts + 4 {
                             raw_pts
                         } else {
                             last_video_pts + 1

@@ -6,6 +6,9 @@ pub struct WaylandCapture {
     _proxy: Screencast,
     _session: ashpd::desktop::Session<Screencast>,
     stream: crate::capture::wayland_stream::PipeWireStream,
+    show_cursor: bool,
+    last_frame: Option<Frame>,
+    last_reconnect_attempt: std::time::Instant,
 }
 
 impl WaylandCapture {
@@ -59,16 +62,79 @@ impl WaylandCapture {
         
         let stream = crate::capture::wayland_stream::PipeWireStream::new(node_id, fd)?;
         
-        Ok(Self { _proxy: proxy, _session: session, stream })
+        Ok(Self {
+            _proxy: proxy,
+            _session: session,
+            stream,
+            show_cursor,
+            last_frame: None,
+            last_reconnect_attempt: std::time::Instant::now() - std::time::Duration::from_secs(5),
+        })
+    }
+
+    fn try_reconnect(&mut self) -> bool {
+        if self.last_reconnect_attempt.elapsed() < std::time::Duration::from_millis(1500) {
+            return false;
+        }
+        self.last_reconnect_attempt = std::time::Instant::now();
+        eprintln!("Wayland PipeWire stream disconnected. Attempting auto-reconnect...");
+
+        let cursor = self.show_cursor;
+        // Run on an independent OS thread so block_on never conflicts with Tokio runtime threads
+        let res = std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .ok()?;
+            rt.block_on(WaylandCapture::new_with_cursor(cursor)).ok()
+        }).join();
+
+        if let Ok(Some(new_cap)) = res {
+            eprintln!("Wayland ScreenCast session reconnected successfully.");
+            self._proxy = new_cap._proxy;
+            self._session = new_cap._session;
+            self.stream = new_cap.stream;
+            true
+        } else {
+            false
+        }
     }
 }
 
 impl FrameSource for WaylandCapture {
     fn next_frame(&mut self) -> Result<Frame, Box<dyn std::error::Error + Send + Sync>> {
-        self.stream.next_frame()
+        match self.stream.next_frame() {
+            Ok(f) => {
+                self.last_frame = Some(f.clone());
+                Ok(f)
+            }
+            Err(e) => {
+                if self.try_reconnect() {
+                    return self.stream.next_frame();
+                }
+                if let Some(ref f) = self.last_frame {
+                    return Ok(f.clone());
+                }
+                Err(e)
+            }
+        }
     }
 
     fn next_frame_timeout(&mut self, timeout: std::time::Duration) -> Result<Frame, Box<dyn std::error::Error + Send + Sync>> {
-        self.stream.next_frame_timeout(timeout)
+        match self.stream.next_frame_timeout(timeout) {
+            Ok(f) => {
+                self.last_frame = Some(f.clone());
+                Ok(f)
+            }
+            Err(e) => {
+                if self.try_reconnect() {
+                    return self.stream.next_frame_timeout(timeout);
+                }
+                if let Some(ref f) = self.last_frame {
+                    return Ok(f.clone());
+                }
+                Err(e)
+            }
+        }
     }
 }

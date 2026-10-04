@@ -66,19 +66,21 @@ impl VaapiEncoder {
             (*codec_ctx).gop_size = fps; // Emit IDR keyframe every second
             (*codec_ctx).max_b_frames = 0; // Zero latency, no frame reordering
             
-            // High Quality & Clean VBR Rate Control
+            // High Quality & Clean VBR Rate Control matching GPU Screen Recorder standards
             let rate = (bitrate_kbps as i64) * 1000;
             (*codec_ctx).bit_rate = rate;
-            (*codec_ctx).rc_max_rate = rate * 3 / 2; // Allow burst for fast motion scenes
-            (*codec_ctx).rc_buffer_size = (rate / 2) as i32;
-            (*codec_ctx).qmin = 16;
-            (*codec_ctx).qmax = 28; // Prevent compression blockiness
+            (*codec_ctx).rc_max_rate = rate * 2; // Allow 2x burst for high-motion gaming scenes
+            (*codec_ctx).rc_buffer_size = (rate * 2) as i32; // 2 seconds rate control window
+            (*codec_ctx).qmin = 1; // Allow high-fidelity crisp detail
+            (*codec_ctx).qmax = 32;
             (*codec_ctx).profile = match codec_pref.to_lowercase().as_str() {
                 "hevc" | "h265" => FF_PROFILE_HEVC_MAIN,
                 "av1" => FF_PROFILE_UNKNOWN,
                 _ => FF_PROFILE_H264_HIGH,
             };
             (*codec_ctx).flags |= AV_CODEC_FLAG_GLOBAL_HEADER as libc::c_int;
+            let _ = av_opt_set((*codec_ctx).priv_data, c"rc_mode".as_ptr(), c"VBR".as_ptr(), 0);
+            let _ = av_opt_set_int((*codec_ctx).priv_data, c"async_depth".as_ptr(), 4, 0);
 
             // Rec.709 Color Space & MPEG Limited Range (Broadcast / Web standard, avoids yellow tint)
             (*codec_ctx).colorspace = AVColorSpace::AVCOL_SPC_BT709;
@@ -310,6 +312,7 @@ impl VaapiEncoder {
                                     }
                                     av_packet_free(&mut pkt);
                                     mapped_direct = true;
+                                    self.has_frame = true;
                                 }
                             } else {
                                 self.direct_drm_unsupported = true;
@@ -378,7 +381,7 @@ impl VaapiEncoder {
     pub fn encode_cached_frame(&mut self, pts: i64) -> Result<Vec<crate::ring::Packet>, String> {
         let mut packets = Vec::new();
         if !self.has_frame {
-            return Ok(packets);
+            return Err("No cached frame available in encoder".into());
         }
         unsafe {
             self.send_staged_frame(&mut packets, pts)?;
@@ -498,10 +501,10 @@ impl WindowsHwEncoder {
 
                     let rate = (bitrate_kbps as i64) * 1000;
                     (*ctx).bit_rate = rate;
-                    (*ctx).rc_max_rate = rate * 3 / 2;
-                    (*ctx).rc_buffer_size = (rate / 2) as i32;
-                    (*ctx).qmin = 16;
-                    (*ctx).qmax = 28;
+                    (*ctx).rc_max_rate = rate * 2;
+                    (*ctx).rc_buffer_size = (rate * 2) as i32;
+                    (*ctx).qmin = 1;
+                    (*ctx).qmax = 32;
                     let codec_id = (*c).id;
                     (*ctx).profile = if codec_id == AVCodecID::AV_CODEC_ID_HEVC {
                         FF_PROFILE_HEVC_MAIN
@@ -520,11 +523,12 @@ impl WindowsHwEncoder {
                     (*ctx).color_range = AVColorRange::AVCOL_RANGE_MPEG;
 
                     if desc.contains("NVENC") {
-                        let _ = av_opt_set((*ctx).priv_data, c"preset".as_ptr(), c"p1".as_ptr(), 0);
+                        let _ = av_opt_set((*ctx).priv_data, c"preset".as_ptr(), c"p3".as_ptr(), 0);
                         let _ = av_opt_set((*ctx).priv_data, c"tune".as_ptr(), c"ull".as_ptr(), 0);
                         let _ = av_opt_set((*ctx).priv_data, c"forced-idr".as_ptr(), c"1".as_ptr(), 0);
                     } else if desc.contains("AMF") {
                         let _ = av_opt_set((*ctx).priv_data, c"usage".as_ptr(), c"ultralowlatency".as_ptr(), 0);
+                        let _ = av_opt_set((*ctx).priv_data, c"rc".as_ptr(), c"vbr_latency".as_ptr(), 0);
                     } else if desc.contains("QuickSync") {
                         let _ = av_opt_set((*ctx).priv_data, c"preset".as_ptr(), c"veryfast".as_ptr(), 0);
                     } else {
@@ -672,7 +676,7 @@ impl WindowsHwEncoder {
     pub fn encode_cached_frame(&mut self, pts: i64) -> Result<Vec<crate::ring::Packet>, String> {
         let mut packets = Vec::new();
         if !self.has_frame {
-            return Ok(packets);
+            return Err("No cached frame available in encoder".into());
         }
         unsafe {
             if self.sw_frame.is_null() {

@@ -353,16 +353,32 @@ fn run_auto_update(info: &ReleaseInfo, status: &Arc<Mutex<UpdateStatus>>) -> Res
             let current_exe = std::env::current_exe().map_err(|e| format!("Cannot locate current executable: {}", e))?;
             let exe_dir = current_exe.parent().ok_or_else(|| "Invalid executable path".to_string())?;
 
-            set_progress("Replacing binaries...");
-            for bin_name in ["scythe-ui.exe", "scythe-daemon.exe"] {
-                let src = temp_dir.join(bin_name);
-                if src.exists() {
-                    let dest = exe_dir.join(bin_name);
-                    let dest_old = exe_dir.join(format!("{}.old", bin_name));
-                    let _ = std::fs::remove_file(&dest_old);
-                    let _ = std::fs::rename(&dest, &dest_old);
-                    let _ = std::fs::copy(&src, &dest);
+            set_progress("Replacing binaries and libraries...");
+            let mut files_to_update = Vec::new();
+            let mut search_dirs = vec![temp_dir.clone()];
+            while let Some(dir) = search_dirs.pop() {
+                if let Ok(entries) = std::fs::read_dir(&dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.is_dir() {
+                            search_dirs.push(path);
+                        } else if path.is_file() {
+                            let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                            let lower = name.to_lowercase();
+                            if lower.ends_with(".exe") || lower.ends_with(".dll") {
+                                files_to_update.push((path, name));
+                            }
+                        }
+                    }
                 }
+            }
+
+            for (src, name) in files_to_update {
+                let dest = exe_dir.join(&name);
+                let dest_old = exe_dir.join(format!("{}.old", name));
+                let _ = std::fs::remove_file(&dest_old);
+                let _ = std::fs::rename(&dest, &dest_old);
+                let _ = std::fs::copy(&src, &dest);
             }
 
             let _ = std::fs::remove_dir_all(&temp_dir);

@@ -528,9 +528,13 @@ impl AudioCapture {
             let stream_config: cpal::StreamConfig = config.into();
             let lvl_f32 = Arc::clone(&levels_for_cpal);
             let lvl_i16 = Arc::clone(&levels_for_cpal);
+            let lvl_i32 = Arc::clone(&levels_for_cpal);
+            let lvl_u16 = Arc::clone(&levels_for_cpal);
 
             let mut resample_state_f32 = ResampleState::default();
             let mut resample_state_i16 = ResampleState::default();
+            let mut resample_state_i32 = ResampleState::default();
+            let mut resample_state_u16 = ResampleState::default();
 
             let stream = match format {
                 cpal::SampleFormat::F32 => {
@@ -559,6 +563,40 @@ impl AudioCapture {
                                 lvl_i16.update_mic(&f32_data);
                             } else {
                                 lvl_i16.update_system(&f32_data);
+                            }
+                            let _ = tx.try_send(f32_data);
+                        },
+                        err_fn,
+                        None,
+                    )?
+                }
+                cpal::SampleFormat::I32 => {
+                    dev.build_input_stream(
+                        stream_config,
+                        move |data: &[i32], _: &_| {
+                            let converted_f32: Vec<f32> = data.iter().map(|&s| s as f32 / 2147483648.0).collect();
+                            let f32_data = convert_to_stereo_48k(&converted_f32, in_channels, in_sample_rate, gain, &mut resample_state_i32);
+                            if is_mic {
+                                lvl_i32.update_mic(&f32_data);
+                            } else {
+                                lvl_i32.update_system(&f32_data);
+                            }
+                            let _ = tx.try_send(f32_data);
+                        },
+                        err_fn,
+                        None,
+                    )?
+                }
+                cpal::SampleFormat::U16 => {
+                    dev.build_input_stream(
+                        stream_config,
+                        move |data: &[u16], _: &_| {
+                            let converted_f32: Vec<f32> = data.iter().map(|&s| (s as f32 - 32768.0) / 32768.0).collect();
+                            let f32_data = convert_to_stereo_48k(&converted_f32, in_channels, in_sample_rate, gain, &mut resample_state_u16);
+                            if is_mic {
+                                lvl_u16.update_mic(&f32_data);
+                            } else {
+                                lvl_u16.update_system(&f32_data);
                             }
                             let _ = tx.try_send(f32_data);
                         },

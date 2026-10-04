@@ -13,7 +13,7 @@ SOCKET_PATH="${XDG_RUNTIME_DIR:-/tmp}/scythe.sock"
 rm -f "$SOCKET_PATH"
 rm -f record_*.mp4 replay_*.mp4
 
-SAVE_DIR=$(python3 -c 'import json, os; p=os.path.expanduser("~/.config/scythe/config.json"); print(json.load(open(p))["output_directory"]) if os.path.exists(p) else print(os.path.expanduser("~/Videos/Scythe"))' 2>/dev/null || echo "$HOME/Videos/Scythe")
+SAVE_DIR=$(python3 -c 'import json, os; p=os.path.expanduser("~/.config/scythe/config.json"); print(os.path.expanduser(json.load(open(p))["output_directory"])) if os.path.exists(p) else print(os.path.expanduser("~/Videos/Scythe"))' 2>/dev/null || echo "$HOME/Videos/Scythe")
 mkdir -p "$SAVE_DIR"
 
 echo "[2/6] Starting scythe-daemon with mock capture..."
@@ -72,7 +72,7 @@ echo "   Verifying Generated Recordings with ffprobe"
 echo "============================================="
 
 FOUND_ANY=0
-for f in $(find "$SAVE_DIR" "$HOME/Videos/Scythe" "$HOME/Videos/vrec" . -maxdepth 2 \( -name "record_*.mp4" -o -name "replay_*.mp4" \) 2>/dev/null); do
+while IFS= read -r -d '' f; do
     if [ -f "$f" ]; then
         FOUND_ANY=1
         echo "--> Testing file: $f ($(ls -lh "$f" | awk '{print $5}'))"
@@ -87,7 +87,7 @@ for f in $(find "$SAVE_DIR" "$HOME/Videos/Scythe" "$HOME/Videos/vrec" . -maxdept
         echo "---------------------------------------------"
         rm -f "$f"
     fi
-done
+done < <(find "$SAVE_DIR" "$HOME/Videos/Scythe" "$HOME/Videos/vrec" . -maxdepth 2 -mmin -2 \( -iname "record*.mp4" -o -iname "replay*.mp4" \) -print0 2>/dev/null)
 
 if [ $FOUND_ANY -eq 0 ]; then
     echo "FAILED: No recording or replay files were produced!"
