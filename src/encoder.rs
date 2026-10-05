@@ -32,7 +32,24 @@ impl VaapiEncoder {
     }
 
     pub fn new_with_params(width: u32, height: u32, bitrate_kbps: u32, fps: u32, codec_pref: &str) -> Result<Self, String> {
+        Self::new_with_options(width, height, bitrate_kbps, fps, codec_pref, "vbr", "limited", false)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_options(
+        width: u32,
+        height: u32,
+        bitrate_kbps: u32,
+        fps: u32,
+        codec_pref: &str,
+        quality_mode: &str,
+        color_range: &str,
+        low_power: bool,
+    ) -> Result<Self, String> {
         let fps = fps.clamp(20, 144) as i32;
+        let is_full = color_range.to_lowercase() == "full";
+        let is_cbr = quality_mode.to_lowercase() == "cbr";
+
         unsafe {
             let codec_candidates: &[&std::ffi::CStr] = match codec_pref.to_lowercase().as_str() {
                 "hevc" | "h265" => &[c"hevc_vaapi", c"h264_vaapi"],
@@ -69,8 +86,16 @@ impl VaapiEncoder {
             // High Quality & Clean VBR Rate Control matching GPU Screen Recorder standards
             let rate = (bitrate_kbps as i64) * 1000;
             (*codec_ctx).bit_rate = rate;
-            (*codec_ctx).rc_max_rate = rate * 2; // Allow 2x burst for high-motion gaming scenes
-            (*codec_ctx).rc_buffer_size = (rate * 2) as i32; // 2 seconds rate control window
+            if is_cbr {
+                (*codec_ctx).rc_max_rate = rate;
+                (*codec_ctx).rc_buffer_size = rate as i32;
+                let _ = av_opt_set((*codec_ctx).priv_data, c"rc_mode".as_ptr(), c"CBR".as_ptr(), 0);
+            } else {
+                (*codec_ctx).rc_max_rate = rate * 2; // Allow 2x burst for high-motion gaming scenes
+                (*codec_ctx).rc_buffer_size = (rate * 2) as i32; // 2 seconds rate control window
+                let _ = av_opt_set((*codec_ctx).priv_data, c"rc_mode".as_ptr(), c"VBR".as_ptr(), 0);
+            }
+
             (*codec_ctx).qmin = 1; // Allow high-fidelity crisp detail
             (*codec_ctx).qmax = 32;
             (*codec_ctx).profile = match codec_pref.to_lowercase().as_str() {
@@ -79,14 +104,17 @@ impl VaapiEncoder {
                 _ => FF_PROFILE_H264_HIGH,
             };
             (*codec_ctx).flags |= AV_CODEC_FLAG_GLOBAL_HEADER as libc::c_int;
-            let _ = av_opt_set((*codec_ctx).priv_data, c"rc_mode".as_ptr(), c"VBR".as_ptr(), 0);
             let _ = av_opt_set_int((*codec_ctx).priv_data, c"async_depth".as_ptr(), 4, 0);
 
-            // Rec.709 Color Space & MPEG Limited Range (Broadcast / Web standard, avoids yellow tint)
+            if low_power {
+                let _ = av_opt_set_int((*codec_ctx).priv_data, c"low_power".as_ptr(), 1, 0);
+            }
+
+            // Rec.709 Color Space & Color Range
             (*codec_ctx).colorspace = AVColorSpace::AVCOL_SPC_BT709;
             (*codec_ctx).color_primaries = AVColorPrimaries::AVCOL_PRI_BT709;
             (*codec_ctx).color_trc = AVColorTransferCharacteristic::AVCOL_TRC_BT709;
-            (*codec_ctx).color_range = AVColorRange::AVCOL_RANGE_MPEG;
+            (*codec_ctx).color_range = if is_full { AVColorRange::AVCOL_RANGE_JPEG } else { AVColorRange::AVCOL_RANGE_MPEG };
 
             let mut hw_device_ctx: *mut AVBufferRef = ptr::null_mut();
             let ret = av_hwdevice_ctx_create(
@@ -147,7 +175,7 @@ impl VaapiEncoder {
             (*hw_frame).colorspace = AVColorSpace::AVCOL_SPC_BT709;
             (*hw_frame).color_primaries = AVColorPrimaries::AVCOL_PRI_BT709;
             (*hw_frame).color_trc = AVColorTransferCharacteristic::AVCOL_TRC_BT709;
-            (*hw_frame).color_range = AVColorRange::AVCOL_RANGE_MPEG;
+            (*hw_frame).color_range = if is_full { AVColorRange::AVCOL_RANGE_JPEG } else { AVColorRange::AVCOL_RANGE_MPEG };
 
             let sws_ctx = sws_getContext(
                 width as i32,
@@ -166,12 +194,13 @@ impl VaapiEncoder {
             if !sws_ctx.is_null() {
                 let coeffs = sws_getCoefficients(SWS_CS_ITU709);
                 if !coeffs.is_null() {
+                    let dst_range = if is_full { 1 } else { 0 };
                     sws_setColorspaceDetails(
                         sws_ctx,
                         coeffs,
                         1, // srcRange: 1 (sRGB full range 0-255)
                         coeffs,
-                        0, // dstRange: 0 (MPEG limited range 16-235)
+                        dst_range,
                         0,
                         1 << 16,
                         1 << 16,
@@ -444,7 +473,24 @@ impl WindowsHwEncoder {
     }
 
     pub fn new_with_params(width: u32, height: u32, bitrate_kbps: u32, fps: u32, codec_pref: &str) -> Result<Self, String> {
+        Self::new_with_options(width, height, bitrate_kbps, fps, codec_pref, "vbr", "limited", false)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_options(
+        width: u32,
+        height: u32,
+        bitrate_kbps: u32,
+        fps: u32,
+        codec_pref: &str,
+        quality_mode: &str,
+        color_range: &str,
+        low_power: bool,
+    ) -> Result<Self, String> {
         let fps = fps.clamp(20, 144) as i32;
+        let is_full = color_range.to_lowercase() == "full";
+        let is_cbr = quality_mode.to_lowercase() == "cbr";
+
         unsafe {
             let candidates: &[(&std::ffi::CStr, &str)] = match codec_pref.to_lowercase().as_str() {
                 "hevc" | "h265" => &[
@@ -501,8 +547,13 @@ impl WindowsHwEncoder {
 
                     let rate = (bitrate_kbps as i64) * 1000;
                     (*ctx).bit_rate = rate;
-                    (*ctx).rc_max_rate = rate * 2;
-                    (*ctx).rc_buffer_size = (rate * 2) as i32;
+                    if is_cbr {
+                        (*ctx).rc_max_rate = rate;
+                        (*ctx).rc_buffer_size = rate as i32;
+                    } else {
+                        (*ctx).rc_max_rate = rate * 2;
+                        (*ctx).rc_buffer_size = (rate * 2) as i32;
+                    }
                     (*ctx).qmin = 1;
                     (*ctx).qmax = 32;
                     let codec_id = (*c).id;
@@ -516,19 +567,23 @@ impl WindowsHwEncoder {
                     (*ctx).flags |= AV_CODEC_FLAG_GLOBAL_HEADER as libc::c_int;
                     (*ctx).pix_fmt = pix_fmt;
 
-                    // ITU-R BT.709 Color Space & MPEG Limited Range standard for clean broadcast playback
+                    // ITU-R BT.709 Color Space & Color Range standard
                     (*ctx).colorspace = AVColorSpace::AVCOL_SPC_BT709;
                     (*ctx).color_primaries = AVColorPrimaries::AVCOL_PRI_BT709;
                     (*ctx).color_trc = AVColorTransferCharacteristic::AVCOL_TRC_BT709;
-                    (*ctx).color_range = AVColorRange::AVCOL_RANGE_MPEG;
+                    (*ctx).color_range = if is_full { AVColorRange::AVCOL_RANGE_JPEG } else { AVColorRange::AVCOL_RANGE_MPEG };
 
                     if desc.contains("NVENC") {
-                        let _ = av_opt_set((*ctx).priv_data, c"preset".as_ptr(), c"p3".as_ptr(), 0);
+                        let preset = if low_power { c"p1".as_ptr() } else { c"p3".as_ptr() };
+                        let rc = if is_cbr { c"cbr".as_ptr() } else { c"vbr".as_ptr() };
+                        let _ = av_opt_set((*ctx).priv_data, c"preset".as_ptr(), preset, 0);
                         let _ = av_opt_set((*ctx).priv_data, c"tune".as_ptr(), c"ull".as_ptr(), 0);
                         let _ = av_opt_set((*ctx).priv_data, c"forced-idr".as_ptr(), c"1".as_ptr(), 0);
+                        let _ = av_opt_set((*ctx).priv_data, c"rc".as_ptr(), rc, 0);
                     } else if desc.contains("AMF") {
+                        let rc = if is_cbr { c"cbr".as_ptr() } else { c"vbr_latency".as_ptr() };
                         let _ = av_opt_set((*ctx).priv_data, c"usage".as_ptr(), c"ultralowlatency".as_ptr(), 0);
-                        let _ = av_opt_set((*ctx).priv_data, c"rc".as_ptr(), c"vbr_latency".as_ptr(), 0);
+                        let _ = av_opt_set((*ctx).priv_data, c"rc".as_ptr(), rc, 0);
                     } else if desc.contains("QuickSync") {
                         let _ = av_opt_set((*ctx).priv_data, c"preset".as_ptr(), c"veryfast".as_ptr(), 0);
                     } else {
@@ -569,7 +624,7 @@ impl WindowsHwEncoder {
             (*sw_frame).colorspace = AVColorSpace::AVCOL_SPC_BT709;
             (*sw_frame).color_primaries = AVColorPrimaries::AVCOL_PRI_BT709;
             (*sw_frame).color_trc = AVColorTransferCharacteristic::AVCOL_TRC_BT709;
-            (*sw_frame).color_range = AVColorRange::AVCOL_RANGE_MPEG;
+            (*sw_frame).color_range = if is_full { AVColorRange::AVCOL_RANGE_JPEG } else { AVColorRange::AVCOL_RANGE_MPEG };
             if av_frame_get_buffer(sw_frame, 32) < 0 {
                 av_frame_free(&mut sw_frame);
                 avcodec_free_context(&mut opened_codec_ctx);
@@ -597,12 +652,13 @@ impl WindowsHwEncoder {
 
             let coeffs = sws_getCoefficients(SWS_CS_ITU709);
             if !coeffs.is_null() {
+                let dst_range = if is_full { 1 } else { 0 };
                 sws_setColorspaceDetails(
                     sws_ctx,
                     coeffs,
                     1, // srcRange: 1 (sRGB full range 0-255)
                     coeffs,
-                    0, // dstRange: 0 (MPEG limited range 16-235)
+                    dst_range,
                     0,
                     1 << 16,
                     1 << 16,
@@ -740,57 +796,82 @@ pub struct AudioEncoder {
 
 impl AudioEncoder {
     pub fn new(sample_rate: i32, channels: i32) -> Result<Self, String> {
+        Self::new_with_codec(sample_rate, channels, "aac")
+    }
+
+    pub fn new_with_codec(sample_rate: i32, channels: i32, codec_pref: &str) -> Result<Self, String> {
         unsafe {
-            let codec = avcodec_find_encoder(AVCodecID::AV_CODEC_ID_AAC);
+            let wants_opus = codec_pref.to_lowercase() == "opus";
+            let mut codec = if wants_opus {
+                avcodec_find_encoder(AVCodecID::AV_CODEC_ID_OPUS)
+            } else {
+                avcodec_find_encoder(AVCodecID::AV_CODEC_ID_AAC)
+            };
+
+            if codec.is_null() && wants_opus {
+                codec = avcodec_find_encoder_by_name(c"libopus".as_ptr());
+                if codec.is_null() {
+                    codec = avcodec_find_encoder(AVCodecID::AV_CODEC_ID_AAC);
+                }
+            } else if codec.is_null() {
+                codec = avcodec_find_encoder(AVCodecID::AV_CODEC_ID_AAC);
+            }
+
             if codec.is_null() {
-                return Err("AAC encoder not found".into());
+                return Err("No compatible audio encoder found (AAC/Opus)".into());
             }
 
             let codec_ctx = avcodec_alloc_context3(codec);
             if codec_ctx.is_null() {
-                return Err("Failed to allocate AAC codec context".into());
+                return Err("Failed to allocate audio codec context".into());
             }
+
+            let sample_fmt = if (*codec).id == AVCodecID::AV_CODEC_ID_OPUS {
+                AVSampleFormat::AV_SAMPLE_FMT_FLT
+            } else {
+                AVSampleFormat::AV_SAMPLE_FMT_FLTP
+            };
 
             (*codec_ctx).sample_rate = sample_rate;
             (*codec_ctx).time_base = AVRational { num: 1, den: sample_rate };
-            (*codec_ctx).sample_fmt = AVSampleFormat::AV_SAMPLE_FMT_FLTP;
-            (*codec_ctx).bit_rate = 192_000;
+            (*codec_ctx).sample_fmt = sample_fmt;
+            (*codec_ctx).bit_rate = if (*codec).id == AVCodecID::AV_CODEC_ID_OPUS { 160_000 } else { 192_000 };
             (*codec_ctx).flags |= AV_CODEC_FLAG_GLOBAL_HEADER as libc::c_int;
             av_channel_layout_default(&mut (*codec_ctx).ch_layout, channels);
 
             let ret = avcodec_open2(codec_ctx, codec, ptr::null_mut());
             if ret < 0 {
                 avcodec_free_context(&mut (codec_ctx as *mut _));
-                return Err("Failed to open AAC encoder".into());
+                return Err("Failed to open audio encoder".into());
             }
 
             let mut swr_ctx: *mut SwrContext = ptr::null_mut();
             swr_alloc_set_opts2(
                 &mut swr_ctx,
                 &(*codec_ctx).ch_layout,
-                AVSampleFormat::AV_SAMPLE_FMT_FLTP,
+                sample_fmt,
                 sample_rate,
                 &(*codec_ctx).ch_layout,
                 AVSampleFormat::AV_SAMPLE_FMT_FLT,
                 sample_rate,
                 0,
-                ptr::null_mut()
+                ptr::null_mut(),
             );
             swr_init(swr_ctx);
 
-            let frame_size = (*codec_ctx).frame_size;
-            let fifo = av_audio_fifo_alloc(AVSampleFormat::AV_SAMPLE_FMT_FLTP, channels, 1024 * 32);
+            let frame_size = if (*codec_ctx).frame_size > 0 { (*codec_ctx).frame_size } else { 960 };
+            let fifo = av_audio_fifo_alloc(sample_fmt, channels, 1024 * 32);
 
             let enc_frame = av_frame_alloc();
             (*enc_frame).nb_samples = frame_size;
-            (*enc_frame).format = AVSampleFormat::AV_SAMPLE_FMT_FLTP as i32;
+            (*enc_frame).format = sample_fmt as i32;
             (*enc_frame).ch_layout = (*codec_ctx).ch_layout;
             (*enc_frame).sample_rate = sample_rate;
             av_frame_get_buffer(enc_frame, 0);
 
             let staging_out_frame = av_frame_alloc();
             (*staging_out_frame).nb_samples = 8192;
-            (*staging_out_frame).format = AVSampleFormat::AV_SAMPLE_FMT_FLTP as i32;
+            (*staging_out_frame).format = sample_fmt as i32;
             (*staging_out_frame).ch_layout = (*codec_ctx).ch_layout;
             (*staging_out_frame).sample_rate = sample_rate;
             av_frame_get_buffer(staging_out_frame, 0);
@@ -906,6 +987,12 @@ mod tests {
             assert!((flags & (AV_CODEC_FLAG_GLOBAL_HEADER as i32)) != 0, "Audio encoder must have GLOBAL_HEADER flag");
             assert!((*enc.codec_ctx).extradata_size > 0, "Audio encoder extradata must be populated");
         }
+    }
+
+    #[test]
+    fn test_opus_audio_encoder_initialization() {
+        let enc_res = AudioEncoder::new_with_codec(48000, 2, "opus");
+        assert!(enc_res.is_ok(), "Opus encoder initialization should succeed");
     }
 
     #[test]

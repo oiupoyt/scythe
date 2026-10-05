@@ -457,15 +457,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         } else {
             config.record_bitrate_kbps
         };
-        let mut encoder = VideoEncoder::new_with_params(width, height, active_bitrate, config.fps, &config.video_codec)
-            .expect("Failed to init encoder");
+        let mut encoder = VideoEncoder::new_with_options(
+            width,
+            height,
+            active_bitrate,
+            config.fps,
+            &config.video_codec,
+            &config.video_quality_mode,
+            &config.color_range,
+            config.record_low_power,
+        ).expect("Failed to init encoder");
         let codec_ctx_ptr = encoder.codec_ctx() as usize;
         println!("Background recorder engine active and ready ({} fps, replay: {}).", config.fps, config.replay_enabled);
         
         let mut audio_encoder = if let Some((sr, ch)) = audio_info {
-            scythe::encoder::AudioEncoder::new(sr as i32, ch as i32).ok()
+            scythe::encoder::AudioEncoder::new_with_codec(sr as i32, ch as i32, &config.audio_codec).ok()
         } else {
-            scythe::encoder::AudioEncoder::new(48000, 2).ok()
+            scythe::encoder::AudioEncoder::new_with_codec(48000, 2, &config.audio_codec).ok()
         };
         let audio_codec_ctx_ptr = audio_encoder.as_ref().map(|e| e.codec_ctx() as usize); 
         
@@ -681,7 +689,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                 let new_config = scythe::config::ScytheConfig::load();
                                 let video_changed = new_config.show_cursor != config.show_cursor
                                     || new_config.fps != config.fps
-                                    || new_config.video_codec != config.video_codec;
+                                    || new_config.video_codec != config.video_codec
+                                    || new_config.color_range != config.color_range
+                                    || new_config.video_quality_mode != config.video_quality_mode
+                                    || new_config.audio_codec != config.audio_codec
+                                    || new_config.record_low_power != config.record_low_power;
 
                                 if video_changed {
                                     println!("Core video settings changed (fps/codec/cursor). Restarting daemon for new capture session...");
