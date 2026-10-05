@@ -56,10 +56,10 @@ pub fn numeric_input_box(
     ui.horizontal(|ui| {
         let dec_clicked = ui.add(
             egui::Button::new(egui::RichText::new("-").size(13.0).strong().color(Color32::WHITE))
-                .fill(Color32::from_rgb(26, 32, 38))
-                .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 25)))
-                .corner_radius(CornerRadius::same(3))
-                .min_size(Vec2::new(28.0, 26.0)),
+                .fill(Color32::from_rgb(24, 28, 35))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(42, 50, 62)))
+                .corner_radius(CornerRadius::ZERO)
+                .min_size(Vec2::new(26.0, 26.0)),
         ).clicked();
         if dec_clicked {
             *val = val.saturating_sub(step).max(min);
@@ -84,10 +84,10 @@ pub fn numeric_input_box(
 
         let inc_clicked = ui.add(
             egui::Button::new(egui::RichText::new("+").size(13.0).strong().color(Color32::WHITE))
-                .fill(Color32::from_rgb(26, 32, 38))
-                .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 25)))
-                .corner_radius(CornerRadius::same(3))
-                .min_size(Vec2::new(28.0, 26.0)),
+                .fill(Color32::from_rgb(24, 28, 35))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(42, 50, 62)))
+                .corner_radius(CornerRadius::ZERO)
+                .min_size(Vec2::new(26.0, 26.0)),
         ).clicked();
         if inc_clicked {
             *val = (*val + step).min(max);
@@ -960,24 +960,23 @@ fn render_gsr_card(
     resp.clicked()
 }
 
-// Modern Floating Frosted Glass Dropdown Frame
-fn draw_dropdown_frame(painter: &egui::Painter, frame_rect: egui::Rect, accent: Color32) {
+// Sharp Slate Dropdown Frame with Drop Shadow (NO accent embed bar, ZERO roundness)
+fn draw_dropdown_frame(painter: &egui::Painter, frame_rect: egui::Rect, _accent: Color32) {
+    draw_window_shadow(painter, frame_rect, 0.7);
     painter.rect_filled(
         frame_rect,
-        CornerRadius::same(10),
-        Color32::from_rgba_unmultiplied(16, 20, 26, 248),
+        CornerRadius::ZERO,
+        Color32::from_rgb(20, 24, 30),
     );
     painter.rect_stroke(
         frame_rect,
-        CornerRadius::same(10),
-        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 25)),
+        CornerRadius::ZERO,
+        Stroke::new(1.0_f32, Color32::from_rgb(42, 50, 62)),
         egui::StrokeKind::Inside,
     );
-    let top_bar = egui::Rect::from_min_size(frame_rect.min, Vec2::new(frame_rect.width(), 2.5));
-    painter.rect_filled(top_bar, CornerRadius { nw: 9, ne: 9, sw: 0, se: 0 }, accent);
 }
 
-// Sleek Rounded Dropdown Menu Item Renderer
+// Sharp Dropdown Menu Item Renderer
 fn render_dropdown_item(
     ui: &mut egui::Ui,
     rect: egui::Rect,
@@ -991,23 +990,23 @@ fn render_dropdown_item(
     let hovered = resp.hovered();
     let painter = ui.painter();
 
-    let inner_rect = rect.shrink2(Vec2::new(4.0, 2.0));
+    let inner_rect = rect.shrink2(Vec2::new(2.0, 1.0));
     let bg = if hovered {
-        Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 36)
+        Color32::from_rgb(32, 38, 48)
     } else {
         Color32::TRANSPARENT
     };
-    painter.rect_filled(inner_rect, CornerRadius::same(6), bg);
+    painter.rect_filled(inner_rect, CornerRadius::ZERO, bg);
     if hovered {
-        painter.rect_stroke(inner_rect, CornerRadius::same(6), Stroke::new(1.0_f32, accent), egui::StrokeKind::Inside);
+        painter.rect_stroke(inner_rect, CornerRadius::ZERO, Stroke::new(1.0_f32, accent), egui::StrokeKind::Inside);
     }
 
     // Left Icon
-    let mut text_x = rect.left() + 16.0;
+    let mut text_x = rect.left() + 14.0;
     if let Some(tex) = icon_tex {
-        let icon_center = egui::pos2(rect.left() + 24.0, rect.center().y);
+        let icon_center = egui::pos2(rect.left() + 22.0, rect.center().y);
         draw_texture_centered(painter, tex, icon_center, 18.0, if hovered { accent } else { Color32::WHITE });
-        text_x = rect.left() + 44.0;
+        text_x = rect.left() + 40.0;
     }
 
     // Title
@@ -1025,22 +1024,22 @@ fn render_dropdown_item(
             egui::pos2(rect.right() - 36.0, rect.center().y),
             Vec2::new(54.0, 20.0),
         );
-        painter.rect_filled(badge_rect, CornerRadius::same(4), Color32::from_rgba_unmultiplied(0, 0, 0, 160));
-        painter.rect_stroke(badge_rect, CornerRadius::same(4), Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 20)), egui::StrokeKind::Inside);
+        painter.rect_filled(badge_rect, CornerRadius::ZERO, Color32::from_rgb(12, 14, 18));
+        painter.rect_stroke(badge_rect, CornerRadius::ZERO, Stroke::new(1.0_f32, Color32::from_rgb(36, 42, 52)), egui::StrokeKind::Inside);
         painter.text(
             badge_rect.center(),
             egui::Align2::CENTER_CENTER,
             hk,
             FontId::proportional(10.5),
-            if hovered { accent } else { Color32::from_rgb(180, 185, 195) },
+            if hovered { accent } else { Color32::from_rgb(175, 180, 190) },
         );
     }
 
     // Divider line
     if !is_last && !hovered {
         painter.line_segment(
-            [egui::pos2(rect.left() + 12.0, rect.bottom()), egui::pos2(rect.right() - 12.0, rect.bottom())],
-            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 14)),
+            [egui::pos2(rect.left() + 8.0, rect.bottom()), egui::pos2(rect.right() - 8.0, rect.bottom())],
+            Stroke::new(1.0_f32, Color32::from_rgb(28, 34, 42)),
         );
     }
 
@@ -1136,6 +1135,18 @@ pub struct ScytheOverlayApp {
     pub replay_storage: String,
     pub record_low_power: bool,
     pub show_replay_notifications: bool,
+    pub container_format: String,
+    pub change_resolution: bool,
+    pub resolution_w: u32,
+    pub resolution_h: u32,
+    pub res_w_str: String,
+    pub res_h_str: String,
+    pub save_folder_by_game: bool,
+    pub name_by_game: bool,
+    pub restart_replay_on_save: bool,
+    pub show_scroll_lock_led: bool,
+    pub autostart_on_game: bool,
+    pub autostart_power_only: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -1215,6 +1226,19 @@ impl ScytheOverlayApp {
         let record_low_power = config.record_low_power;
         let show_replay_notifications = config.show_replay_notifications;
 
+        let container_format = config.container_format.clone();
+        let change_resolution = config.change_resolution;
+        let resolution_w = config.resolution_w;
+        let resolution_h = config.resolution_h;
+        let res_w_str = resolution_w.to_string();
+        let res_h_str = resolution_h.to_string();
+        let save_folder_by_game = config.save_folder_by_game;
+        let name_by_game = config.name_by_game;
+        let restart_replay_on_save = config.restart_replay_on_save;
+        let show_scroll_lock_led = config.show_scroll_lock_led;
+        let autostart_on_game = config.autostart_on_game;
+        let autostart_power_only = config.autostart_power_only;
+
         let update_status = Arc::new(std::sync::Mutex::new(crate::updater::UpdateStatus::Idle));
         if auto_check_updates {
             crate::updater::spawn_update_check(update_status.clone());
@@ -1281,6 +1305,18 @@ impl ScytheOverlayApp {
             replay_storage,
             record_low_power,
             show_replay_notifications,
+            container_format,
+            change_resolution,
+            resolution_w,
+            resolution_h,
+            res_w_str,
+            res_h_str,
+            save_folder_by_game,
+            name_by_game,
+            restart_replay_on_save,
+            show_scroll_lock_led,
+            autostart_on_game,
+            autostart_power_only,
         }
     }
 
@@ -1320,6 +1356,16 @@ impl ScytheOverlayApp {
         self.config.replay_storage = self.replay_storage.clone();
         self.config.record_low_power = self.record_low_power;
         self.config.show_replay_notifications = self.show_replay_notifications;
+        self.config.container_format = self.container_format.clone();
+        self.config.change_resolution = self.change_resolution;
+        self.config.resolution_w = self.resolution_w;
+        self.config.resolution_h = self.resolution_h;
+        self.config.save_folder_by_game = self.save_folder_by_game;
+        self.config.name_by_game = self.name_by_game;
+        self.config.restart_replay_on_save = self.restart_replay_on_save;
+        self.config.show_scroll_lock_led = self.show_scroll_lock_led;
+        self.config.autostart_on_game = self.autostart_on_game;
+        self.config.autostart_power_only = self.autostart_power_only;
         let _ = self.config.save();
         crate::hyprland_binds::register_hyprland_binds(&self.config);
         crate::config::ScytheConfig::notify_daemon_reload();
@@ -1351,6 +1397,18 @@ impl ScytheOverlayApp {
         self.replay_storage = def.replay_storage;
         self.record_low_power = def.record_low_power;
         self.show_replay_notifications = def.show_replay_notifications;
+        self.container_format = def.container_format;
+        self.change_resolution = def.change_resolution;
+        self.resolution_w = def.resolution_w;
+        self.resolution_h = def.resolution_h;
+        self.res_w_str = def.resolution_w.to_string();
+        self.res_h_str = def.resolution_h.to_string();
+        self.save_folder_by_game = def.save_folder_by_game;
+        self.name_by_game = def.name_by_game;
+        self.restart_replay_on_save = def.restart_replay_on_save;
+        self.show_scroll_lock_led = def.show_scroll_lock_led;
+        self.autostart_on_game = def.autostart_on_game;
+        self.autostart_power_only = def.autostart_power_only;
         self.show_hud_notification("DEFAULTS", "Settings restored to defaults", crate::overlay::ToastIcon::Info);
     }
 
@@ -2141,8 +2199,12 @@ impl ScytheOverlayApp {
                     ui.label(egui::RichText::new("Container:").size(11.5).color(Color32::from_rgb(180, 185, 190)));
                     ui.add_space(2.0);
                     ui.horizontal(|ui| {
-                        let _ = squared_button(ui, "mp4", true, accent);
-                        let _ = squared_button(ui, "mkv", false, accent);
+                        if squared_button(ui, "mp4", self.container_format == "mp4", accent) {
+                            self.container_format = "mp4".to_string();
+                        }
+                        if squared_button(ui, "mkv", self.container_format == "mkv", accent) {
+                            self.container_format = "mkv".to_string();
+                        }
                     });
                 });
                 ui.add_space(16.0);
@@ -2185,14 +2247,26 @@ impl ScytheOverlayApp {
 
             ui.add_space(8.0);
             ui.horizontal(|ui| {
+                let mut sfg = self.save_folder_by_game;
+                if toggle_switch(ui, &mut sfg, accent).changed() {
+                    self.save_folder_by_game = sfg;
+                }
                 ui.label(egui::RichText::new("Save video in a folder based on the games name").size(11.5).color(Color32::WHITE));
             });
             ui.add_space(4.0);
             ui.horizontal(|ui| {
+                let mut nbg = self.name_by_game;
+                if toggle_switch(ui, &mut nbg, accent).changed() {
+                    self.name_by_game = nbg;
+                }
                 ui.label(egui::RichText::new("Name the video file after the game").size(11.5).color(Color32::WHITE));
             });
             ui.add_space(4.0);
             ui.horizontal(|ui| {
+                let mut rrs = self.restart_replay_on_save;
+                if toggle_switch(ui, &mut rrs, accent).changed() {
+                    self.restart_replay_on_save = rrs;
+                }
                 ui.label(egui::RichText::new("Restart replay on save").size(11.5).color(Color32::WHITE));
             });
             ui.add_space(4.0);
@@ -2258,8 +2332,10 @@ impl ScytheOverlayApp {
             });
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                let mut led_on = false;
-                let _ = toggle_switch(ui, &mut led_on, accent);
+                let mut led_on = self.show_scroll_lock_led;
+                if toggle_switch(ui, &mut led_on, accent).changed() {
+                    self.show_scroll_lock_led = led_on;
+                }
                 ui.label(egui::RichText::new("Show replay status with scroll lock LED").size(11.5).color(Color32::WHITE));
             });
         });
@@ -2268,17 +2344,26 @@ impl ScytheOverlayApp {
 
         render_section_card(ui, "Autostart", accent, |ui| {
             ui.horizontal(|ui| {
-                if squared_button(ui, "Don't turn on replay automatically", !self.autostart_replay, accent) {
+                let neither = !self.autostart_replay && !self.autostart_on_game;
+                if squared_button(ui, "Don't turn on replay automatically", neither, accent) {
                     self.autostart_replay = false;
+                    self.autostart_on_game = false;
                 }
                 if squared_button(ui, "Turn on replay when this program starts", self.autostart_replay, accent) {
                     self.autostart_replay = true;
+                    self.autostart_on_game = false;
+                }
+                if squared_button(ui, "Turn on replay when starting a game", self.autostart_on_game, accent) {
+                    self.autostart_on_game = true;
+                    self.autostart_replay = false;
                 }
             });
             ui.add_space(6.0);
             ui.horizontal(|ui| {
-                let mut pwr_only = false;
-                let _ = toggle_switch(ui, &mut pwr_only, accent);
+                let mut pwr_only = self.autostart_power_only;
+                if toggle_switch(ui, &mut pwr_only, accent).changed() {
+                    self.autostart_power_only = pwr_only;
+                }
                 ui.label(egui::RichText::new("Only turn on replay if a power supply is connected").size(11.5).color(Color32::WHITE));
             });
         });
@@ -2295,14 +2380,38 @@ impl ScytheOverlayApp {
                 if squared_button(ui, "Monitor eDP-1 (1920x1080)", self.capture_source == "monitor", accent) {
                     self.capture_source = "monitor".to_string();
                 }
+                if squared_button(ui, "Window", self.capture_source == "window", accent) {
+                    self.capture_source = "window".to_string();
+                }
+                if squared_button(ui, "Region", self.capture_source == "region", accent) {
+                    self.capture_source = "region".to_string();
+                }
             });
 
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                let mut chg_res = false;
-                let _ = toggle_switch(ui, &mut chg_res, accent);
+                let mut chg_res = self.change_resolution;
+                if toggle_switch(ui, &mut chg_res, accent).changed() {
+                    self.change_resolution = chg_res;
+                }
                 ui.label(egui::RichText::new("Change video resolution").size(11.5).color(Color32::WHITE));
             });
+
+            if self.change_resolution {
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("Resolution:").size(11.5).color(Color32::from_rgb(180, 185, 190)));
+                    let mut w = self.resolution_w;
+                    if numeric_input_box(ui, &mut self.res_w_str, &mut w, 640, 7680, 160, "W", accent) {
+                        self.resolution_w = w;
+                    }
+                    ui.label(egui::RichText::new("x").size(11.5).color(Color32::WHITE));
+                    let mut h = self.resolution_h;
+                    if numeric_input_box(ui, &mut self.res_h_str, &mut h, 480, 4320, 90, "H", accent) {
+                        self.resolution_h = h;
+                    }
+                });
+            }
         });
 
         ui.add_space(10.0);
@@ -2449,8 +2558,12 @@ impl ScytheOverlayApp {
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new("Container:").size(11.5).color(Color32::from_rgb(180, 185, 190)));
-                let _ = squared_button(ui, "mp4", true, accent);
-                let _ = squared_button(ui, "mkv", false, accent);
+                if squared_button(ui, "mp4", self.container_format == "mp4", accent) {
+                    self.container_format = "mp4".to_string();
+                }
+                if squared_button(ui, "mkv", self.container_format == "mkv", accent) {
+                    self.container_format = "mkv".to_string();
+                }
             });
         });
     }
@@ -4158,5 +4271,55 @@ mod tests {
         assert_eq!(ease_out(0.0), 0.0);
         assert_eq!(ease_out(1.0), 1.0);
         assert!(ease_out(0.5) > 0.5); // Fast start, gentle deceleration
+    }
+
+    #[test]
+    fn test_overlay_app_options_synchronization() {
+        let mut app = ScytheOverlayApp::new();
+        app.container_format = "mkv".to_string();
+        app.change_resolution = true;
+        app.resolution_w = 2560;
+        app.resolution_h = 1440;
+        app.save_folder_by_game = true;
+        app.name_by_game = true;
+        app.restart_replay_on_save = false;
+        app.show_scroll_lock_led = true;
+        app.capture_source = "window".to_string();
+        app.video_quality_mode = "vbr".to_string();
+        app.color_range = "full".to_string();
+        app.config.audio_codec = "opus".to_string();
+        app.record_low_power = true;
+        app.show_replay_notifications = false;
+
+        app.save_and_apply_settings();
+
+        assert_eq!(app.config.container_format, "mkv");
+        assert!(app.config.change_resolution);
+        assert_eq!(app.config.resolution_w, 2560);
+        assert_eq!(app.config.resolution_h, 1440);
+        assert!(app.config.save_folder_by_game);
+        assert!(app.config.name_by_game);
+        assert!(!app.config.restart_replay_on_save);
+        assert!(app.config.show_scroll_lock_led);
+        assert_eq!(app.config.capture_source, "window");
+        assert_eq!(app.config.video_quality_mode, "vbr");
+        assert_eq!(app.config.color_range, "full");
+        assert_eq!(app.config.audio_codec, "opus");
+        assert!(app.config.record_low_power);
+        assert!(!app.config.show_replay_notifications);
+
+        app.reset_settings_to_defaults();
+        assert_eq!(app.container_format, "mp4");
+        assert!(!app.change_resolution);
+        assert!(!app.save_folder_by_game);
+        assert!(!app.name_by_game);
+        assert!(app.restart_replay_on_save);
+        assert!(!app.show_scroll_lock_led);
+        assert_eq!(app.capture_source, "focused");
+        assert_eq!(app.video_quality_mode, "cbr");
+        assert_eq!(app.color_range, "limited");
+        assert_eq!(app.config.audio_codec, "opus");
+        assert!(!app.record_low_power);
+        assert!(app.show_replay_notifications);
     }
 }

@@ -29,6 +29,9 @@ fn default_video_quality_mode() -> String { "cbr".to_string() }
 fn default_color_range() -> String { "limited".to_string() }
 fn default_audio_codec() -> String { "opus".to_string() }
 fn default_replay_storage() -> String { "ram".to_string() }
+fn default_container_format() -> String { "mp4".to_string() }
+fn default_res_w() -> u32 { 1920 }
+fn default_res_h() -> u32 { 1080 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ScytheConfig {
@@ -114,6 +117,27 @@ pub struct ScytheConfig {
     pub record_low_power: bool,
     #[serde(default = "default_true")]
     pub show_replay_notifications: bool,
+
+    #[serde(default = "default_container_format")]
+    pub container_format: String,
+    #[serde(default)]
+    pub change_resolution: bool,
+    #[serde(default = "default_res_w")]
+    pub resolution_w: u32,
+    #[serde(default = "default_res_h")]
+    pub resolution_h: u32,
+    #[serde(default)]
+    pub save_folder_by_game: bool,
+    #[serde(default)]
+    pub name_by_game: bool,
+    #[serde(default = "default_true")]
+    pub restart_replay_on_save: bool,
+    #[serde(default)]
+    pub show_scroll_lock_led: bool,
+    #[serde(default)]
+    pub autostart_on_game: bool,
+    #[serde(default)]
+    pub autostart_power_only: bool,
 }
 
 pub type VrecConfig = ScytheConfig;
@@ -164,6 +188,17 @@ impl Default for ScytheConfig {
             replay_storage: default_replay_storage(),
             record_low_power: false,
             show_replay_notifications: true,
+
+            container_format: default_container_format(),
+            change_resolution: false,
+            resolution_w: default_res_w(),
+            resolution_h: default_res_h(),
+            save_folder_by_game: false,
+            name_by_game: false,
+            restart_replay_on_save: true,
+            show_scroll_lock_led: false,
+            autostart_on_game: false,
+            autostart_power_only: false,
         }
     }
 }
@@ -427,6 +462,27 @@ mod tests {
         assert_eq!(parsed.stream_service, "twitch");
         assert_eq!(parsed.stream_url, "rtmp://live.twitch.tv/app/");
         assert_eq!(parsed.stream_key, "");
+
+        assert_eq!(parsed.container_format, "mp4");
+        assert!(!parsed.change_resolution);
+        assert_eq!(parsed.resolution_w, 1920);
+        assert_eq!(parsed.resolution_h, 1080);
+        assert!(!parsed.save_folder_by_game);
+        assert!(!parsed.name_by_game);
+        assert!(parsed.restart_replay_on_save);
+        assert!(!parsed.show_scroll_lock_led);
+        assert!(!parsed.autostart_on_game);
+        assert!(!parsed.autostart_power_only);
+        assert_eq!(parsed.capture_source, "focused");
+        assert_eq!(parsed.video_quality_mode, "cbr");
+        assert_eq!(parsed.color_range, "limited");
+        assert_eq!(parsed.audio_codec, "opus");
+        assert_eq!(parsed.replay_storage, "ram");
+        assert!(!parsed.record_low_power);
+        assert!(parsed.show_replay_notifications);
+        assert_eq!(parsed.screenshot_hotkey, "Ctrl+Shift+S");
+        assert_eq!(parsed.screenshot_format, "png");
+        assert!(!parsed.screenshot_cursor);
     }
 
     #[test]

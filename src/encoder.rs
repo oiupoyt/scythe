@@ -152,7 +152,15 @@ impl VaapiEncoder {
 
             (*codec_ctx).hw_frames_ctx = av_buffer_ref(hw_frames_ref);
 
-            let ret = avcodec_open2(codec_ctx, codec, ptr::null_mut());
+            let mut ret = avcodec_open2(codec_ctx, codec, ptr::null_mut());
+            if ret < 0 && low_power {
+                // If low_power mode is unsupported on this GPU driver, fallback to standard encoding entrypoint
+                let _ = av_opt_set_int((*codec_ctx).priv_data, c"low_power".as_ptr(), 0, 0);
+                if (*codec_ctx).hw_frames_ctx.is_null() {
+                    (*codec_ctx).hw_frames_ctx = av_buffer_ref(hw_frames_ref);
+                }
+                ret = avcodec_open2(codec_ctx, codec, ptr::null_mut());
+            }
             if ret < 0 {
                 av_buffer_unref(&mut (hw_frames_ref as *mut _));
                 av_buffer_unref(&mut hw_device_ctx);
