@@ -6,6 +6,15 @@ This checklist tracks known bugs, UI refinements, optimizations, and technical d
 
 ## 1. UI Refinements & Imperfections
 
+- [x] **Square Buttons, Zero-Roundness Dropdown Frames & Persistent Options**:
+  - **Issue**: The dropdown menu still had rounded styling and top accent bars, plus/minus buttons in numeric input boxes had rounded corners (`CornerRadius::same(3)`), and several options (such as changing resolution, scroll lock LED status, container format selection, and game naming rules) were dummy placeholders that didn't persist to configuration.
+  - **Resolution**:
+    - Completely stripped all roundness (`CornerRadius::ZERO`) from dropdown frames, dropdown items, keycap badges, and plus/minus stepper buttons in [src/overlay_egui.rs](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/src/overlay_egui.rs).
+    - Removed all top horizontal accent bars from dropdown frames and added realistic drop shadows (`draw_window_shadow`).
+    - Wired every single setting (`container_format`, `change_resolution`, `resolution_w`, `resolution_h`, `save_folder_by_game`, `name_by_game`, `restart_replay_on_save`, `show_scroll_lock_led`, `autostart_on_game`, `autostart_power_only`, `capture_source`, `video_quality_mode`, `color_range`, `audio_codec`, `replay_storage`, `record_low_power`, `show_replay_notifications`) to persist cleanly into [src/config.rs](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/src/config.rs) and `~/.config/scythe/config.json`.
+    - Added automated unit test `test_overlay_app_options_synchronization` (26/26 passing) verifying save, apply, and reset for every single option.
+    - Fixed low-power hardware encoder fallback in [src/encoder.rs](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/src/encoder.rs) on drivers without `VAEntrypointEncSliceLP`.
+
 - [x] **Sharp Dark Slate Window Architecture with Drop Shadows (Matching GSR Screenshots)**:
   - **Issue**: The UI previously had curved/rounded edges and embedded horizontal accent bars that felt uncharacteristic of native GPU screen recorder overlays.
   - **Resolution**: Redesigned all overlay windows in [src/overlay_egui.rs](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/src/overlay_egui.rs) to match the visual language of the provided GPU Screen Recorder screenshots:
