@@ -156,12 +156,15 @@ This checklist tracks known bugs, UI refinements, optimizations, and technical d
   - **Issue**: Obsolete exploratory files in `scythe/scratch/` (`test_shm.rs`, `test_x11_shm.rs`) and ad-hoc python scripts in the project root (`test_ipc.py`, `test_record.py`, `test_reload.py`, `test_stop.py`, `send_ipc.py`) cluttered the workspace.
   - **Resolution**: Removed `scratch/` directory and relocated testing utilities into [tests/manual_ipc/](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/tests/manual_ipc).
 
-- [ ] **Direct DMA-BUF Import for AMD/Intel VAAPI Zero-Copy**:
-  - **Issue**: While `AVDRMFrameDescriptor` mapping is implemented in [src/encoder.rs](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/src/encoder.rs), certain driver configurations fallback to cached `mmap` + `sws_scale`.
-  - **Proposed Enhancement**: Benchmark and expand DRM modifier negotiation in `WaylandStream` to maximize direct hardware surface import without host CPU touches.
+- [x] **Dynamic PipeWire DRM Format Negotiation (Zero-Copy Pipeline)**:
+  - **Issue**: In [src/capture/wayland_stream.rs](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/src/capture/wayland_stream.rs), the DRM format code was hardcoded to `0x34325241` (`DRM_FORMAT_ARGB8888`), causing driver mismatches when compositors negotiated `XRGB8888`, `XBGR8888`, or `NV12`.
+  - **Resolution**: Dynamically mapped `user_data.format.format()` to its matching DRM fourcc (`DRM_FORMAT_XRGB8888`, `DRM_FORMAT_XBGR8888`, `DRM_FORMAT_NV12`). When `NV12` buffers arrive, they are passed directly into VAAPI without CPU color conversion.
 
-- [ ] **Audio Resampling Fast Path for 48,000 Hz Sources**:
-  - **Status**: Already implemented in `convert_to_stereo_48k` via early return passthrough, avoiding interpolation when input matches 48 kHz.
+- [x] **Audio Resampling Fast Path for 48,000 Hz Sources**:
+  - **Status**: Implemented in `convert_to_stereo_48k` via early return passthrough, avoiding interpolation when input matches 48 kHz.
+
+- [x] **Windows Desktop Duplication Buffer Pool Recycling**:
+  - **Status**: Implemented in [src/capture/windows.rs](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/src/capture/windows.rs) with 8-slot reusable buffer pool, eliminating heap allocations in the 60 FPS capture loop.
 
 ---
 
