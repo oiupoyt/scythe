@@ -89,6 +89,17 @@ This checklist tracks known bugs, UI refinements, optimizations, and technical d
 
 ## 3. Reliability & Bug Fixes
 
+- [x] **Opus Audio Encoder Implementation & AAC Fallback**:
+  - **Issue**: Previously, only AAC audio encoding was supported, despite Opus being the industry standard for low-latency streaming and high-fidelity game recording.
+  - **Resolution**: Implemented native `Opus` audio encoding in [src/encoder.rs](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/src/encoder.rs) (`AudioEncoder::new_with_codec`) using `AV_SAMPLE_FMT_FLT` at 160 kbps with automatic fallback to AAC when unavailable. Dynamically wired into [src/bin/scythe-daemon.rs](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/src/bin/scythe-daemon.rs) based on `config.audio_codec`. Verified 60 FPS recording with native Opus audio streams in MP4 containers.
+
+- [x] **Hardware Video Encoder Quality Mode (CBR/VBR), Color Range & Low Power Mode**:
+  - **Issue**: Hardware video encoders previously hardcoded VBR rate control, MPEG limited color range, and default GPU performance profiles regardless of user settings.
+  - **Resolution**: Updated `VaapiEncoder` and `WindowsHwEncoder` in [src/encoder.rs](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/src/encoder.rs) (`new_with_options`):
+    - Configured explicit `rc_mode` (CBR with strict bitrate caps vs VBR with 2x burst headroom).
+    - Configured color range (`AVCOL_RANGE_JPEG` full range 0-255 vs `AVCOL_RANGE_MPEG` limited range 16-235) in both codec contexts and `sws_setColorspaceDetails`.
+    - Implemented hardware low-power mode (`low_power` on VAAPI and `p1` energy-efficient preset on NVENC) to conserve battery during background replay buffering.
+
 - [x] **Video Timestamp Pacing Judder (Lag & Micro-Stutter Fix)**:
   - **Issue**: In [src/bin/scythe-daemon.rs](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/src/bin/scythe-daemon.rs), video packet presentation timestamps (PTS) were calculated using wall-clock floating point math with small timing jitter. When a frame was processed a few milliseconds early or late, PTS deltas jumped between 0, 16ms, and 33ms, creating perceptible visual micro-stutter (judder) and making smooth 60 FPS video look choppy in video players.
   - **Resolution**: Implemented smooth constant framerate (CFR) pacing. Each consecutive encoded video frame now receives an exact, uniform PTS step (`last_video_pts + 1`), providing an exact 16.666ms delta (verified with `ffprobe`). Video players and web browsers now play back smoothly without frame pacing judder.
