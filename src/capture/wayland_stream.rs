@@ -77,10 +77,16 @@ impl PipeWireStream {
                             let stride = data.chunk().stride() as u32;
                             let offset = data.chunk().offset();
                             let frame = if fd > 0 {
+                                let drm_fourcc = match user_data.format.format() {
+                                    spa::param::video::VideoFormat::BGRx | spa::param::video::VideoFormat::BGRA => 0x34325258, // DRM_FORMAT_XRGB8888
+                                    spa::param::video::VideoFormat::RGBx | spa::param::video::VideoFormat::RGBA => 0x34324258, // DRM_FORMAT_XBGR8888
+                                    spa::param::video::VideoFormat::NV12 => 0x3231564e, // DRM_FORMAT_NV12
+                                    _ => 0x34325241, // DRM_FORMAT_ARGB8888
+                                };
                                 Frame::DmaBuf {
                                     width: user_data.format.size().width,
                                     height: user_data.format.size().height,
-                                    format: 0x34325241, // DRM_FORMAT_ARGB8888
+                                    format: drm_fourcc,
                                     modifier: user_data.format.modifier(), 
                                     fd,
                                     stride,

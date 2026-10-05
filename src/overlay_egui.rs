@@ -2798,10 +2798,12 @@ impl ScytheOverlayApp {
         let modal_rect = egui::Rect::from_min_size(egui::pos2(left_pad, top_pad), egui::vec2(modal_w, modal_h));
         self.panel_rect = modal_rect;
 
+        draw_window_shadow(ui.painter(), modal_rect, 1.0);
+
         ui.allocate_new_ui(egui::UiBuilder::new().max_rect(modal_rect), |ui| {
             egui::Frame::NONE
-                .fill(Color32::from_rgba_unmultiplied(11, 12, 15, 252))
-                .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 140)))
+                .fill(Color32::from_rgb(21, 25, 30))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(42, 50, 62)))
                 .corner_radius(CornerRadius::ZERO)
                 .inner_margin(Margin::symmetric(20_i8, 16_i8))
                 .show(ui, |ui| {
