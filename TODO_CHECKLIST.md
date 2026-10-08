@@ -6,6 +6,34 @@ This checklist tracks known bugs, UI refinements, optimizations, and technical d
 
 ## 1. UI Refinements & Imperfections
 
+- [x] **Dropdown Rolldown Animation & Frosted Blur Styling**:
+  - **Issue**: Dropdowns previously appeared abruptly without animation, and background shadow/framing lacked smooth transition.
+  - **Resolution**: Implemented smooth cubic ease-out rolldown animation (`ui.ctx().animate_bool(...)` over 180ms) in [src/overlay_egui.rs](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/src/overlay_egui.rs). Content smoothly slides into position while clipped to the expanding frame, with multi-layered drop shadows (`draw_window_shadow`) and softened frosted background blur (`#10141a` at 96% opacity).
+
+- [x] **Instant Replay Sound Capture Parity & Autostart Layout Fix**:
+  - **Issue**: Instant replay settings were missing sound capture options, and the Autostart section overflowed beyond the panel width.
+  - **Resolution**:
+    - Added full audio capture controls to Instant Replay settings (audio mode selection, volume sliders, live VU peak meters, and Opus/AAC codec choice).
+    - Refactored the Autostart section in [src/overlay_egui.rs](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/src/overlay_egui.rs) into a vertical button list matching the available container width.
+
+- [x] **Functional Audio Settings Integration**:
+  - **Issue**: Audio settings in normal recording previously contained non-functional mockup buttons.
+  - **Resolution**: Replaced placeholder elements with fully functional controls for source routing (`System Audio`, `Microphone`, `Both`, `Muted`), live volume adjustment (0-150%), audio codec selection (`Opus` vs `AAC`), and live stereo peak meters.
+
+- [x] **Screenshot Quality, Compression Preset & Keybind Integration**:
+  - **Issue**: Screenshot settings lacked quality/compression tuning and keybind rebinding in the general settings view.
+  - **Resolution**: Added compression quality slider (10% to 100%), compression preset selector (`Fast`, `Balanced`, `Maximum Compression`), and integrated screenshot keybind (`Ctrl+Shift+S`) into the general settings hotkey rebinding list.
+
+- [x] **Comprehensive QoL Quick Keybinds & Compact Reset Button**:
+  - **Issue**: Hotkey settings lacked common shortcuts (such as pause recording, muting microphone, muting system audio), and the reset button in general settings took up too much width.
+  - **Resolution**:
+    - Added interactive rebinding for Pause Recording (`Ctrl+Shift+F8`), Mute Microphone (`Ctrl+Shift+M`), and Mute System Audio (`Ctrl+Shift+N`) in [src/config.rs](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/src/config.rs), [src/overlay_egui.rs](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/src/overlay_egui.rs), and [src/bin/scythe-ui.rs](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/src/bin/scythe-ui.rs).
+    - Compacted the "Reset to Defaults" button in the hotkeys card to a compact `Reset Hotkeys` button (`96px x 24px`).
+
+- [x] **Monospace Interface Font Support (Adwaita Mono)**:
+  - **Issue**: Interface typography was limited to proportional font without monospace option.
+  - **Resolution**: Integrated `AdwaitaMono-Regular.ttf` into [assets/fonts/](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/assets/fonts) and added a working toggle in General Settings allowing instant switching between Proportional and Monospace typography.
+
 - [x] **Square Buttons, Zero-Roundness Dropdown Frames & Persistent Options**:
   - **Issue**: The dropdown menu still had rounded styling and top accent bars, plus/minus buttons in numeric input boxes had rounded corners (`CornerRadius::same(3)`), and several options (such as changing resolution, scroll lock LED status, container format selection, and game naming rules) were dummy placeholders that didn't persist to configuration.
   - **Resolution**:
