@@ -199,19 +199,33 @@ pub enum KeybindAction {
     Menu,
     SaveReplay,
     ToggleRecord,
+    PauseRecord,
+    Screenshot,
     ToggleCursor,
+    MuteMic,
+    MuteSystem,
 }
 
-pub fn setup_custom_fonts(ctx: &egui::Context) {
+pub fn setup_custom_fonts(ctx: &egui::Context, use_monospace: bool) {
     let mut fonts = egui::FontDefinitions::default();
     fonts.font_data.insert(
         "modern_sans".to_owned(),
         Arc::new(egui::FontData::from_static(include_bytes!("../assets/fonts/AdwaitaSans-Regular.ttf"))),
     );
+    fonts.font_data.insert(
+        "modern_mono".to_owned(),
+        Arc::new(egui::FontData::from_static(include_bytes!("../assets/fonts/AdwaitaMono-Regular.ttf"))),
+    );
+
+    let primary = if use_monospace { "modern_mono" } else { "modern_sans" };
     fonts.families
         .entry(egui::FontFamily::Proportional)
         .or_default()
-        .insert(0, "modern_sans".to_owned());
+        .insert(0, primary.to_owned());
+    fonts.families
+        .entry(egui::FontFamily::Monospace)
+        .or_default()
+        .insert(0, "modern_mono".to_owned());
     ctx.set_fonts(fonts);
 }
 
@@ -1147,6 +1161,9 @@ pub struct ScytheOverlayApp {
     pub show_scroll_lock_led: bool,
     pub autostart_on_game: bool,
     pub autostart_power_only: bool,
+    pub screenshot_quality: u32,
+    pub screenshot_preset: String,
+    pub use_monospace_font: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -1238,6 +1255,9 @@ impl ScytheOverlayApp {
         let show_scroll_lock_led = config.show_scroll_lock_led;
         let autostart_on_game = config.autostart_on_game;
         let autostart_power_only = config.autostart_power_only;
+        let screenshot_quality = config.screenshot_quality;
+        let screenshot_preset = config.screenshot_preset.clone();
+        let use_monospace_font = config.use_monospace_font;
 
         let update_status = Arc::new(std::sync::Mutex::new(crate::updater::UpdateStatus::Idle));
         if auto_check_updates {
@@ -1317,6 +1337,9 @@ impl ScytheOverlayApp {
             show_scroll_lock_led,
             autostart_on_game,
             autostart_power_only,
+            screenshot_quality,
+            screenshot_preset,
+            use_monospace_font,
         }
     }
 
@@ -1366,6 +1389,9 @@ impl ScytheOverlayApp {
         self.config.show_scroll_lock_led = self.show_scroll_lock_led;
         self.config.autostart_on_game = self.autostart_on_game;
         self.config.autostart_power_only = self.autostart_power_only;
+        self.config.screenshot_quality = self.screenshot_quality;
+        self.config.screenshot_preset = self.screenshot_preset.clone();
+        self.config.use_monospace_font = self.use_monospace_font;
         let _ = self.config.save();
         crate::hyprland_binds::register_hyprland_binds(&self.config);
         crate::config::ScytheConfig::notify_daemon_reload();
@@ -1409,6 +1435,9 @@ impl ScytheOverlayApp {
         self.show_scroll_lock_led = def.show_scroll_lock_led;
         self.autostart_on_game = def.autostart_on_game;
         self.autostart_power_only = def.autostart_power_only;
+        self.screenshot_quality = def.screenshot_quality;
+        self.screenshot_preset = def.screenshot_preset;
+        self.use_monospace_font = def.use_monospace_font;
         self.show_hud_notification("DEFAULTS", "Settings restored to defaults", crate::overlay::ToastIcon::Info);
     }
 
@@ -1834,138 +1863,171 @@ impl ScytheOverlayApp {
             self.switch_view(ShadowPlayView::Settings(SettingsTab::General), ctx);
         }
 
-        // Dropdown menus floating beneath cards with sleek rounded frosted glass
-        let item_h = 38.0_f32;
+        // Dropdown menus with rolldown/swipe animation and smooth background blur
+        let item_h = 36.0_f32;
+        let anim_replay = ui.ctx().animate_bool(ui.make_persistent_id("anim_replay_dropdown"), self.replay_dropdown_open);
+        let anim_record = ui.ctx().animate_bool(ui.make_persistent_id("anim_record_dropdown"), self.record_dropdown_open);
+        let anim_stream = ui.ctx().animate_bool(ui.make_persistent_id("anim_stream_dropdown"), self.stream_dropdown_open);
+
+        if anim_replay > 0.001 || anim_record > 0.001 || anim_stream > 0.001 {
+            ctx.request_repaint();
+        }
 
         // Instant Replay dropdown
-        if self.replay_dropdown_open {
-            let drop_y = card0_rect.bottom() + 6.0;
-            let total_h = item_h * 5.0;
-            let frame_rect = egui::Rect::from_min_size(egui::pos2(card0_rect.left(), drop_y), Vec2::new(card_w, total_h));
+        if anim_replay > 0.001 {
+            let ease = 1.0 - (1.0 - anim_replay).powi(3);
+            let drop_y = card0_rect.bottom() + 4.0;
+            let full_h = item_h * 5.0;
+            let cur_h = full_h * ease;
+            let frame_rect = egui::Rect::from_min_size(egui::pos2(card0_rect.left(), drop_y), Vec2::new(card_w, cur_h));
             draw_dropdown_frame(ui.painter(), frame_rect, accent);
 
-            let r0 = egui::Rect::from_min_size(egui::pos2(card0_rect.left(), drop_y), Vec2::new(card_w, item_h));
-            let r1 = egui::Rect::from_min_size(egui::pos2(card0_rect.left(), drop_y + item_h), Vec2::new(card_w, item_h));
-            let r2 = egui::Rect::from_min_size(egui::pos2(card0_rect.left(), drop_y + item_h * 2.0), Vec2::new(card_w, item_h));
-            let r3 = egui::Rect::from_min_size(egui::pos2(card0_rect.left(), drop_y + item_h * 3.0), Vec2::new(card_w, item_h));
-            let r4 = egui::Rect::from_min_size(egui::pos2(card0_rect.left(), drop_y + item_h * 4.0), Vec2::new(card_w, item_h));
+            let clip_rect = frame_rect;
+            ui.allocate_new_ui(egui::UiBuilder::new().max_rect(clip_rect), |ui| {
+                ui.set_clip_rect(clip_rect);
+                let slide_offset = (1.0 - ease) * -12.0;
 
-            let toggle_title = if is_replay_active { "Turn off" } else { "Turn on" };
-            let toggle_icon = if is_replay_active { tex_stop } else { tex_play };
-            if render_dropdown_item(ui, r0, toggle_title, None, toggle_icon, accent, false) {
-                let mut cfg = ScytheConfig::load();
-                cfg.replay_enabled = !cfg.replay_enabled;
-                let _ = cfg.save();
-                ScytheConfig::notify_daemon_reload();
-                self.config.replay_enabled = cfg.replay_enabled;
-                self.status.is_replay_active = cfg.replay_enabled;
-                self.replay_dropdown_open = false;
-            }
+                let r0 = egui::Rect::from_min_size(egui::pos2(card0_rect.left(), drop_y + slide_offset), Vec2::new(card_w, item_h));
+                let r1 = egui::Rect::from_min_size(egui::pos2(card0_rect.left(), drop_y + item_h + slide_offset), Vec2::new(card_w, item_h));
+                let r2 = egui::Rect::from_min_size(egui::pos2(card0_rect.left(), drop_y + item_h * 2.0 + slide_offset), Vec2::new(card_w, item_h));
+                let r3 = egui::Rect::from_min_size(egui::pos2(card0_rect.left(), drop_y + item_h * 3.0 + slide_offset), Vec2::new(card_w, item_h));
+                let r4 = egui::Rect::from_min_size(egui::pos2(card0_rect.left(), drop_y + item_h * 4.0 + slide_offset), Vec2::new(card_w, item_h));
 
-            let save_hk = self.config.save_hotkey.trim();
-            let save_hk_opt = if save_hk.is_empty() { None } else { Some(save_hk) };
-            if render_dropdown_item(ui, r1, "Save Replay", save_hk_opt, tex_save, accent, false) {
-                if is_replay_active {
-                    async_send_command(Command::SaveReplay);
-                    self.show_hud_notification("INSTANT REPLAY", "Saved to Videos", crate::overlay::ToastIcon::Replay);
-                } else {
-                    self.show_hud_notification("INSTANT REPLAY", "Replay is turned off", crate::overlay::ToastIcon::Error);
+                let toggle_title = if is_replay_active { "Turn off" } else { "Turn on" };
+                let toggle_icon = if is_replay_active { tex_stop } else { tex_play };
+                if render_dropdown_item(ui, r0, toggle_title, None, toggle_icon, accent, false) {
+                    let mut cfg = ScytheConfig::load();
+                    cfg.replay_enabled = !cfg.replay_enabled;
+                    let _ = cfg.save();
+                    ScytheConfig::notify_daemon_reload();
+                    self.config.replay_enabled = cfg.replay_enabled;
+                    self.status.is_replay_active = cfg.replay_enabled;
+                    self.replay_dropdown_open = false;
                 }
-                self.replay_dropdown_open = false;
-            }
 
-            if render_dropdown_item(ui, r2, "Save 1 min", None, tex_save, accent, false) {
-                if is_replay_active {
-                    async_send_command(Command::SaveReplay);
-                    self.show_hud_notification("INSTANT REPLAY", "Saved 1 min replay", crate::overlay::ToastIcon::Replay);
-                } else {
-                    self.show_hud_notification("INSTANT REPLAY", "Replay is turned off", crate::overlay::ToastIcon::Error);
+                let save_hk = self.config.save_hotkey.trim();
+                let save_hk_opt = if save_hk.is_empty() { None } else { Some(save_hk) };
+                if render_dropdown_item(ui, r1, "Save Replay", save_hk_opt, tex_save, accent, false) {
+                    if is_replay_active {
+                        async_send_command(Command::SaveReplay);
+                        self.show_hud_notification("INSTANT REPLAY", "Saved to Videos", crate::overlay::ToastIcon::Replay);
+                    } else {
+                        self.show_hud_notification("INSTANT REPLAY", "Replay is turned off", crate::overlay::ToastIcon::Error);
+                    }
+                    self.replay_dropdown_open = false;
                 }
-                self.replay_dropdown_open = false;
-            }
 
-            if render_dropdown_item(ui, r3, "Save 10 min", None, tex_save, accent, false) {
-                if is_replay_active {
-                    async_send_command(Command::SaveReplay);
-                    self.show_hud_notification("INSTANT REPLAY", "Saved 10 min replay", crate::overlay::ToastIcon::Replay);
-                } else {
-                    self.show_hud_notification("INSTANT REPLAY", "Replay is turned off", crate::overlay::ToastIcon::Error);
+                if render_dropdown_item(ui, r2, "Save 1 min", None, tex_save, accent, false) {
+                    if is_replay_active {
+                        async_send_command(Command::SaveReplay);
+                        self.show_hud_notification("INSTANT REPLAY", "Saved 1 min replay", crate::overlay::ToastIcon::Replay);
+                    } else {
+                        self.show_hud_notification("INSTANT REPLAY", "Replay is turned off", crate::overlay::ToastIcon::Error);
+                    }
+                    self.replay_dropdown_open = false;
                 }
-                self.replay_dropdown_open = false;
-            }
 
-            if render_dropdown_item(ui, r4, "Settings", None, tex_settings_xs, accent, true) {
-                self.switch_view(ShadowPlayView::Settings(SettingsTab::Replay), ctx);
-            }
+                if render_dropdown_item(ui, r3, "Save 10 min", None, tex_save, accent, false) {
+                    if is_replay_active {
+                        async_send_command(Command::SaveReplay);
+                        self.show_hud_notification("INSTANT REPLAY", "Saved 10 min replay", crate::overlay::ToastIcon::Replay);
+                    } else {
+                        self.show_hud_notification("INSTANT REPLAY", "Replay is turned off", crate::overlay::ToastIcon::Error);
+                    }
+                    self.replay_dropdown_open = false;
+                }
+
+                if render_dropdown_item(ui, r4, "Settings", None, tex_settings_xs, accent, true) {
+                    self.switch_view(ShadowPlayView::Settings(SettingsTab::Replay), ctx);
+                }
+            });
         }
 
         // Record dropdown
-        if self.record_dropdown_open {
-            let drop_y = card1_rect.bottom() + 6.0;
-            let total_h = item_h * 3.0;
-            let frame_rect = egui::Rect::from_min_size(egui::pos2(card1_rect.left(), drop_y), Vec2::new(card_w, total_h));
+        if anim_record > 0.001 {
+            let ease = 1.0 - (1.0 - anim_record).powi(3);
+            let drop_y = card1_rect.bottom() + 4.0;
+            let full_h = item_h * 3.0;
+            let cur_h = full_h * ease;
+            let frame_rect = egui::Rect::from_min_size(egui::pos2(card1_rect.left(), drop_y), Vec2::new(card_w, cur_h));
             draw_dropdown_frame(ui.painter(), frame_rect, accent);
 
-            let r0 = egui::Rect::from_min_size(egui::pos2(card1_rect.left(), drop_y), Vec2::new(card_w, item_h));
-            let r1 = egui::Rect::from_min_size(egui::pos2(card1_rect.left(), drop_y + item_h), Vec2::new(card_w, item_h));
-            let r2 = egui::Rect::from_min_size(egui::pos2(card1_rect.left(), drop_y + item_h * 2.0), Vec2::new(card_w, item_h));
+            let clip_rect = frame_rect;
+            ui.allocate_new_ui(egui::UiBuilder::new().max_rect(clip_rect), |ui| {
+                ui.set_clip_rect(clip_rect);
+                let slide_offset = (1.0 - ease) * -12.0;
 
-            let rec_toggle_title = if is_recording { "Stop Recording" } else { "Start Recording" };
-            let rec_toggle_icon = if is_recording { tex_stop } else { tex_play };
-            let rec_hk = self.config.record_hotkey.trim();
-            let rec_hk_opt = if rec_hk.is_empty() { None } else { Some(rec_hk) };
-            if render_dropdown_item(ui, r0, rec_toggle_title, rec_hk_opt, rec_toggle_icon, accent, false) {
-                async_send_command(Command::ToggleRecording);
-                if is_recording {
-                    self.show_hud_notification("RECORDING", "Recording saved", crate::overlay::ToastIcon::Save);
-                } else {
-                    self.show_hud_notification("RECORDING", "Recording started", crate::overlay::ToastIcon::Record);
+                let r0 = egui::Rect::from_min_size(egui::pos2(card1_rect.left(), drop_y + slide_offset), Vec2::new(card_w, item_h));
+                let r1 = egui::Rect::from_min_size(egui::pos2(card1_rect.left(), drop_y + item_h + slide_offset), Vec2::new(card_w, item_h));
+                let r2 = egui::Rect::from_min_size(egui::pos2(card1_rect.left(), drop_y + item_h * 2.0 + slide_offset), Vec2::new(card_w, item_h));
+
+                let rec_toggle_title = if is_recording { "Stop Recording" } else { "Start Recording" };
+                let rec_toggle_icon = if is_recording { tex_stop } else { tex_play };
+                let rec_hk = self.config.record_hotkey.trim();
+                let rec_hk_opt = if rec_hk.is_empty() { None } else { Some(rec_hk) };
+                if render_dropdown_item(ui, r0, rec_toggle_title, rec_hk_opt, rec_toggle_icon, accent, false) {
+                    async_send_command(Command::ToggleRecording);
+                    if is_recording {
+                        self.show_hud_notification("RECORDING", "Recording saved", crate::overlay::ToastIcon::Save);
+                    } else {
+                        self.show_hud_notification("RECORDING", "Recording started", crate::overlay::ToastIcon::Record);
+                    }
+                    self.record_dropdown_open = false;
                 }
-                self.record_dropdown_open = false;
-            }
 
-            let pause_hk_opt: Option<&str> = None;
-            if render_dropdown_item(ui, r1, "Pause", pause_hk_opt, tex_pause, accent, false) {
-                self.record_dropdown_open = false;
-            }
+                let pause_hk = self.config.pause_hotkey.trim();
+                let pause_hk_opt = if pause_hk.is_empty() { None } else { Some(pause_hk) };
+                if render_dropdown_item(ui, r1, "Pause", pause_hk_opt, tex_pause, accent, false) {
+                    self.record_dropdown_open = false;
+                }
 
-            if render_dropdown_item(ui, r2, "Settings", None, tex_settings_xs, accent, true) {
-                self.switch_view(ShadowPlayView::Settings(SettingsTab::Record), ctx);
-            }
+                if render_dropdown_item(ui, r2, "Settings", None, tex_settings_xs, accent, true) {
+                    self.switch_view(ShadowPlayView::Settings(SettingsTab::Record), ctx);
+                }
+            });
         }
 
         // Livestream dropdown
-        if self.stream_dropdown_open {
-            let drop_y = card2_rect.bottom() + 6.0;
-            let total_h = item_h * 2.0;
-            let frame_rect = egui::Rect::from_min_size(egui::pos2(card2_rect.left(), drop_y), Vec2::new(card_w, total_h));
+        if anim_stream > 0.001 {
+            let ease = 1.0 - (1.0 - anim_stream).powi(3);
+            let drop_y = card2_rect.bottom() + 4.0;
+            let full_h = item_h * 2.0;
+            let cur_h = full_h * ease;
+            let frame_rect = egui::Rect::from_min_size(egui::pos2(card2_rect.left(), drop_y), Vec2::new(card_w, cur_h));
             draw_dropdown_frame(ui.painter(), frame_rect, accent);
 
-            let r0 = egui::Rect::from_min_size(egui::pos2(card2_rect.left(), drop_y), Vec2::new(card_w, item_h));
-            let r1 = egui::Rect::from_min_size(egui::pos2(card2_rect.left(), drop_y + item_h), Vec2::new(card_w, item_h));
+            let clip_rect = frame_rect;
+            ui.allocate_new_ui(egui::UiBuilder::new().max_rect(clip_rect), |ui| {
+                ui.set_clip_rect(clip_rect);
+                let slide_offset = (1.0 - ease) * -12.0;
 
-            let stream_toggle_title = if is_streaming { "Stop Streaming" } else { "Start Streaming" };
-            let stream_toggle_icon = if is_streaming { tex_stop } else { tex_play };
-            if render_dropdown_item(ui, r0, stream_toggle_title, None, stream_toggle_icon, accent, false) {
-                if is_streaming {
-                    async_send_command(Command::StopStreaming);
-                    self.status.is_streaming = false;
-                    self.show_hud_notification("LIVESTREAM", "Stream stopped", crate::overlay::ToastIcon::Info);
-                } else if self.stream_key.trim().is_empty() {
-                    self.show_hud_notification("LIVESTREAM", "Stream key is empty. Configure in Settings.", crate::overlay::ToastIcon::Error);
-                } else {
-                    async_send_command(Command::StartStreaming);
-                    self.status.is_streaming = true;
-                    self.show_hud_notification("LIVESTREAM", "Livestream started", crate::overlay::ToastIcon::Record);
+                let r0 = egui::Rect::from_min_size(egui::pos2(card2_rect.left(), drop_y + slide_offset), Vec2::new(card_w, item_h));
+                let r1 = egui::Rect::from_min_size(egui::pos2(card2_rect.left(), drop_y + item_h + slide_offset), Vec2::new(card_w, item_h));
+
+                let stream_toggle_title = if is_streaming { "Stop Streaming" } else { "Start Streaming" };
+                let stream_toggle_icon = if is_streaming { tex_stop } else { tex_play };
+                if render_dropdown_item(ui, r0, stream_toggle_title, None, stream_toggle_icon, accent, false) {
+                    if is_streaming {
+                        async_send_command(Command::StopStreaming);
+                        self.status.is_streaming = false;
+                        self.show_hud_notification("LIVESTREAM", "Stream stopped", crate::overlay::ToastIcon::Info);
+                    } else if self.stream_key.trim().is_empty() {
+                        self.show_hud_notification("LIVESTREAM", "Stream key is empty. Configure in Settings.", crate::overlay::ToastIcon::Error);
+                    } else {
+                        async_send_command(Command::StartStreaming);
+                        self.status.is_streaming = true;
+                        self.show_hud_notification("LIVESTREAM", "Livestream started", crate::overlay::ToastIcon::Record);
+                    }
+                    self.stream_dropdown_open = false;
                 }
-                self.stream_dropdown_open = false;
-            }
 
-            if render_dropdown_item(ui, r1, "Settings", None, tex_settings_xs, accent, true) {
-                self.switch_view(ShadowPlayView::Settings(SettingsTab::Livestream), ctx);
-            }
+                if render_dropdown_item(ui, r1, "Settings", None, tex_settings_xs, accent, true) {
+                    self.switch_view(ShadowPlayView::Settings(SettingsTab::Livestream), ctx);
+                }
+            });
         }
     }
+
     fn render_settings_view(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
         let screen_w = ui.available_width();
         let screen_h = ui.available_height();
@@ -2281,6 +2343,49 @@ impl ScytheOverlayApp {
 
         ui.add_space(10.0);
 
+        render_section_card(ui, "Audio", accent, |ui| {
+            ui.label(egui::RichText::new("Audio capture source mode:").size(11.5).color(Color32::from_rgb(180, 185, 190)));
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                let modes = [("system", "System Audio"), ("mic", "Microphone"), ("both", "Both"), ("muted", "Muted")];
+                for (idx, (_, m_label)) in modes.iter().enumerate() {
+                    if squared_button(ui, m_label, self.audio_mode_idx == idx, accent) {
+                        self.audio_mode_idx = idx;
+                    }
+                }
+            });
+
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Audio codec:").size(11.5).color(Color32::from_rgb(180, 185, 190)));
+                if squared_button(ui, "Opus (Recommended)", self.config.audio_codec == "opus", accent) {
+                    self.config.audio_codec = "opus".to_string();
+                }
+                if squared_button(ui, "AAC", self.config.audio_codec == "aac", accent) {
+                    self.config.audio_codec = "aac".to_string();
+                }
+            });
+
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Sys Vol:").size(11.5).color(Color32::WHITE));
+                let mut sv = self.system_volume_pct;
+                if ui.add(egui::Slider::new(&mut sv, 0..=150).suffix("%")).changed() {
+                    self.system_volume_pct = sv;
+                }
+                ui.add_space(10.0);
+                ui.label(egui::RichText::new("Mic Vol:").size(11.5).color(Color32::WHITE));
+                let mut mv = self.mic_volume_pct;
+                if ui.add(egui::Slider::new(&mut mv, 0..=150).suffix("%")).changed() {
+                    self.mic_volume_pct = mv;
+                }
+            });
+            ui.add_space(3.0);
+            render_vu_meter(ui, self.sys_vu, ui.available_width() - 8.0, 10.0, "SYS");
+        });
+
+        ui.add_space(10.0);
+
         render_section_card(ui, "Video parameters", accent, |ui| {
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
@@ -2343,21 +2448,22 @@ impl ScytheOverlayApp {
         ui.add_space(10.0);
 
         render_section_card(ui, "Autostart", accent, |ui| {
-            ui.horizontal(|ui| {
-                let neither = !self.autostart_replay && !self.autostart_on_game;
-                if squared_button(ui, "Don't turn on replay automatically", neither, accent) {
-                    self.autostart_replay = false;
-                    self.autostart_on_game = false;
-                }
-                if squared_button(ui, "Turn on replay when this program starts", self.autostart_replay, accent) {
-                    self.autostart_replay = true;
-                    self.autostart_on_game = false;
-                }
-                if squared_button(ui, "Turn on replay when starting a game", self.autostart_on_game, accent) {
-                    self.autostart_on_game = true;
-                    self.autostart_replay = false;
-                }
-            });
+            let neither = !self.autostart_replay && !self.autostart_on_game;
+            let btn_w = ui.available_width() - 8.0;
+            if squared_button_sized(ui, "Don't turn on replay automatically", neither, accent, Some(Vec2::new(btn_w, 26.0))) {
+                self.autostart_replay = false;
+                self.autostart_on_game = false;
+            }
+            ui.add_space(3.0);
+            if squared_button_sized(ui, "Turn on replay when this program starts", self.autostart_replay, accent, Some(Vec2::new(btn_w, 26.0))) {
+                self.autostart_replay = true;
+                self.autostart_on_game = false;
+            }
+            ui.add_space(3.0);
+            if squared_button_sized(ui, "Turn on replay when starting a game", self.autostart_on_game, accent, Some(Vec2::new(btn_w, 26.0))) {
+                self.autostart_on_game = true;
+                self.autostart_replay = false;
+            }
             ui.add_space(6.0);
             ui.horizontal(|ui| {
                 let mut pwr_only = self.autostart_power_only;
@@ -2417,45 +2523,16 @@ impl ScytheOverlayApp {
         ui.add_space(10.0);
 
         render_section_card(ui, "Audio", accent, |ui| {
+            ui.label(egui::RichText::new("Audio capture source mode:").size(11.5).color(Color32::from_rgb(180, 185, 190)));
+            ui.add_space(4.0);
             ui.horizontal(|ui| {
-                let _ = squared_button(ui, "Add audio track", false, accent);
+                let modes = [("system", "System Audio"), ("mic", "Microphone"), ("both", "Both"), ("muted", "Muted")];
+                for (idx, (_, m_label)) in modes.iter().enumerate() {
+                    if squared_button(ui, m_label, self.audio_mode_idx == idx, accent) {
+                        self.audio_mode_idx = idx;
+                    }
+                }
             });
-            ui.add_space(8.0);
-
-            // Inset Audio Track #1 Box
-            egui::Frame::NONE
-                .fill(Color32::from_rgb(20, 24, 30))
-                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 40, 50)))
-                .corner_radius(CornerRadius::ZERO)
-                .inner_margin(Margin::same(10_i8))
-                .show(ui, |ui| {
-                    ui.label(egui::RichText::new("Audio track #1").size(12.0).strong().color(Color32::WHITE));
-                    ui.add_space(6.0);
-                    ui.horizontal(|ui| {
-                        let _ = squared_button(ui, "Add output device", false, accent);
-                        let _ = squared_button(ui, "Add input device", false, accent);
-                        let _ = squared_button(ui, "Add application audio", false, accent);
-                    });
-
-                    ui.add_space(8.0);
-                    ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new("Output device: Default output").size(11.5).color(Color32::WHITE));
-                    });
-
-                    ui.add_space(8.0);
-                    ui.horizontal(|ui| {
-                        let mut rec_all = true;
-                        let _ = toggle_switch(ui, &mut rec_all, accent);
-                        ui.label(egui::RichText::new("Record audio from all applications except the selected ones").size(11.0).color(Color32::from_rgb(200, 205, 215)));
-                    });
-
-                    ui.add_space(6.0);
-                    ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new("Track title:").size(11.5).color(Color32::from_rgb(180, 185, 190)));
-                        let mut track_t = String::new();
-                        ui.add(egui::TextEdit::singleline(&mut track_t).desired_width(180.0));
-                    });
-                });
 
             ui.add_space(8.0);
             ui.horizontal(|ui| {
@@ -2575,12 +2652,6 @@ impl ScytheOverlayApp {
             ui.horizontal(|ui| {
                 let _ = squared_button(ui, "Focused monitor", true, accent);
             });
-            ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                let mut chg_res = false;
-                let _ = toggle_switch(ui, &mut chg_res, accent);
-                ui.label(egui::RichText::new("Change video resolution").size(11.5).color(Color32::WHITE));
-            });
         });
 
         ui.add_space(10.0);
@@ -2658,6 +2729,25 @@ impl ScytheOverlayApp {
                 for (fmt_id, label) in [("png", "PNG (Lossless)"), ("jpg", "JPEG (Compressed)")] {
                     if squared_button(ui, label, self.screenshot_format.to_lowercase() == fmt_id, accent) {
                         self.screenshot_format = fmt_id.to_string();
+                    }
+                }
+            });
+
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Compression quality:").size(11.5).color(Color32::from_rgb(180, 185, 190)));
+                let mut q = self.screenshot_quality;
+                if ui.add(egui::Slider::new(&mut q, 10..=100).suffix("%")).changed() {
+                    self.screenshot_quality = q;
+                }
+            });
+
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Compression preset:").size(11.5).color(Color32::from_rgb(180, 185, 190)));
+                for (p_id, label) in [("fast", "Fast"), ("balanced", "Balanced"), ("max", "Maximum Compression")] {
+                    if squared_button(ui, label, self.screenshot_preset == p_id, accent) {
+                        self.screenshot_preset = p_id.to_string();
                     }
                 }
             });
@@ -2791,7 +2881,11 @@ impl ScytheOverlayApp {
                 (KeybindAction::Menu, "Menu Overlay", &self.config.menu_hotkey),
                 (KeybindAction::SaveReplay, "Save Instant Replay", &self.config.save_hotkey),
                 (KeybindAction::ToggleRecord, "Start / Stop Record", &self.config.record_hotkey),
+                (KeybindAction::PauseRecord, "Pause / Resume Record", &self.config.pause_hotkey),
+                (KeybindAction::Screenshot, "Take Screenshot", &self.config.screenshot_hotkey),
                 (KeybindAction::ToggleCursor, "Toggle Mouse Cursor", &self.config.cursor_hotkey),
+                (KeybindAction::MuteMic, "Mute / Unmute Microphone", &self.config.mute_mic_hotkey),
+                (KeybindAction::MuteSystem, "Mute / Unmute System Audio", &self.config.mute_sys_hotkey),
             ];
 
             for (action, label, current_hotkey) in binds {
@@ -2813,7 +2907,7 @@ impl ScytheOverlayApp {
                         }
                     });
                 });
-                ui.add_space(6.0);
+                ui.add_space(5.0);
             }
 
             if self.listening_keybind.is_some() {
@@ -2828,24 +2922,51 @@ impl ScytheOverlayApp {
 
             ui.add_space(6.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if squared_button_sized(ui, "Reset to Defaults", false, accent, Some(Vec2::new(130.0, 26.0))) {
+                if squared_button_sized(ui, "Reset Hotkeys", false, accent, Some(Vec2::new(96.0, 24.0))) {
                     let old_menu = self.config.menu_hotkey.clone();
                     let old_save = self.config.save_hotkey.clone();
                     let old_rec = self.config.record_hotkey.clone();
+                    let old_pause = self.config.pause_hotkey.clone();
                     let old_cur = self.config.cursor_hotkey.clone();
+                    let old_shot = self.config.screenshot_hotkey.clone();
+                    let old_mic = self.config.mute_mic_hotkey.clone();
+                    let old_sys = self.config.mute_sys_hotkey.clone();
                     crate::hyprland_binds::unbind_hotkey_async(&old_menu);
                     crate::hyprland_binds::unbind_hotkey_async(&old_save);
                     crate::hyprland_binds::unbind_hotkey_async(&old_rec);
+                    crate::hyprland_binds::unbind_hotkey_async(&old_pause);
                     crate::hyprland_binds::unbind_hotkey_async(&old_cur);
+                    crate::hyprland_binds::unbind_hotkey_async(&old_shot);
+                    crate::hyprland_binds::unbind_hotkey_async(&old_mic);
+                    crate::hyprland_binds::unbind_hotkey_async(&old_sys);
                     self.config.menu_hotkey = "Alt+Z".to_string();
                     self.config.save_hotkey = "Ctrl+Shift+R".to_string();
                     self.config.record_hotkey = "Ctrl+Shift+F9".to_string();
+                    self.config.pause_hotkey = "Ctrl+Shift+F8".to_string();
+                    self.config.screenshot_hotkey = "Ctrl+Shift+S".to_string();
                     self.config.cursor_hotkey = "Ctrl+Shift+F10".to_string();
+                    self.config.mute_mic_hotkey = "Ctrl+Shift+M".to_string();
+                    self.config.mute_sys_hotkey = "Ctrl+Shift+N".to_string();
                     let _ = self.config.save();
                     crate::hyprland_binds::register_hyprland_binds_async(&self.config);
                     crate::config::ScytheConfig::notify_daemon_reload();
                     self.show_hud_notification("KEYBINDS", "Restored default hotkeys", crate::overlay::ToastIcon::Info);
                 }
+            });
+        });
+
+        ui.add_space(10.0);
+
+        render_section_card(ui, "Interface Typography", accent, |ui| {
+            ui.horizontal(|ui| {
+                let mut mono = self.use_monospace_font;
+                if toggle_switch(ui, &mut mono, accent).changed() {
+                    self.use_monospace_font = mono;
+                    self.config.use_monospace_font = mono;
+                    let _ = self.config.save();
+                    setup_custom_fonts(ui.ctx(), mono);
+                }
+                ui.label(egui::RichText::new("Use monospace font across interface (Adwaita Mono)").size(11.5).color(Color32::WHITE));
             });
         });
 
@@ -3684,6 +3805,26 @@ impl eframe::App for ScytheOverlayApp {
                             self.config.cursor_hotkey = combo.clone();
                             ("Cursor Toggle", old)
                         }
+                        KeybindAction::PauseRecord => {
+                            let old = self.config.pause_hotkey.clone();
+                            self.config.pause_hotkey = combo.clone();
+                            ("Pause Toggle", old)
+                        }
+                        KeybindAction::Screenshot => {
+                            let old = self.config.screenshot_hotkey.clone();
+                            self.config.screenshot_hotkey = combo.clone();
+                            ("Screenshot", old)
+                        }
+                        KeybindAction::MuteMic => {
+                            let old = self.config.mute_mic_hotkey.clone();
+                            self.config.mute_mic_hotkey = combo.clone();
+                            ("Mute Microphone", old)
+                        }
+                        KeybindAction::MuteSystem => {
+                            let old = self.config.mute_sys_hotkey.clone();
+                            self.config.mute_sys_hotkey = combo.clone();
+                            ("Mute System", old)
+                        }
                     };
                     crate::hyprland_binds::unbind_hotkey_async(&old_key);
                     let _ = self.config.save();
@@ -3930,7 +4071,8 @@ pub fn run_egui_overlay() {
         "scythe-overlay",
         options,
         Box::new(|cc| {
-            setup_custom_fonts(&cc.egui_ctx);
+            let cfg = ScytheConfig::load();
+            setup_custom_fonts(&cc.egui_ctx, cfg.use_monospace_font);
             Ok(Box::new(ScytheOverlayApp::new()))
         }),
     );
@@ -4111,8 +4253,8 @@ pub fn run_egui_toast(title: &str, subtitle: &str, icon: crate::overlay::ToastIc
     let _ = eframe::run_native(
         "scythe-toast",
         options,
-        Box::new(|cc| {
-            setup_custom_fonts(&cc.egui_ctx);
+        Box::new(move |cc| {
+            setup_custom_fonts(&cc.egui_ctx, cfg.use_monospace_font);
             Ok(Box::new(app))
         }),
     );

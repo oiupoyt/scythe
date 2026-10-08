@@ -350,6 +350,26 @@ fn handle_screenshot() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     Ok(())
 }
 
+fn handle_mute_mic() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let mut cfg = scythe::config::ScytheConfig::load();
+    let is_muted = cfg.mic_volume < 0.05;
+    cfg.mic_volume = if is_muted { 0.60 } else { 0.0 };
+    let _ = cfg.save();
+    scythe::config::ScytheConfig::notify_daemon_reload();
+    show_shadowplay_toast("MICROPHONE", if is_muted { "Unmuted" } else { "Muted" }, ToastIcon::Info);
+    Ok(())
+}
+
+fn handle_mute_sys() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let mut cfg = scythe::config::ScytheConfig::load();
+    let is_muted = cfg.system_volume < 0.05;
+    cfg.system_volume = if is_muted { 1.00 } else { 0.0 };
+    let _ = cfg.save();
+    scythe::config::ScytheConfig::notify_daemon_reload();
+    show_shadowplay_toast("SYSTEM AUDIO", if is_muted { "Unmuted" } else { "Muted" }, ToastIcon::Info);
+    Ok(())
+}
+
 fn handle_toggle_streaming() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     ensure_daemon_running();
     let cfg = scythe::config::ScytheConfig::load();
@@ -408,6 +428,15 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             }
             "--screenshot" => {
                 return handle_screenshot();
+            }
+            "--mute-mic" => {
+                return handle_mute_mic();
+            }
+            "--mute-sys" => {
+                return handle_mute_sys();
+            }
+            "--pause" => {
+                return handle_toggle_recording();
             }
             "--toast" => {
                 let title = args.get(2).map(|s| s.as_str()).unwrap_or("SCYTHE");
@@ -570,8 +599,11 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         menu: Option<u32>,
         save: Option<u32>,
         rec: Option<u32>,
+        pause: Option<u32>,
         cur: Option<u32>,
         shot: Option<u32>,
+        mute_mic: Option<u32>,
+        mute_sys: Option<u32>,
     }
 
     let mut current_config = scythe::config::ScytheConfig::load();
@@ -585,8 +617,11 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let m_menu = scythe::hotkey::parse_hotkey(&cfg.menu_hotkey).or_else(|| Some(HotKey::new(Some(Modifiers::ALT), Code::KeyZ)));
         let m_save = scythe::hotkey::parse_hotkey(&cfg.save_hotkey).or_else(|| Some(HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyR)));
         let m_rec = scythe::hotkey::parse_hotkey(&cfg.record_hotkey).or_else(|| Some(HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::F9)));
+        let m_pause = scythe::hotkey::parse_hotkey(&cfg.pause_hotkey).or_else(|| Some(HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::F8)));
         let m_cur = scythe::hotkey::parse_hotkey(&cfg.cursor_hotkey).or_else(|| Some(HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::F10)));
         let m_shot = scythe::hotkey::parse_hotkey(&cfg.screenshot_hotkey).or_else(|| Some(HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyS)));
+        let m_mute_mic = scythe::hotkey::parse_hotkey(&cfg.mute_mic_hotkey).or_else(|| Some(HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyM)));
+        let m_mute_sys = scythe::hotkey::parse_hotkey(&cfg.mute_sys_hotkey).or_else(|| Some(HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyN)));
 
         let mut ids = RegisteredIds::default();
 
@@ -606,6 +641,11 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let _ = mgr.register(hk);
             reg.push(hk);
         }
+        if let Some(hk) = m_pause {
+            ids.pause = Some(hk.id());
+            let _ = mgr.register(hk);
+            reg.push(hk);
+        }
         if let Some(hk) = m_cur {
             ids.cur = Some(hk.id());
             let _ = mgr.register(hk);
@@ -616,13 +656,23 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let _ = mgr.register(hk);
             reg.push(hk);
         }
+        if let Some(hk) = m_mute_mic {
+            ids.mute_mic = Some(hk.id());
+            let _ = mgr.register(hk);
+            reg.push(hk);
+        }
+        if let Some(hk) = m_mute_sys {
+            ids.mute_sys = Some(hk.id());
+            let _ = mgr.register(hk);
+            reg.push(hk);
+        }
         ids
     };
 
     let mut current_ids = register_all(&manager, &current_config, &mut registered_hotkeys);
 
-    println!("Listening for global hotkeys (Overlay: {}, Replay: {}, Record: {}, Cursor: {}, Screenshot: {})...",
-        current_config.menu_hotkey, current_config.save_hotkey, current_config.record_hotkey, current_config.cursor_hotkey, current_config.screenshot_hotkey);
+    println!("Listening for global hotkeys (Overlay: {}, Replay: {}, Record: {}, Screenshot: {})...",
+        current_config.menu_hotkey, current_config.save_hotkey, current_config.record_hotkey, current_config.screenshot_hotkey);
 
     let receiver = GlobalHotKeyEvent::receiver();
     let mut last_config_check = std::time::Instant::now();
@@ -646,8 +696,11 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             if new_cfg.menu_hotkey != current_config.menu_hotkey
                 || new_cfg.save_hotkey != current_config.save_hotkey
                 || new_cfg.record_hotkey != current_config.record_hotkey
+                || new_cfg.pause_hotkey != current_config.pause_hotkey
                 || new_cfg.cursor_hotkey != current_config.cursor_hotkey
                 || new_cfg.screenshot_hotkey != current_config.screenshot_hotkey
+                || new_cfg.mute_mic_hotkey != current_config.mute_mic_hotkey
+                || new_cfg.mute_sys_hotkey != current_config.mute_sys_hotkey
             {
                 current_config = new_cfg;
                 current_ids = register_all(&manager, &current_config, &mut registered_hotkeys);
@@ -671,6 +724,10 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 std::thread::spawn(|| {
                     let _ = handle_toggle_recording();
                 });
+            } else if Some(event.id) == current_ids.pause {
+                std::thread::spawn(|| {
+                    let _ = handle_toggle_recording();
+                });
             } else if Some(event.id) == current_ids.cur {
                 std::thread::spawn(|| {
                     let _ = handle_toggle_cursor();
@@ -678,6 +735,14 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             } else if Some(event.id) == current_ids.shot {
                 std::thread::spawn(|| {
                     let _ = handle_screenshot();
+                });
+            } else if Some(event.id) == current_ids.mute_mic {
+                std::thread::spawn(|| {
+                    let _ = handle_mute_mic();
+                });
+            } else if Some(event.id) == current_ids.mute_sys {
+                std::thread::spawn(|| {
+                    let _ = handle_mute_sys();
                 });
             }
         }

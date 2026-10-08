@@ -32,6 +32,11 @@ fn default_replay_storage() -> String { "ram".to_string() }
 fn default_container_format() -> String { "mp4".to_string() }
 fn default_res_w() -> u32 { 1920 }
 fn default_res_h() -> u32 { 1080 }
+fn default_screenshot_quality() -> u32 { 90 }
+fn default_screenshot_preset() -> String { "balanced".to_string() }
+fn default_pause_hotkey() -> String { "Ctrl+Shift+F8".to_string() }
+fn default_mute_mic_hotkey() -> String { "Ctrl+Shift+M".to_string() }
+fn default_mute_sys_hotkey() -> String { "Ctrl+Shift+N".to_string() }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ScytheConfig {
@@ -138,6 +143,19 @@ pub struct ScytheConfig {
     pub autostart_on_game: bool,
     #[serde(default)]
     pub autostart_power_only: bool,
+
+    #[serde(default = "default_screenshot_quality")]
+    pub screenshot_quality: u32,
+    #[serde(default = "default_screenshot_preset")]
+    pub screenshot_preset: String,
+    #[serde(default = "default_pause_hotkey")]
+    pub pause_hotkey: String,
+    #[serde(default = "default_mute_mic_hotkey")]
+    pub mute_mic_hotkey: String,
+    #[serde(default = "default_mute_sys_hotkey")]
+    pub mute_sys_hotkey: String,
+    #[serde(default)]
+    pub use_monospace_font: bool,
 }
 
 pub type VrecConfig = ScytheConfig;
@@ -199,6 +217,13 @@ impl Default for ScytheConfig {
             show_scroll_lock_led: false,
             autostart_on_game: false,
             autostart_power_only: false,
+
+            screenshot_quality: default_screenshot_quality(),
+            screenshot_preset: default_screenshot_preset(),
+            pause_hotkey: default_pause_hotkey(),
+            mute_mic_hotkey: default_mute_mic_hotkey(),
+            mute_sys_hotkey: default_mute_sys_hotkey(),
+            use_monospace_font: false,
         }
     }
 }
@@ -483,6 +508,13 @@ mod tests {
         assert_eq!(parsed.screenshot_hotkey, "Ctrl+Shift+S");
         assert_eq!(parsed.screenshot_format, "png");
         assert!(!parsed.screenshot_cursor);
+
+        assert_eq!(parsed.screenshot_quality, 90);
+        assert_eq!(parsed.screenshot_preset, "balanced");
+        assert_eq!(parsed.pause_hotkey, "Ctrl+Shift+F8");
+        assert_eq!(parsed.mute_mic_hotkey, "Ctrl+Shift+M");
+        assert_eq!(parsed.mute_sys_hotkey, "Ctrl+Shift+N");
+        assert!(!parsed.use_monospace_font);
     }
 
     #[test]
