@@ -16,6 +16,13 @@ rm -f record_*.mp4 replay_*.mp4
 SAVE_DIR=$(python3 -c 'import json, os; p=os.path.expanduser("~/.config/scythe/config.json"); print(os.path.expanduser(json.load(open(p))["output_directory"])) if os.path.exists(p) else print(os.path.expanduser("~/Videos/Scythe"))' 2>/dev/null || echo "$HOME/Videos/Scythe")
 mkdir -p "$SAVE_DIR"
 
+WAS_SERVICE_ACTIVE=0
+if systemctl --user is-active --quiet scythe-daemon.service 2>/dev/null; then
+    WAS_SERVICE_ACTIVE=1
+    systemctl --user stop scythe-daemon.service 2>/dev/null || true
+    sleep 0.5
+fi
+
 echo "[2/6] Starting scythe-daemon with mock capture..."
 target/release/scythe-daemon --mock > daemon_test.log 2>&1 &
 DAEMON_PID=$!
@@ -25,6 +32,9 @@ cleanup() {
         target/release/scythe-ui --quit 2>/dev/null || kill -9 $DAEMON_PID 2>/dev/null || true
     fi
     rm -f daemon_test.log
+    if [ "$WAS_SERVICE_ACTIVE" -eq 1 ]; then
+        systemctl --user start scythe-daemon.service 2>/dev/null || true
+    fi
 }
 trap cleanup EXIT
 

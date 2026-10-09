@@ -481,7 +481,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let audio_time_base = audio_codec_ctx_ptr.map(|p| unsafe { (*(p as *mut ffmpeg_next::ffi::AVCodecContext)).time_base });
 
         let ring_capacity = if config.replay_enabled {
-            (config.replay_duration_sec as usize) * (config.fps as usize + 50) + 60
+            if config.record_low_power {
+                (config.replay_duration_sec as usize) * (config.fps as usize + 15) + 30
+            } else {
+                (config.replay_duration_sec as usize) * (config.fps as usize + 50) + 60
+            }
         } else {
             1
         };

@@ -37,6 +37,7 @@ fn default_screenshot_preset() -> String { "balanced".to_string() }
 fn default_pause_hotkey() -> String { "Ctrl+Shift+F8".to_string() }
 fn default_mute_mic_hotkey() -> String { "Ctrl+Shift+M".to_string() }
 fn default_mute_sys_hotkey() -> String { "Ctrl+Shift+N".to_string() }
+fn default_screenshot_resolution() -> String { "native".to_string() }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ScytheConfig {
@@ -154,6 +155,8 @@ pub struct ScytheConfig {
     pub mute_mic_hotkey: String,
     #[serde(default = "default_mute_sys_hotkey")]
     pub mute_sys_hotkey: String,
+    #[serde(default = "default_screenshot_resolution")]
+    pub screenshot_resolution: String,
     #[serde(default)]
     pub use_monospace_font: bool,
 }
@@ -223,6 +226,7 @@ impl Default for ScytheConfig {
             pause_hotkey: default_pause_hotkey(),
             mute_mic_hotkey: default_mute_mic_hotkey(),
             mute_sys_hotkey: default_mute_sys_hotkey(),
+            screenshot_resolution: default_screenshot_resolution(),
             use_monospace_font: false,
         }
     }
@@ -514,6 +518,7 @@ mod tests {
         assert_eq!(parsed.pause_hotkey, "Ctrl+Shift+F8");
         assert_eq!(parsed.mute_mic_hotkey, "Ctrl+Shift+M");
         assert_eq!(parsed.mute_sys_hotkey, "Ctrl+Shift+N");
+        assert_eq!(parsed.screenshot_resolution, "native");
         assert!(!parsed.use_monospace_font);
     }
 

@@ -1163,6 +1163,7 @@ pub struct ScytheOverlayApp {
     pub autostart_power_only: bool,
     pub screenshot_quality: u32,
     pub screenshot_preset: String,
+    pub screenshot_resolution: String,
     pub use_monospace_font: bool,
 }
 
@@ -1257,6 +1258,7 @@ impl ScytheOverlayApp {
         let autostart_power_only = config.autostart_power_only;
         let screenshot_quality = config.screenshot_quality;
         let screenshot_preset = config.screenshot_preset.clone();
+        let screenshot_resolution = config.screenshot_resolution.clone();
         let use_monospace_font = config.use_monospace_font;
 
         let update_status = Arc::new(std::sync::Mutex::new(crate::updater::UpdateStatus::Idle));
@@ -1339,6 +1341,7 @@ impl ScytheOverlayApp {
             autostart_power_only,
             screenshot_quality,
             screenshot_preset,
+            screenshot_resolution,
             use_monospace_font,
         }
     }
@@ -1391,6 +1394,7 @@ impl ScytheOverlayApp {
         self.config.autostart_power_only = self.autostart_power_only;
         self.config.screenshot_quality = self.screenshot_quality;
         self.config.screenshot_preset = self.screenshot_preset.clone();
+        self.config.screenshot_resolution = self.screenshot_resolution.clone();
         self.config.use_monospace_font = self.use_monospace_font;
         let _ = self.config.save();
         crate::hyprland_binds::register_hyprland_binds(&self.config);
@@ -1437,6 +1441,7 @@ impl ScytheOverlayApp {
         self.autostart_power_only = def.autostart_power_only;
         self.screenshot_quality = def.screenshot_quality;
         self.screenshot_preset = def.screenshot_preset;
+        self.screenshot_resolution = def.screenshot_resolution;
         self.use_monospace_font = def.use_monospace_font;
         self.show_hud_notification("DEFAULTS", "Settings restored to defaults", crate::overlay::ToastIcon::Info);
     }
@@ -1479,6 +1484,24 @@ impl ScytheOverlayApp {
             let _ = std::process::Command::new("powershell")
                 .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", &ps_cmd])
                 .status();
+        }
+
+        let scale_dims = match self.screenshot_resolution.as_str() {
+            "720p" => Some("1280:720"),
+            "1080p" => Some("1920:1080"),
+            "1440p" => Some("2560:1440"),
+            "2160p" => Some("3840:2160"),
+            _ => None,
+        };
+        if let Some(scale) = scale_dims
+            && out_path.exists() {
+                let tmp_path = dir.join(format!("tmp_{}", fname));
+                if std::fs::rename(&out_path, &tmp_path).is_ok() {
+                    let _ = std::process::Command::new("ffmpeg")
+                        .args(["-v", "error", "-y", "-i", &tmp_path.to_string_lossy(), "-vf", &format!("scale={}:flags=lanczos", scale), &out_path.to_string_lossy()])
+                        .status();
+                    let _ = std::fs::remove_file(&tmp_path);
+                }
         }
 
         self.show_hud_notification("SCREENSHOT", &format!("Saved to {}", fname), crate::overlay::ToastIcon::Screenshot);
@@ -2309,14 +2332,6 @@ impl ScytheOverlayApp {
 
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                let mut sfg = self.save_folder_by_game;
-                if toggle_switch(ui, &mut sfg, accent).changed() {
-                    self.save_folder_by_game = sfg;
-                }
-                ui.label(egui::RichText::new("Save video in a folder based on the games name").size(11.5).color(Color32::WHITE));
-            });
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
                 let mut nbg = self.name_by_game;
                 if toggle_switch(ui, &mut nbg, accent).changed() {
                     self.name_by_game = nbg;
@@ -2734,20 +2749,19 @@ impl ScytheOverlayApp {
             });
 
             ui.add_space(8.0);
+            ui.label(egui::RichText::new("Resolution preset:").size(11.5).color(Color32::from_rgb(180, 185, 190)));
+            ui.add_space(4.0);
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("Compression quality:").size(11.5).color(Color32::from_rgb(180, 185, 190)));
-                let mut q = self.screenshot_quality;
-                if ui.add(egui::Slider::new(&mut q, 10..=100).suffix("%")).changed() {
-                    self.screenshot_quality = q;
-                }
-            });
-
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("Compression preset:").size(11.5).color(Color32::from_rgb(180, 185, 190)));
-                for (p_id, label) in [("fast", "Fast"), ("balanced", "Balanced"), ("max", "Maximum Compression")] {
-                    if squared_button(ui, label, self.screenshot_preset == p_id, accent) {
-                        self.screenshot_preset = p_id.to_string();
+                let presets = [
+                    ("native", "Native (Source)"),
+                    ("1080p", "1080p (FHD)"),
+                    ("1440p", "1440p (QHD)"),
+                    ("2160p", "2160p (4K UHD)"),
+                    ("720p", "720p (HD)"),
+                ];
+                for (res_id, label) in presets {
+                    if squared_button(ui, label, self.screenshot_resolution == res_id, accent) {
+                        self.screenshot_resolution = res_id.to_string();
                     }
                 }
             });
@@ -4432,6 +4446,7 @@ mod tests {
         app.config.audio_codec = "opus".to_string();
         app.record_low_power = true;
         app.show_replay_notifications = false;
+        app.screenshot_resolution = "1080p".to_string();
 
         app.save_and_apply_settings();
 
@@ -4449,6 +4464,7 @@ mod tests {
         assert_eq!(app.config.audio_codec, "opus");
         assert!(app.config.record_low_power);
         assert!(!app.config.show_replay_notifications);
+        assert_eq!(app.config.screenshot_resolution, "1080p");
 
         app.reset_settings_to_defaults();
         assert_eq!(app.container_format, "mp4");
@@ -4463,5 +4479,6 @@ mod tests {
         assert_eq!(app.config.audio_codec, "opus");
         assert!(!app.record_low_power);
         assert!(app.show_replay_notifications);
+        assert_eq!(app.screenshot_resolution, "native");
     }
 }

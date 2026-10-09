@@ -95,5 +95,22 @@ mod tests {
         assert!(parse_hotkey("").is_none());
         assert!(parse_hotkey("invalid_key_xyz").is_none());
     }
+
+    #[test]
+    fn test_all_eight_default_scythe_hotkeys() {
+        let defaults = [
+            ("Alt+Z", "menu"),
+            ("Ctrl+Shift+R", "save_replay"),
+            ("Ctrl+Shift+F9", "record_toggle"),
+            ("Ctrl+Shift+F8", "pause_record"),
+            ("Ctrl+Shift+S", "screenshot"),
+            ("Ctrl+Shift+F10", "toggle_cursor"),
+            ("Ctrl+Shift+M", "mute_mic"),
+            ("Ctrl+Shift+N", "mute_sys"),
+        ];
+        for (hk_str, label) in defaults {
+            assert!(parse_hotkey(hk_str).is_some(), "Hotkey '{}' for '{}' must parse successfully", hk_str, label);
+        }
+    }
 }
 

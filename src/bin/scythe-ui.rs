@@ -322,12 +322,10 @@ fn handle_screenshot() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             grim.args(["-t", "jpeg", "-q", "90"]);
         }
         grim.arg(&out_path);
-        let res = grim.status();
-        if res.is_ok() && out_path.exists() {
-            show_shadowplay_toast("SCREENSHOT", &format!("Saved to {}", filename), ToastIcon::Screenshot);
-            return Ok(());
+        let _ = grim.status();
+        if !out_path.exists() {
+            let _ = std::process::Command::new("import").args(["-window", "root"]).arg(&out_path).status();
         }
-        let _ = std::process::Command::new("import").args(["-window", "root"]).arg(&out_path).status();
     }
 
     #[cfg(target_os = "windows")]
@@ -344,6 +342,24 @@ fn handle_screenshot() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let _ = std::process::Command::new("powershell")
             .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", &ps_cmd])
             .status();
+    }
+
+    let scale_dims = match cfg.screenshot_resolution.as_str() {
+        "720p" => Some("1280:720"),
+        "1080p" => Some("1920:1080"),
+        "1440p" => Some("2560:1440"),
+        "2160p" => Some("3840:2160"),
+        _ => None,
+    };
+    if let Some(scale) = scale_dims
+        && out_path.exists() {
+            let tmp_path = dir.join(format!("tmp_{}", filename));
+            if std::fs::rename(&out_path, &tmp_path).is_ok() {
+                let _ = std::process::Command::new("ffmpeg")
+                    .args(["-v", "error", "-y", "-i", &tmp_path.to_string_lossy(), "-vf", &format!("scale={}:flags=lanczos", scale), &out_path.to_string_lossy()])
+                    .status();
+                let _ = std::fs::remove_file(&tmp_path);
+            }
     }
 
     show_shadowplay_toast("SCREENSHOT", &format!("Saved to {}", filename), ToastIcon::Screenshot);

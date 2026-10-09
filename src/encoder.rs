@@ -104,10 +104,12 @@ impl VaapiEncoder {
                 _ => FF_PROFILE_H264_HIGH,
             };
             (*codec_ctx).flags |= AV_CODEC_FLAG_GLOBAL_HEADER as libc::c_int;
-            let _ = av_opt_set_int((*codec_ctx).priv_data, c"async_depth".as_ptr(), 4, 0);
+            let async_depth = if low_power { 2 } else { 4 };
+            let _ = av_opt_set_int((*codec_ctx).priv_data, c"async_depth".as_ptr(), async_depth, 0);
 
             if low_power {
                 let _ = av_opt_set_int((*codec_ctx).priv_data, c"low_power".as_ptr(), 1, 0);
+                let _ = av_opt_set_int((*codec_ctx).priv_data, c"compression_level".as_ptr(), 1, 0);
             }
 
             // Rec.709 Color Space & Color Range
@@ -592,11 +594,15 @@ impl WindowsHwEncoder {
                         let rc = if is_cbr { c"cbr".as_ptr() } else { c"vbr_latency".as_ptr() };
                         let _ = av_opt_set((*ctx).priv_data, c"usage".as_ptr(), c"ultralowlatency".as_ptr(), 0);
                         let _ = av_opt_set((*ctx).priv_data, c"rc".as_ptr(), rc, 0);
+                        if low_power {
+                            let _ = av_opt_set((*ctx).priv_data, c"quality".as_ptr(), c"speed".as_ptr(), 0);
+                        }
                     } else if desc.contains("QuickSync") {
                         let _ = av_opt_set((*ctx).priv_data, c"preset".as_ptr(), c"veryfast".as_ptr(), 0);
                     } else {
                         let _ = av_opt_set((*ctx).priv_data, c"preset".as_ptr(), c"ultrafast".as_ptr(), 0);
                         let _ = av_opt_set((*ctx).priv_data, c"tune".as_ptr(), c"zerolatency".as_ptr(), 0);
+                        (*ctx).thread_count = 0;
                     }
 
                     let ret = avcodec_open2(ctx, c, ptr::null_mut());
