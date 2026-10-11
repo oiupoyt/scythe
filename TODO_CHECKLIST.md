@@ -140,6 +140,26 @@ This checklist tracks known bugs, UI refinements, optimizations, and technical d
 
 ## 3. Reliability & Bug Fixes
 
+- [x] **Gray Screen Recording & Mock Fallback Startup Race Condition**:
+  - **Issue**: At system boot or when logging into the session, `scythe-daemon` started before `xdg-desktop-portal` finished registering on D-Bus. After failing to acquire portals within 3 seconds, the daemon silently fell back to `MockCapture` (hardcoded to emit flat gray `RGB(64, 64, 64)` frames), permanently capturing a blank gray screen on subsequent recordings and replays.
+  - **Resolution**:
+    - Updated [src/bin/scythe-daemon.rs](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/src/bin/scythe-daemon.rs) so that the daemon never silently traps the user into `MockCapture` unless the explicit `--mock` CLI flag is passed for automated testing.
+    - Added systemd service dependencies (`After=graphical-session.target xdg-desktop-portal.service xdg-desktop-portal-hyprland.service` and `Wants=xdg-desktop-portal.service`) with `Restart=always` and `RestartSec=2` backoff in [install.sh](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/install.sh).
+
+- [x] **GTK3 Retirement, Compile-Time Optimization & Windows Cross-Compilation**:
+  - **Issue**: Legacy GTK3 C-bindings (`gtk`, `gdk`, `glib`, `gtk-layer-shell`) inflated compile times to over 1 minute, consumed heavy build memory, and completely blocked cross-compiling for Windows due to missing MinGW GTK headers.
+  - **Resolution**:
+    - Removed `gtk`, `gdk`, `glib`, `gtk-layer-shell`, and retired [src/settings_ui.rs](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/src/settings_ui.rs) and the legacy GTK overlay code. Moved `ToastIcon` directly into [src/ipc.rs](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/src/ipc.rs).
+    - Reduced release compile time by over 60% and unlocked Windows release cross-compilation (`x86_64-pc-windows-gnu`).
+    - Added optimized release profile with thin LTO and symbol stripping in [Cargo.toml](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/Cargo.toml).
+
+- [x] **Forgejo Releases Integration & Auto-Updater Synchronization**:
+  - **Issue**: The auto-updater was hardcoded to GitHub API endpoints, and release binaries were not packaged for both Windows and Linux on the self-hosted Forgejo instance.
+  - **Resolution**:
+    - Updated [src/updater.rs](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/src/updater.rs) to prioritize Forgejo API releases (`https://git.oiupoyt.space/api/v1/repos/oiupoyt/scythe/releases/latest`) with GitHub fallback.
+    - Cross-compiled release binaries for both Linux (`scythe-v0.2.18-linux-x86_64.tar.gz`) and Windows (`scythe-v0.2.18-windows-x86_64.zip` including full standalone portable FFmpeg DLLs).
+    - Published Release `v0.2.18` directly to Forgejo with assets uploaded.
+
 - [x] **Opus Audio Encoder Implementation & AAC Fallback**:
   - **Issue**: Previously, only AAC audio encoding was supported, despite Opus being the industry standard for low-latency streaming and high-fidelity game recording.
   - **Resolution**: Implemented native `Opus` audio encoding in [src/encoder.rs](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/src/encoder.rs) (`AudioEncoder::new_with_codec`) using `AV_SAMPLE_FMT_FLT` at 160 kbps with automatic fallback to AAC when unavailable. Dynamically wired into [src/bin/scythe-daemon.rs](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/src/bin/scythe-daemon.rs) based on `config.audio_codec`. Verified 60 FPS recording with native Opus audio streams in MP4 containers.
