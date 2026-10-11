@@ -12,44 +12,14 @@ fn ensure_wayland_env() {
 
 fn get_daemon_cmd() -> std::process::Command {
     #[allow(unused_mut)]
-    let mut cmd = if let Ok(mut path) = std::env::current_exe() {
-        path.pop();
-        #[cfg(target_os = "windows")]
-        let primary = path.join("scythe-daemon.exe");
-        #[cfg(target_os = "windows")]
-        let fallback = path.join("vrec-daemon.exe");
-        #[cfg(not(target_os = "windows"))]
-        let primary = path.join("scythe-daemon");
-        #[cfg(not(target_os = "windows"))]
-        let fallback = path.join("vrec-daemon");
-
-        if primary.exists() {
-            let mut c = std::process::Command::new(primary);
-            c.current_dir(&path);
-            c
-        } else if fallback.exists() {
-            let mut c = std::process::Command::new(fallback);
-            c.current_dir(&path);
-            c
-        } else {
-            #[cfg(target_os = "windows")]
-            {
-                std::process::Command::new("scythe-daemon.exe")
-            }
-            #[cfg(not(target_os = "windows"))]
-            {
-                std::process::Command::new("scythe-daemon")
-            }
-        }
+    let mut cmd = if let Ok(self_exe) = std::env::current_exe() {
+        let mut c = std::process::Command::new(self_exe);
+        c.arg("daemon");
+        c
     } else {
-        #[cfg(target_os = "windows")]
-        {
-            std::process::Command::new("scythe-daemon.exe")
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            std::process::Command::new("scythe-daemon")
-        }
+        let mut c = std::process::Command::new("scythe");
+        c.arg("daemon");
+        c
     };
 
     #[cfg(target_os = "windows")]
@@ -275,10 +245,12 @@ fn handle_toggle_recording() -> Result<(), Box<dyn std::error::Error + Send + Sy
 
 fn handle_toggle_cursor() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     ensure_daemon_running();
-    let current_cursor = query_status().ok().map(|s| s.show_cursor).unwrap_or(true);
-    let next_cursor = !current_cursor;
     match send_command(Command::ToggleCursor) {
         Ok(()) => {
+            std::thread::sleep(std::time::Duration::from_millis(120));
+            let next_cursor = query_status().ok().map(|s| s.show_cursor).unwrap_or_else(|| {
+                scythe::config::ScytheConfig::load().show_cursor
+            });
             if next_cursor {
                 show_shadowplay_toast("MOUSE CURSOR", "Visible in recording", ToastIcon::Cursor);
             } else {

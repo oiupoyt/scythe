@@ -10,9 +10,22 @@ pub fn show_shadowplay_toast(title: &str, subtitle: &str, icon: ToastIcon) {
         ToastIcon::Error => "error",
         ToastIcon::Info => "info",
     };
-    let _ = std::process::Command::new("scythe-ui")
-        .args(["--toast", title, subtitle, icon_str])
-        .spawn();
+    let toast_argv = ["--toast", title, subtitle, icon_str];
+    if let Ok(self_exe) = std::env::current_exe() {
+        let _ = std::process::Command::new(self_exe)
+            .args(toast_argv)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+    } else {
+        let _ = std::process::Command::new("scythe")
+            .args(toast_argv)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+    }
 }
 
 pub fn ensure_wayland_env() {

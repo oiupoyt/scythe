@@ -365,7 +365,7 @@ Type=Application\n\
 Name=Scythe Replay Engine\n\
 Comment=Scythe Background Screen Recorder & Instant Replay Daemon\n\
 Icon=media-record\n\
-Exec=scythe-daemon\n\
+Exec=scythe daemon\n\
 Terminal=false\n\
 Hidden=false\n\
 X-GNOME-Autostart-enabled=true\n";
@@ -382,7 +382,7 @@ Type=Application\n\
 Name=Scythe Overlay\n\
 Comment=Scythe Screen Recorder HUD Overlay\n\
 Icon=media-record\n\
-Exec=scythe-ui --menu\n\
+Exec=scythe --menu\n\
 Terminal=false\n\
 Hidden=false\n\
 X-GNOME-Autostart-enabled=true\n";
@@ -397,8 +397,8 @@ X-GNOME-Autostart-enabled=true\n";
                 && let Ok(mut text) = fs::read_to_string(&hypr_execs_lua) {
                     let mut modified = false;
 
-                    let daemon_cmd_pattern = "scythe-daemon";
-                    let daemon_cmd_line = "    hl.exec_cmd(\"scythe-daemon\")\n";
+                    let daemon_cmd_pattern = "scythe daemon";
+                    let daemon_cmd_line = "    hl.exec_cmd(\"scythe daemon\")\n";
                     if self.autostart_replay {
                         if !text.contains(daemon_cmd_pattern)
                             && let Some(pos) = text.rfind("end)") {
@@ -413,8 +413,8 @@ X-GNOME-Autostart-enabled=true\n";
                         modified = true;
                     }
 
-                    let overlay_cmd_pattern = "scythe-ui --menu";
-                    let overlay_cmd_line = "    hl.exec_cmd(\"scythe-ui --menu\")\n";
+                    let overlay_cmd_pattern = "scythe --menu";
+                    let overlay_cmd_line = "    hl.exec_cmd(\"scythe --menu\")\n";
                     if self.autostart_overlay {
                         if !text.contains(overlay_cmd_pattern)
                             && let Some(pos) = text.rfind("end)") {
@@ -436,6 +436,44 @@ X-GNOME-Autostart-enabled=true\n";
         }
     }
 
+    pub fn apply_autostart_system(enable_replay: bool, enable_overlay: bool) {
+        #[cfg(target_os = "linux")]
+        {
+            // 1. systemd user service enable / disable
+            if enable_replay {
+                let _ = std::process::Command::new("systemctl")
+                    .args(["--user", "enable", "scythe-daemon.service"])
+                    .status();
+            } else {
+                let _ = std::process::Command::new("systemctl")
+                    .args(["--user", "disable", "scythe-daemon.service"])
+                    .status();
+            }
+
+            // 2. Standard XDG autostart desktop entry for session login
+            if let Some(config_dir) = dirs::config_dir() {
+                let autostart_dir = config_dir.join("autostart");
+                let _ = std::fs::create_dir_all(&autostart_dir);
+                let daemon_desktop = autostart_dir.join("scythe-daemon.desktop");
+                let overlay_desktop = autostart_dir.join("scythe-overlay.desktop");
+
+                if enable_replay {
+                    let content = "[Desktop Entry]\nType=Application\nName=Scythe Replay Daemon\nExec=scythe daemon\nTerminal=false\nCategories=AudioVideo;Recorder;\nX-GNOME-Autostart-enabled=true\n";
+                    let _ = std::fs::write(&daemon_desktop, content);
+                } else {
+                    let _ = std::fs::remove_file(&daemon_desktop);
+                }
+
+                if enable_overlay {
+                    let content = "[Desktop Entry]\nType=Application\nName=Scythe Overlay\nExec=scythe --menu\nTerminal=false\nCategories=AudioVideo;Recorder;\nX-GNOME-Autostart-enabled=true\n";
+                    let _ = std::fs::write(&overlay_desktop, content);
+                } else {
+                    let _ = std::fs::remove_file(&overlay_desktop);
+                }
+            }
+        }
+    }
+
     pub fn notify_daemon_reload() {
         std::thread::spawn(|| {
             let _ = crate::ipc::send_command(crate::ipc::Command::ReloadConfig);
@@ -443,6 +481,53 @@ X-GNOME-Autostart-enabled=true\n";
     }
 
     /// Formats video filenames with informative local timestamps, e.g. "Replay-18-30-00_05-09-2026.mp4"
+    pub fn is_ac_power_connected() -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            if let Ok(entries) = std::fs::read_dir("/sys/class/power_supply") {
+                let mut has_power_status = false;
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    // Check AC online status
+                    let online_path = path.join("online");
+                    if let Ok(content) = std::fs::read_to_string(&online_path) {
+                        has_power_status = true;
+                        if content.trim() == "1" {
+                            return true;
+                        }
+                    }
+                    // Check battery status
+                    let status_path = path.join("status");
+                    if let Ok(content) = std::fs::read_to_string(&status_path) {
+                        let s = content.trim().to_lowercase();
+                        if s == "charging" || s == "full" {
+                            return true;
+                        }
+                    }
+                }
+                if has_power_status {
+                    return false;
+                }
+            }
+            true
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            unsafe {
+                use windows::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
+                let mut status = SYSTEM_POWER_STATUS::default();
+                if GetSystemPowerStatus(&mut status).is_ok() {
+                    return status.ACLineStatus == 1;
+                }
+            }
+            true
+        }
+
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        true
+    }
+
     pub fn format_video_filename(prefix: &str, ext: &str) -> String {
         unsafe {
             let t = libc::time(std::ptr::null_mut());

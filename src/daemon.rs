@@ -127,7 +127,12 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
             Err(_) => None,
         }
     };
-    let initial_config = crate::config::ScytheConfig::load();
+    let mut initial_config = crate::config::ScytheConfig::load();
+    if initial_config.autostart_power_only
+        && !crate::config::ScytheConfig::is_ac_power_connected() {
+            eprintln!("Power-only replay armed but no AC supply detected; replay buffer paused until power returns.");
+            initial_config.replay_enabled = false;
+    }
 
     // Automatically register dynamic keybindings on Hyprland if active (no config edits needed)
     crate::hyprland_binds::register_hyprland_binds(&initial_config);
@@ -259,23 +264,6 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
                                             let mut cfg = crate::config::ScytheConfig::load();
                                             cfg.show_cursor = !cfg.show_cursor;
                                             let _ = cfg.save();
-                                            #[cfg(target_os = "linux")]
-                                            {
-                                                let session_type = env::var("XDG_SESSION_TYPE").unwrap_or_default();
-                                                if session_type.to_lowercase() == "wayland" {
-                                                    println!("Cursor display toggled to: {}. Restarting Wayland session...", cfg.show_cursor);
-                                                    let _ = cmd_tx_ipc.send(Command::StopRecording);
-                                                    if let Ok(exe) = std::env::current_exe() {
-                                                        let _ = std::process::Command::new(exe)
-                                                            .stdin(std::process::Stdio::null())
-                                                            .stdout(std::process::Stdio::null())
-                                                            .stderr(std::process::Stdio::null())
-                                                            .spawn();
-                                                    }
-                                                    std::thread::sleep(std::time::Duration::from_millis(150));
-                                                    std::process::exit(0);
-                                                }
-                                            }
                                             println!("Cursor display toggled to: {}", cfg.show_cursor);
                                         },
                                         Command::CycleAudioMode => {
@@ -683,7 +671,10 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
                             }
 
                             if config.replay_enabled {
-                                ring.push_overwrite(pkt);
+                                let power_ok = !config.autostart_power_only || crate::config::ScytheConfig::is_ac_power_connected();
+                                if power_ok {
+                                    ring.push_overwrite(pkt);
+                                }
                             }
                         }
                     }
@@ -1005,7 +996,10 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
                                             }
                                         }
                                     if config.replay_enabled {
-                                        ring.push_overwrite(pkt);
+                                        let power_ok = !config.autostart_power_only || crate::config::ScytheConfig::is_ac_power_connected();
+                                        if power_ok {
+                                            ring.push_overwrite(pkt);
+                                        }
                                     }
                                 }
                             }
