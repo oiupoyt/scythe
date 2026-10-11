@@ -2,6 +2,8 @@ use std::sync::{Arc, Mutex};
 use serde::Deserialize;
 
 pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const FORGEJO_HOST: &str = "https://git.oiupoyt.space";
+pub const REPO_OWNER_NAME: &str = "oiupoyt/scythe";
 pub const GITHUB_REPO: &str = "oiupoyt/scythe";
 
 #[derive(Deserialize, Debug, Clone, PartialEq, Eq, Default)]
@@ -24,7 +26,7 @@ pub struct ReleaseInfo {
 }
 
 #[derive(Deserialize, Debug)]
-struct GitHubRelease {
+struct ForgejoRelease {
     tag_name: String,
     name: Option<String>,
     html_url: String,
@@ -54,41 +56,43 @@ pub fn is_newer(latest: &str, current: &str) -> bool {
 }
 
 pub fn check_for_updates() -> Option<ReleaseInfo> {
-    let url = format!("https://api.github.com/repos/{}/releases/latest", GITHUB_REPO);
+    let urls = [
+        format!("{}/api/v1/repos/{}/releases/latest", FORGEJO_HOST, REPO_OWNER_NAME),
+        format!("https://api.github.com/repos/{}/releases/latest", REPO_OWNER_NAME),
+    ];
 
-    // Run curl with a 6-second timeout to avoid blocking
-    let mut cmd = std::process::Command::new("curl");
-    cmd.args([
-        "-s",
-        "-H", "User-Agent: scythe-updater",
-        "-H", "Accept: application/vnd.github.v3+json",
-        "--max-time", "6",
-        &url,
-    ]);
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x08000000);
+    for url in urls {
+        let mut cmd = std::process::Command::new("curl");
+        cmd.args([
+            "-s",
+            "-H", "User-Agent: scythe-updater",
+            "-H", "Accept: application/json",
+            "--max-time", "6",
+            &url,
+        ]);
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x08000000);
+        }
+        if let Ok(output) = cmd.output()
+            && output.status.success()
+            && let Ok(release) = serde_json::from_slice::<ForgejoRelease>(&output.stdout) {
+                let clean_ver = release.tag_name.trim().trim_start_matches('v').to_string();
+                let has_update = is_newer(&clean_ver, CURRENT_VERSION);
+
+                return Some(ReleaseInfo {
+                    tag_name: release.tag_name,
+                    version: clean_ver,
+                    name: release.name.unwrap_or_else(|| format!("v{}", CURRENT_VERSION)),
+                    html_url: release.html_url,
+                    release_notes: release.body.unwrap_or_default(),
+                    has_update,
+                    assets: release.assets,
+                });
+        }
     }
-    let output = cmd.output().ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let release: GitHubRelease = serde_json::from_slice(&output.stdout).ok()?;
-    let clean_ver = release.tag_name.trim().trim_start_matches('v').to_string();
-    let has_update = is_newer(&clean_ver, CURRENT_VERSION);
-
-    Some(ReleaseInfo {
-        tag_name: release.tag_name,
-        version: clean_ver,
-        name: release.name.unwrap_or_else(|| format!("Scythe v{}", CURRENT_VERSION)),
-        html_url: release.html_url,
-        release_notes: release.body.unwrap_or_default(),
-        has_update,
-        assets: release.assets,
-    })
+    None
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

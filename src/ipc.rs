@@ -1,5 +1,30 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToastIcon {
+    Info,
+    Record,
+    Save,
+    Replay,
+    Cursor,
+    Screenshot,
+    Error,
+}
+
+impl ToastIcon {
+    pub fn from_name(name: &str) -> Self {
+        match name.to_lowercase().as_str() {
+            "replay" | "save_replay" => ToastIcon::Replay,
+            "record" | "recording" | "start" => ToastIcon::Record,
+            "save" | "saved" | "stop" => ToastIcon::Save,
+            "cursor" => ToastIcon::Cursor,
+            "screenshot" => ToastIcon::Screenshot,
+            "error" => ToastIcon::Error,
+            _ => ToastIcon::Info,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     SaveReplay,
@@ -79,16 +104,14 @@ pub fn get_ipc_port_path() -> std::path::PathBuf {
 
 #[cfg(windows)]
 pub fn read_active_ipc_port() -> u16 {
-    if let Ok(content) = std::fs::read_to_string(get_ipc_port_path()) {
-        if let Ok(port) = content.trim().parse::<u16>() {
+    if let Ok(content) = std::fs::read_to_string(get_ipc_port_path())
+        && let Ok(port) = content.trim().parse::<u16>() {
             return port;
-        }
     }
     let legacy = std::env::temp_dir().join("vrec-ipc.port");
-    if let Ok(content) = std::fs::read_to_string(legacy) {
-        if let Ok(port) = content.trim().parse::<u16>() {
+    if let Ok(content) = std::fs::read_to_string(legacy)
+        && let Ok(port) = content.trim().parse::<u16>() {
             return port;
-        }
     }
     42069
 }
@@ -147,14 +170,13 @@ pub fn send_command(cmd: Command) -> Result<(), Box<dyn std::error::Error + Send
             use std::net::{SocketAddr, TcpStream};
             let candidate_ports = get_candidate_ipc_ports();
             for &port in &candidate_ports {
-                if let Ok(addr) = format!("127.0.0.1:{}", port).parse::<SocketAddr>() {
-                    if let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(150)) {
+                if let Ok(addr) = format!("127.0.0.1:{}", port).parse::<SocketAddr>()
+                    && let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(150)) {
                         let _ = stream.set_write_timeout(Some(Duration::from_millis(600)));
                         let _ = stream.set_read_timeout(Some(Duration::from_millis(600)));
                         if stream.write_all(&len_buf).is_ok() && stream.write_all(&payload).is_ok() {
                             return Ok(());
                         }
-                    }
                 }
             }
             last_err = Some("Could not connect to daemon on any TCP IPC port".into());
@@ -217,11 +239,10 @@ pub fn query_status() -> Result<DaemonStatus, Box<dyn std::error::Error + Send +
             let candidate_ports = get_candidate_ipc_ports();
             let mut conn = None;
             for &port in &candidate_ports {
-                if let Ok(addr) = format!("127.0.0.1:{}", port).parse::<SocketAddr>() {
-                    if let Ok(stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(150)) {
+                if let Ok(addr) = format!("127.0.0.1:{}", port).parse::<SocketAddr>()
+                    && let Ok(stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(150)) {
                         conn = Some(stream);
                         break;
-                    }
                 }
             }
             conn.ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotConnected, "No active daemon port reachable"))

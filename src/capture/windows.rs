@@ -55,20 +55,20 @@ impl WindowsCapture {
             'adapter_loop: while let Ok(adapter) = factory.EnumAdapters1(a_idx) {
                 if let Ok(desc1) = adapter.GetDesc1() {
                     // Skip software rasterizers (e.g. Microsoft Basic Render Driver) when hardware GPU exists
-                    if (desc1.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0) != 0 {
+                    if (desc1.Flags & (DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32)) != 0 {
                         a_idx += 1;
                         continue;
                     }
                 }
                 let mut o_idx = 0;
                 while let Ok(output) = adapter.EnumOutputs(o_idx) {
-                    if let Ok(output1) = output.cast::<IDXGIOutput1>() {
-                        if let Ok(desc) = output1.GetDesc() {
+                    if let Ok(output1) = output.cast::<IDXGIOutput1>()
+                        && let Ok(desc) = output1.GetDesc() {
                             let is_attached = desc.AttachedToDesktop.as_bool();
                             let width = (desc.DesktopCoordinates.right - desc.DesktopCoordinates.left).unsigned_abs();
                             let height = (desc.DesktopCoordinates.bottom - desc.DesktopCoordinates.top).unsigned_abs();
-                            if is_attached && width > 0 && height > 0 {
-                                if let Ok(adapter_base) = adapter.cast::<IDXGIAdapter>() {
+                            if is_attached && width > 0 && height > 0
+                                && let Ok(adapter_base) = adapter.cast::<IDXGIAdapter>() {
                                     let mut device: Option<ID3D11Device> = None;
                                     let mut context: Option<ID3D11DeviceContext> = None;
                                     let mut feature_level = D3D_FEATURE_LEVEL_11_0;
@@ -90,8 +90,8 @@ impl WindowsCapture {
                                         Some(&mut context),
                                     );
 
-                                    if create_res.is_ok() {
-                                        if let (Some(dev), Some(ctx)) = (device, context) {
+                                    if create_res.is_ok()
+                                        && let (Some(dev), Some(ctx)) = (device, context) {
                                             match output1.DuplicateOutput(&dev) {
                                                 Ok(dup) => {
                                                     successful_session = Some((dev, ctx, dup, width, height));
@@ -101,11 +101,8 @@ impl WindowsCapture {
                                                     eprintln!("Adapter {} Output {} DuplicateOutput failed: {:?}", a_idx, o_idx, e);
                                                 }
                                             }
-                                        }
                                     }
-                                }
                             }
-                        }
                     }
                     o_idx += 1;
                 }
@@ -178,7 +175,7 @@ impl FrameSource for WindowsCapture {
                 let _ = self.reinit_duplication();
             }
 
-            let mut dup = match self.duplication.clone() {
+            let dup = match self.duplication.clone() {
                 Some(d) => d,
                 None => {
                     return Ok(Frame::Raw {

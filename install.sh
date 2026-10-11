@@ -26,6 +26,27 @@ ln -sf "$BIN_DIR/scythe-ui" "$BIN_DIR/vrec-ui"
 ln -sf "$BIN_DIR/scythe-ui" "$BIN_DIR/vrec"
 
 SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
+mkdir -p "$SYSTEMD_USER_DIR"
+cat > "$SYSTEMD_USER_DIR/scythe-daemon.service" << EOF
+[Unit]
+Description=Scythe Screen Recorder Background Engine
+After=graphical-session.target xdg-desktop-portal.service xdg-desktop-portal-hyprland.service
+Wants=xdg-desktop-portal.service
+
+[Service]
+Type=simple
+ExecStart=$BIN_DIR/scythe-daemon
+Restart=always
+RestartSec=2
+Environment="XDG_RUNTIME_DIR=/run/user/1000"
+Environment="XDG_CURRENT_DESKTOP=Hyprland"
+Environment="XDG_SESSION_TYPE=wayland"
+
+[Install]
+WantedBy=default.target
+EOF
+systemctl --user daemon-reload 2>/dev/null || true
+
 if [ -f "$SYSTEMD_USER_DIR/vrec-daemon.service" ] || systemctl --user is-active --quiet vrec-daemon.service 2>/dev/null; then
     echo "Migrating legacy vrec-daemon systemd service to scythe-daemon.service..."
     systemctl --user stop vrec-daemon.service 2>/dev/null || true

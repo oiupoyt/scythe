@@ -484,7 +484,7 @@ fn pick_folder(current_dir: &str, tx: Sender<String>, is_active: Arc<AtomicBool>
             let _ = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
             let mut picked = None;
 
-            if let Ok(dialog) = (unsafe { CoCreateInstance::<_, IFileOpenDialog>(&FileOpenDialog, None, CLSCTX_INPROC_SERVER) }) {
+            if let Ok(dialog) = unsafe { CoCreateInstance::<_, IFileOpenDialog>(&FileOpenDialog, None, CLSCTX_INPROC_SERVER) } {
                 unsafe {
                     let _ = dialog.SetTitle(windows::core::w!("Select Recordings Directory"));
                     if dialog.SetOptions(FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM).is_ok()
@@ -2115,7 +2115,7 @@ impl ScytheOverlayApp {
             ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
                 ui.add_space(4.0);
                 ui.label(
-                    egui::RichText::new("Scythe v0.2.17")
+                    egui::RichText::new(format!("Scythe v{}", crate::updater::CURRENT_VERSION))
                         .size(10.0)
                         .color(Color32::from_rgb(100, 108, 120)),
                 );
@@ -3022,7 +3022,7 @@ impl ScytheOverlayApp {
         render_section_card(ui, "Software Updates", accent, |ui| {
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new("Scythe Version:").size(12.0).color(Color32::WHITE));
-                ui.label(egui::RichText::new("v0.2.17 (Latest)").size(12.0).color(accent).strong());
+                ui.label(egui::RichText::new(format!("v{} (Latest)", crate::updater::CURRENT_VERSION)).size(12.0).color(accent).strong());
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if squared_button_sized(ui, "Check for Updates", false, accent, Some(egui::vec2(130.0, 26.0))) {
@@ -3934,7 +3934,7 @@ impl eframe::App for ScytheOverlayApp {
 }
 
 #[cfg(target_os = "windows")]
-pub fn apply_windows_transparency(title: &str) {
+pub fn apply_windows_transparency(_title: &str) {
     unsafe {
         use windows::Win32::UI::WindowsAndMessaging::{
             EnumWindows, GetWindowThreadProcessId,
@@ -4202,13 +4202,15 @@ pub fn run_egui_toast(title: &str, subtitle: &str, icon: crate::overlay::ToastIc
                 };
 
                 unsafe extern "system" fn close_toast(hwnd: HWND, lparam: LPARAM) -> BOOL {
-                    let target = lparam.0 as u32;
-                    let mut pid = 0u32;
-                    GetWindowThreadProcessId(hwnd, Some(&mut pid));
-                    if pid == target {
-                        let _ = PostMessageW(hwnd, WM_CLOSE, None, None);
+                    unsafe {
+                        let target = lparam.0 as u32;
+                        let mut pid = 0u32;
+                        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+                        if pid == target {
+                            let _ = PostMessageW(hwnd, WM_CLOSE, None, None);
+                        }
+                        BOOL(1)
                     }
-                    BOOL(1)
                 }
 
                 let _ = EnumWindows(Some(close_toast), LPARAM(prev_pid as isize));

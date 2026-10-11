@@ -8,7 +8,6 @@ pub mod hotkey;
 pub mod ipc;
 pub mod overlay;
 pub mod config;
-pub mod settings_ui;
 pub mod overlay_egui;
 pub mod hyprland_binds;
 pub mod updater;

@@ -381,11 +381,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
     }
 
+    let is_mock_cli = std::env::args().any(|a| a == "--mock");
     let mut source: Box<dyn FrameSource> = match source_opt {
         Some(s) => s,
         None => {
-            eprintln!("Warning: Hardware capture unavailable; falling back to mock capture to preserve daemon IPC.");
-            Box::new(scythe::capture::mock::MockCapture::new())
+            if is_mock_cli {
+                eprintln!("Warning: Mock capture mode active via --mock flag.");
+                Box::new(scythe::capture::mock::MockCapture::new())
+            } else {
+                eprintln!("Error: Hardware capture failed to initialize on {} session. Exiting for restart.", session_type);
+                std::process::exit(1);
+            }
         }
     };
 

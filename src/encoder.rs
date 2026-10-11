@@ -1,5 +1,6 @@
 use ffmpeg_next::ffi::*;
 use std::ptr;
+#[cfg(unix)]
 use std::collections::HashMap;
 use crate::capture::Frame;
 
@@ -294,9 +295,11 @@ impl VaapiEncoder {
                     self.has_frame = true;
                     self.send_staged_frame(&mut packets, pts)?;
                 }
+                #[allow(unused_variables)]
                 Frame::DmaBuf { width: dma_width, height: dma_height, format, modifier, fd, stride, offset } => {
                     #[allow(unused_variables)]
                     let mmap_size = (*offset as usize) + (*stride as usize) * (*dma_height as usize);
+                    #[allow(unused_mut)]
                     let mut mapped_direct = false;
 
                     #[cfg(unix)]
@@ -465,6 +468,7 @@ impl Drop for VaapiEncoder {
 #[cfg(target_os = "windows")]
 pub struct WindowsHwEncoder {
     codec_ctx: *mut AVCodecContext,
+    #[allow(dead_code)]
     encoder_name: String,
     sws_ctx: *mut SwsContext,
     sw_frame: *mut AVFrame,
@@ -697,46 +701,43 @@ impl WindowsHwEncoder {
     pub fn encode_frame(&mut self, frame: &Frame, pts: i64) -> Result<Vec<crate::ring::Packet>, String> {
         let mut packets = Vec::new();
         unsafe {
-            match frame {
-                Frame::Raw { width: _, height, stride, data } => {
-                    if av_frame_make_writable(self.sw_frame) < 0 {
-                        let _ = av_frame_get_buffer(self.sw_frame, 32);
-                    }
-
-                    if !self.sws_ctx.is_null() {
-                        let src_data = [data.as_ptr(), ptr::null(), ptr::null(), ptr::null()];
-                        let src_linesize = [*stride as i32, 0, 0, 0];
-                        sws_scale(
-                            self.sws_ctx,
-                            src_data.as_ptr(),
-                            src_linesize.as_ptr(),
-                            0,
-                            *height as i32,
-                            (*self.sw_frame).data.as_mut_ptr(),
-                            (*self.sw_frame).linesize.as_mut_ptr(),
-                        );
-                    }
-
-                    (*self.sw_frame).pts = pts;
-                    if self.force_idr {
-                        (*self.sw_frame).pict_type = AVPictureType::AV_PICTURE_TYPE_I;
-                        self.force_idr = false;
-                    } else {
-                        (*self.sw_frame).pict_type = AVPictureType::AV_PICTURE_TYPE_NONE;
-                    }
-
-                    if avcodec_send_frame(self.codec_ctx, self.sw_frame) >= 0 {
-                        let mut pkt = av_packet_alloc();
-                        while avcodec_receive_packet(self.codec_ctx, pkt) >= 0 {
-                            let new_pkt = av_packet_alloc();
-                            av_packet_move_ref(new_pkt, pkt);
-                            packets.push(crate::ring::Packet::new(new_pkt));
-                        }
-                        av_packet_free(&mut pkt);
-                        self.has_frame = true;
-                    }
+            if let Frame::Raw { width: _, height, stride, data } = frame {
+                if av_frame_make_writable(self.sw_frame) < 0 {
+                    let _ = av_frame_get_buffer(self.sw_frame, 32);
                 }
-                _ => {}
+
+                if !self.sws_ctx.is_null() {
+                    let src_data = [data.as_ptr(), ptr::null(), ptr::null(), ptr::null()];
+                    let src_linesize = [*stride as i32, 0, 0, 0];
+                    sws_scale(
+                        self.sws_ctx,
+                        src_data.as_ptr(),
+                        src_linesize.as_ptr(),
+                        0,
+                        *height as i32,
+                        (*self.sw_frame).data.as_mut_ptr(),
+                        (*self.sw_frame).linesize.as_mut_ptr(),
+                    );
+                }
+
+                (*self.sw_frame).pts = pts;
+                if self.force_idr {
+                    (*self.sw_frame).pict_type = AVPictureType::AV_PICTURE_TYPE_I;
+                    self.force_idr = false;
+                } else {
+                    (*self.sw_frame).pict_type = AVPictureType::AV_PICTURE_TYPE_NONE;
+                }
+
+                if avcodec_send_frame(self.codec_ctx, self.sw_frame) >= 0 {
+                    let mut pkt = av_packet_alloc();
+                    while avcodec_receive_packet(self.codec_ctx, pkt) >= 0 {
+                        let new_pkt = av_packet_alloc();
+                        av_packet_move_ref(new_pkt, pkt);
+                        packets.push(crate::ring::Packet::new(new_pkt));
+                    }
+                    av_packet_free(&mut pkt);
+                    self.has_frame = true;
+                }
             }
         }
         Ok(packets)

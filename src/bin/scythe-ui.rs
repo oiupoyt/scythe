@@ -120,8 +120,8 @@ fn check_and_toggle_overlay() -> bool {
                 }
             }
             #[cfg(windows)]
-            if let Ok(pid) = content.trim().parse::<u32>() {
-                if pid != std::process::id() {
+            if let Ok(pid) = content.trim().parse::<u32>()
+                && pid != std::process::id() {
                     unsafe {
                         use windows::Win32::UI::WindowsAndMessaging::{
                             EnumWindows, GetWindowThreadProcessId, PostMessageW, WM_CLOSE,
@@ -132,13 +132,15 @@ fn check_and_toggle_overlay() -> bool {
                         };
 
                         unsafe extern "system" fn close_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
-                            let target = lparam.0 as u32;
-                            let mut pid = 0u32;
-                            GetWindowThreadProcessId(hwnd, Some(&mut pid));
-                            if pid == target {
-                                let _ = PostMessageW(hwnd, WM_CLOSE, None, None);
+                            unsafe {
+                                let target = lparam.0 as u32;
+                                let mut pid = 0u32;
+                                GetWindowThreadProcessId(hwnd, Some(&mut pid));
+                                if pid == target {
+                                    let _ = PostMessageW(hwnd, WM_CLOSE, None, None);
+                                }
+                                BOOL(1)
                             }
-                            BOOL(1)
                         }
 
                         let _ = EnumWindows(Some(close_proc), LPARAM(pid as isize));
@@ -154,7 +156,6 @@ fn check_and_toggle_overlay() -> bool {
                         let _ = std::fs::remove_file(&pid_path);
                         return true;
                     }
-                }
             }
         }
         let _ = std::fs::remove_file(&pid_path);
@@ -480,11 +481,11 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 return Ok(());
             }
             "--gtk" => {
-                ensure_daemon_running();
+                ensure_daemon_running_async();
                 ensure_hotkeys_running();
-                #[cfg(target_os = "linux")]
-                scythe::overlay::show_menu_overlay();
-                #[cfg(not(target_os = "linux"))]
+                if check_and_toggle_overlay() {
+                    return Ok(());
+                }
                 scythe::overlay_egui::run_egui_overlay();
                 return Ok(());
             }
@@ -767,7 +768,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             use windows::Win32::UI::WindowsAndMessaging::{
                 MsgWaitForMultipleObjectsEx, QS_ALLINPUT, MWMO_INPUTAVAILABLE,
             };
-            let _ = MsgWaitForMultipleObjectsEx(None, 200, QS_ALLINPUT.0, MWMO_INPUTAVAILABLE);
+            let _ = MsgWaitForMultipleObjectsEx(None, 200, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
         }
         #[cfg(not(target_os = "windows"))]
         std::thread::sleep(std::time::Duration::from_millis(30));
