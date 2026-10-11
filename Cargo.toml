@@ -4,12 +4,8 @@ version = "0.2.18"
 edition = "2024"
 
 [[bin]]
-name = "scythe-daemon"
-path = "src/bin/scythe-daemon.rs"
-
-[[bin]]
-name = "scythe-ui"
-path = "src/bin/scythe-ui.rs"
+name = "scythe"
+path = "src/main.rs"
 
 [dependencies]
 crossbeam-channel = "0.5.16"

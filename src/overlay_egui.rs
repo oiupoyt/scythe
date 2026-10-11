@@ -570,26 +570,14 @@ fn pick_folder(current_dir: &str, tx: Sender<String>, is_active: Arc<AtomicBool>
 }
 
 fn spawn_daemon_process() {
-    let mut cmd = if let Ok(mut path) = std::env::current_exe() {
-        path.pop();
-        #[cfg(target_os = "windows")]
-        let primary = path.join("scythe-daemon.exe");
-        #[cfg(not(target_os = "windows"))]
-        let primary = path.join("scythe-daemon");
-
-        if primary.exists() {
-            std::process::Command::new(primary)
-        } else {
-            #[cfg(target_os = "windows")]
-            { std::process::Command::new("scythe-daemon.exe") }
-            #[cfg(not(target_os = "windows"))]
-            { std::process::Command::new("scythe-daemon") }
-        }
+    let mut cmd = if let Ok(self_exe) = std::env::current_exe() {
+        let mut c = std::process::Command::new(self_exe);
+        c.arg("daemon");
+        c
     } else {
-        #[cfg(target_os = "windows")]
-        { std::process::Command::new("scythe-daemon.exe") }
-        #[cfg(not(target_os = "windows"))]
-        { std::process::Command::new("scythe-daemon") }
+        let mut c = std::process::Command::new("scythe");
+        c.arg("daemon");
+        c
     };
 
     #[cfg(target_os = "windows")]

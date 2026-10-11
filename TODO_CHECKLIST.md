@@ -6,6 +6,14 @@ This checklist tracks known bugs, UI refinements, optimizations, and technical d
 
 ## 1. UI Refinements & Imperfections
 
+- [x] **Singular Multicall Binary Architecture (`scythe`)**:
+  - **Issue**: Distributing separate `scythe-daemon` and `scythe-ui` binaries required cross-process path discovery in `$PATH`, complicated Windows bundling with multiple executables, and prevented atomic single-file updates.
+  - **Resolution**:
+    - Consolidated daemon engine and UI overlay/CLI into a single binary (`scythe`) in [src/main.rs](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/src/main.rs) and [src/daemon.rs](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/src/daemon.rs).
+    - Implemented multicall dispatch: inspects `argv[0]` and subcommands (`scythe daemon`, `scythe [options]`, or symlinks `scythe-daemon` / `scythe-ui`).
+    - Configured [install.sh](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/install.sh) with backward-compatible symlinks.
+    - Updated release packages: both Linux and Windows distributions now ship a single executable.
+
 - [x] **Screenshot Resolution Presets (Native, 1080p, 1440p, 2160p, 720p) & Lanczos Downscaling**:
   - **Issue**: Vague compression percentages and presets confused users instead of providing clear resolution controls.
   - **Resolution**: Replaced vague compression sliders with clean resolution presets (`Native (Source)`, `1080p (FHD)`, `1440p (QHD)`, `2160p (4K UHD)`, `720p (HD)`) in [src/overlay_egui.rs](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/src/overlay_egui.rs). When a target resolution is selected, [src/bin/scythe-ui.rs](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/src/bin/scythe-ui.rs) executes pristine Lanczos hardware-accelerated scaling via FFmpeg.

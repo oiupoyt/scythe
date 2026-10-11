@@ -11,3 +11,4 @@ pub mod config;
 pub mod overlay_egui;
 pub mod hyprland_binds;
 pub mod updater;
+pub mod daemon;

@@ -1,11 +1,9 @@
-#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
-#![allow(clippy::chunks_exact_to_as_chunks)]
 
-use scythe::capture::{Frame, FrameSource};
-use scythe::encoder::VideoEncoder;
-use scythe::ring::Packet;
-use scythe::muxer::Muxer;
-use scythe::ipc::{Command, DaemonStatus};
+use crate::capture::{Frame, FrameSource};
+use crate::encoder::VideoEncoder;
+use crate::ring::Packet;
+use crate::muxer::Muxer;
+use crate::ipc::{Command, DaemonStatus};
 use ringbuf::HeapRb;
 use ringbuf::traits::{RingBuffer, Consumer, Observer};
 use crossbeam_channel::bounded;
@@ -79,12 +77,18 @@ fn spawn_stream_worker(
 }
 
 fn ensure_wayland_env() {
-    scythe::overlay::ensure_wayland_env();
+    crate::overlay::ensure_wayland_env();
 }
 
-#[tokio::main]
+pub fn run_daemon() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(run_daemon_async())
+}
+
 #[allow(unused_assignments)]
-async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     #[cfg(target_os = "windows")]
     unsafe {
         use windows::Win32::System::Console::FreeConsole;
@@ -123,11 +127,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             Err(_) => None,
         }
     };
-    let initial_config = scythe::config::ScytheConfig::load();
+    let initial_config = crate::config::ScytheConfig::load();
 
     // Automatically register dynamic keybindings on Hyprland if active (no config edits needed)
-    scythe::hyprland_binds::register_hyprland_binds(&initial_config);
-    scythe::hyprland_binds::spawn_hyprland_reload_watcher();
+    crate::hyprland_binds::register_hyprland_binds(&initial_config);
+    crate::hyprland_binds::spawn_hyprland_reload_watcher();
 
     let (frame_tx, frame_rx) = bounded::<Frame>(2);
     let (cmd_tx, cmd_rx) = bounded::<Command>(32);
@@ -140,11 +144,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let stream_start_state = Arc::new(AtomicU64::new(0));
     let replay_enabled_state = Arc::new(AtomicBool::new(initial_config.replay_enabled));
     let audio_muted_state = Arc::new(AtomicBool::new(false));
-    let audio_levels = Arc::new(scythe::capture::audio::AudioLevels::new());
+    let audio_levels = Arc::new(crate::capture::audio::AudioLevels::new());
 
     #[cfg(unix)]
     let listener = {
-        let socket_path = scythe::ipc::get_socket_path();
+        let socket_path = crate::ipc::get_socket_path();
         let _ = std::fs::remove_file(&socket_path); 
         let l = std::os::unix::net::UnixListener::bind(&socket_path)?;
         println!("Daemon listening on IPC socket: {}", socket_path);
@@ -162,7 +166,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     break;
                 }
                 Err(_) => {
-                    if scythe::ipc::query_status_port(port).is_ok() {
+                    if crate::ipc::query_status_port(port).is_ok() {
                         println!("Another instance of scythe-daemon is already running on port {}. Exiting cleanly.", port);
                         return Ok(());
                     }
@@ -172,7 +176,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         match bound {
             Some((l, p)) => {
                 println!("Daemon listening on TCP IPC: 127.0.0.1:{}", p);
-                let _ = std::fs::write(scythe::ipc::get_ipc_port_path(), p.to_string());
+                let _ = std::fs::write(crate::ipc::get_ipc_port_path(), p.to_string());
                 let _ = std::fs::write(std::env::temp_dir().join("vrec-ipc.port"), p.to_string());
                 l
             }
@@ -230,7 +234,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                             } else {
                                                 0
                                             };
-                                            let cfg = scythe::config::ScytheConfig::load();
+                                            let cfg = crate::config::ScytheConfig::load();
                                             let status = DaemonStatus {
                                                 is_recording: rec,
                                                 recording_duration_sec: duration,
@@ -252,7 +256,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                             }
                                         },
                                         Command::ToggleCursor => {
-                                            let mut cfg = scythe::config::ScytheConfig::load();
+                                            let mut cfg = crate::config::ScytheConfig::load();
                                             cfg.show_cursor = !cfg.show_cursor;
                                             let _ = cfg.save();
                                             #[cfg(target_os = "linux")]
@@ -275,7 +279,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                             println!("Cursor display toggled to: {}", cfg.show_cursor);
                                         },
                                         Command::CycleAudioMode => {
-                                            let mut cfg = scythe::config::ScytheConfig::load();
+                                            let mut cfg = crate::config::ScytheConfig::load();
                                             cfg.audio_mode = match cfg.audio_mode.as_str() {
                                                 "system" => "mic",
                                                 "mic" => "both",
@@ -288,7 +292,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                         },
                                         Command::StopDaemon => {
                                             println!("StopDaemon requested: Finalizing active recordings...");
-                                            scythe::hyprland_binds::unregister_hyprland_binds(&scythe::config::ScytheConfig::load());
+                                            crate::hyprland_binds::unregister_hyprland_binds(&crate::config::ScytheConfig::load());
                                             let _ = cmd_tx_ipc.send(Command::StopRecording);
                                             std::thread::sleep(std::time::Duration::from_millis(350));
                                             std::process::exit(0);
@@ -314,7 +318,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             println!("\nReceived shutdown signal. Finalizing recordings...");
             let _ = cmd_tx_sig.send(Command::StopRecording);
             tokio::time::sleep(std::time::Duration::from_millis(350)).await;
-            scythe::hyprland_binds::unregister_hyprland_binds(&scythe::config::ScytheConfig::load());
+            crate::hyprland_binds::unregister_hyprland_binds(&crate::config::ScytheConfig::load());
             std::process::exit(0);
         }
     });
@@ -322,7 +326,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let session_type = env::var("XDG_SESSION_TYPE").unwrap_or_else(|_| "x11".to_string());
     println!("Detected session type: {}", session_type);
 
-    let audio_capture_initial = scythe::capture::audio::AudioCapture::new_with_device_mode_volumes_and_levels(
+    let audio_capture_initial = crate::capture::audio::AudioCapture::new_with_device_mode_volumes_and_levels(
         audio_tx.clone(),
         Some(&initial_config.audio_device),
         &initial_config.audio_mode,
@@ -335,12 +339,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     if std::env::args().any(|a| a == "--mock") {
         println!("Initializing MOCK capture...");
-        source_opt = Some(Box::new(scythe::capture::mock::MockCapture::new()));
+        source_opt = Some(Box::new(crate::capture::mock::MockCapture::new()));
     } else if cfg!(target_os = "windows") {
         #[cfg(target_os = "windows")]
         {
             println!("Initializing Windows DXGI capture...");
-            if let Ok(c) = scythe::capture::windows::WindowsCapture::new() {
+            if let Ok(c) = crate::capture::windows::WindowsCapture::new() {
                 source_opt = Some(Box::new(c));
             }
         }
@@ -354,7 +358,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     .args(["--user", "start", "xdg-desktop-portal-hyprland"])
                     .status();
 
-                match scythe::capture::wayland::WaylandCapture::new_with_cursor(initial_config.show_cursor).await {
+                match crate::capture::wayland::WaylandCapture::new_with_cursor(initial_config.show_cursor).await {
                     Ok(cap) => {
                         source_opt = Some(Box::new(cap));
                         break;
@@ -375,7 +379,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         #[cfg(target_os = "linux")]
         {
             println!("Initializing X11 capture...");
-            if let Ok(c) = scythe::capture::x11::X11Capture::new() {
+            if let Ok(c) = crate::capture::x11::X11Capture::new() {
                 source_opt = Some(Box::new(c));
             }
         }
@@ -387,7 +391,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         None => {
             if is_mock_cli {
                 eprintln!("Warning: Mock capture mode active via --mock flag.");
-                Box::new(scythe::capture::mock::MockCapture::new())
+                Box::new(crate::capture::mock::MockCapture::new())
             } else {
                 eprintln!("Error: Hardware capture failed to initialize on {} session. Exiting for restart.", session_type);
                 std::process::exit(1);
@@ -455,7 +459,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut audio_capture = audio_capture_initial.map(|(c, _, _)| c);
 
     let recorder_handle = thread::spawn(move || {
-        let mut config = scythe::config::ScytheConfig::load();
+        let mut config = crate::config::ScytheConfig::load();
         replay_state_clone.store(config.replay_enabled, Ordering::SeqCst);
 
         let active_bitrate = if config.replay_enabled {
@@ -477,9 +481,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         println!("Background recorder engine active and ready ({} fps, replay: {}).", config.fps, config.replay_enabled);
         
         let mut audio_encoder = if let Some((sr, ch)) = audio_info {
-            scythe::encoder::AudioEncoder::new_with_codec(sr as i32, ch as i32, &config.audio_codec).ok()
+            crate::encoder::AudioEncoder::new_with_codec(sr as i32, ch as i32, &config.audio_codec).ok()
         } else {
-            scythe::encoder::AudioEncoder::new_with_codec(48000, 2, &config.audio_codec).ok()
+            crate::encoder::AudioEncoder::new_with_codec(48000, 2, &config.audio_codec).ok()
         };
         let audio_codec_ctx_ptr = audio_encoder.as_ref().map(|e| e.codec_ctx() as usize); 
         
@@ -511,8 +515,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
         thread::spawn(move || {
             while let Ok(drain) = mux_rx.recv() {
-                let filename = scythe::config::ScytheConfig::format_video_filename("Replay", "mp4");
-                let full_path = scythe::config::ScytheConfig::load().resolve_save_path(&filename);
+                let filename = crate::config::ScytheConfig::format_video_filename("Replay", "mp4");
+                let full_path = crate::config::ScytheConfig::load().resolve_save_path(&filename);
                 println!("Saving replay to {}...", full_path);
 
                 // Find the first video IDR keyframe (ignore audio packets which always have keyframe flag set)
@@ -639,7 +643,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                     rec_base_video_pts = pkt.pts();
                                     rec_base_audio_pts = -1;
                                     let codec_ctx = codec_ctx_ptr as *mut ffmpeg_next::ffi::AVCodecContext;
-                                    let filename = scythe::config::ScytheConfig::format_video_filename("Recording", "mp4");
+                                    let filename = crate::config::ScytheConfig::format_video_filename("Recording", "mp4");
                                     let full_path = config.resolve_save_path(&filename);
                                     let audio_codec_ctx = audio_codec_ctx_ptr.map(|p| p as *mut ffmpeg_next::ffi::AVCodecContext);
                                     match unsafe { Muxer::new(&full_path, codec_ctx, audio_codec_ctx) } {
@@ -696,7 +700,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     if let Ok(cmd) = cmd_res {
                         match cmd {
                             Command::ReloadConfig => {
-                                let new_config = scythe::config::ScytheConfig::load();
+                                let new_config = crate::config::ScytheConfig::load();
                                 let video_changed = new_config.show_cursor != config.show_cursor
                                     || new_config.fps != config.fps
                                     || new_config.video_codec != config.video_codec
@@ -754,8 +758,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                     #[cfg(target_os = "linux")]
                                     unsafe { libc::malloc_trim(0); }
                                 }
-                                scythe::hyprland_binds::register_hyprland_binds(&config);
-                                audio_capture = match scythe::capture::audio::AudioCapture::new_with_device_mode_volumes_and_levels(
+                                crate::hyprland_binds::register_hyprland_binds(&config);
+                                audio_capture = match crate::capture::audio::AudioCapture::new_with_device_mode_volumes_and_levels(
                                     audio_tx_clone.clone(),
                                     Some(&config.audio_device),
                                     &config.audio_mode,
@@ -856,7 +860,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                 println!("Audio mute toggled: {}", !cur);
                             },
                             Command::StartStreaming => {
-                                let cfg = scythe::config::ScytheConfig::load();
+                                let cfg = crate::config::ScytheConfig::load();
                                 let key = cfg.stream_key.trim();
                                 if key.is_empty() {
                                     eprintln!("Cannot start livestream: stream key is empty in config.");
@@ -903,7 +907,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                     stream_start_clone.store(0, Ordering::SeqCst);
                                     println!("ToggleStreaming: Livestream stopped.");
                                 } else {
-                                    let cfg = scythe::config::ScytheConfig::load();
+                                    let cfg = crate::config::ScytheConfig::load();
                                     let key = cfg.stream_key.trim();
                                     if key.is_empty() {
                                         eprintln!("Cannot start livestream: stream key is empty in config.");
@@ -1162,6 +1166,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let _ = recorder_handle.join();
     #[cfg(windows)]
-    let _ = std::fs::remove_file(scythe::ipc::get_ipc_port_path());
+    let _ = std::fs::remove_file(crate::ipc::get_ipc_port_path());
     Ok(())
 }

@@ -414,7 +414,24 @@ fn handle_toggle_streaming() -> Result<(), Box<dyn std::error::Error + Send + Sy
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let args: Vec<String> = env::args().collect();
+    let exe_name = env::current_exe()
+        .ok()
+        .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().to_string()))
+        .unwrap_or_default();
 
+    // Multicall dispatch: scythe-daemon executable, symlink, or subcommand
+    let is_daemon = exe_name == "scythe-daemon"
+        || exe_name == "vrec-daemon"
+        || (args.len() > 1 && (args[1] == "daemon" || args[1] == "--daemon" || args[1] == "--mock"));
+
+    if is_daemon {
+        return scythe::daemon::run_daemon();
+    }
+
+    run_client(args)
+}
+
+fn run_client(args: Vec<String>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     #[cfg(target_os = "windows")]
     unsafe {
         let is_cli = args.iter().any(|a| a == "--status" || a == "--help" || a == "-h");
@@ -428,7 +445,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     if args.len() > 1 {
         match args[1].as_str() {
-            "--save" | "--save-replay" => {
+            "--save" | "--save-replay" | "save" => {
                 return handle_save_replay();
             }
             "--notify-save" => {
@@ -443,7 +460,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 show_shadowplay_toast("RECORDING", "Recording saved", ToastIcon::Save);
                 return Ok(());
             }
-            "--screenshot" => {
+            "--screenshot" | "screenshot" => {
                 return handle_screenshot();
             }
             "--mute-mic" => {
@@ -462,7 +479,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 scythe::overlay_egui::run_egui_toast(title, subtitle, ToastIcon::from_name(icon_name));
                 return Ok(());
             }
-            "--menu" => {
+            "--menu" | "menu" => {
                 ensure_daemon_running_async();
                 ensure_hotkeys_running();
                 if check_and_toggle_overlay() {
@@ -492,7 +509,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             "--hotkeys" | "--background" => {
                 // fall through to hotkey loop
             }
-            "--record" | "--toggle" => {
+            "--record" | "--toggle" | "record" => {
                 return handle_toggle_recording();
             }
             "--stream" | "--toggle-stream" => {
@@ -511,7 +528,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 ensure_daemon_running();
                 return send_command(Command::ReloadConfig);
             }
-            "--status" => {
+            "--status" | "status" => {
                 ensure_daemon_running();
                 match query_status() {
                     Ok(st) => {
@@ -531,7 +548,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     }
                 }
             }
-            "--quit" => {
+            "--quit" | "quit" => {
                 return send_command(Command::StopDaemon);
             }
             "--help" | "-h" => {

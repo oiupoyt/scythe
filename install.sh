@@ -15,15 +15,15 @@ APP_DIR="$HOME/.local/share/applications"
 mkdir -p "$BIN_DIR"
 mkdir -p "$APP_DIR"
 
-echo "[2/4] Installing binaries to $BIN_DIR..."
-install -m 755 target/release/scythe-daemon "$BIN_DIR/scythe-daemon"
-install -m 755 target/release/scythe-ui "$BIN_DIR/scythe-ui"
-ln -sf "$BIN_DIR/scythe-ui" "$BIN_DIR/scythe"
+echo "[2/4] Installing singular binary to $BIN_DIR..."
+install -m 755 target/release/scythe "$BIN_DIR/scythe"
 
-# Backward-compatible symlinks
-ln -sf "$BIN_DIR/scythe-daemon" "$BIN_DIR/vrec-daemon"
-ln -sf "$BIN_DIR/scythe-ui" "$BIN_DIR/vrec-ui"
-ln -sf "$BIN_DIR/scythe-ui" "$BIN_DIR/vrec"
+# Backward-compatible multicall symlinks
+ln -sf "$BIN_DIR/scythe" "$BIN_DIR/scythe-daemon"
+ln -sf "$BIN_DIR/scythe" "$BIN_DIR/scythe-ui"
+ln -sf "$BIN_DIR/scythe" "$BIN_DIR/vrec-daemon"
+ln -sf "$BIN_DIR/scythe" "$BIN_DIR/vrec-ui"
+ln -sf "$BIN_DIR/scythe" "$BIN_DIR/vrec"
 
 SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
 mkdir -p "$SYSTEMD_USER_DIR"
@@ -35,7 +35,7 @@ Wants=xdg-desktop-portal.service
 
 [Service]
 Type=simple
-ExecStart=$BIN_DIR/scythe-daemon
+ExecStart=$BIN_DIR/scythe daemon
 Restart=always
 RestartSec=2
 Environment="XDG_RUNTIME_DIR=/run/user/1000"

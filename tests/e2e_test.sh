@@ -23,13 +23,13 @@ if systemctl --user is-active --quiet scythe-daemon.service 2>/dev/null; then
     sleep 0.5
 fi
 
-echo "[2/6] Starting scythe-daemon with mock capture..."
-target/release/scythe-daemon --mock > daemon_test.log 2>&1 &
+echo "[2/6] Starting scythe daemon with mock capture..."
+target/release/scythe daemon --mock > daemon_test.log 2>&1 &
 DAEMON_PID=$!
 
 cleanup() {
     if kill -0 $DAEMON_PID 2>/dev/null; then
-        target/release/scythe-ui --quit 2>/dev/null || kill -9 $DAEMON_PID 2>/dev/null || true
+        target/release/scythe --quit 2>/dev/null || kill -9 $DAEMON_PID 2>/dev/null || true
     fi
     rm -f daemon_test.log
     if [ "$WAS_SERVICE_ACTIVE" -eq 1 ]; then
@@ -56,23 +56,23 @@ echo "Daemon is live (PID: $DAEMON_PID, Socket: $SOCKET_PATH)"
 
 # Test 1: Start Normal Recording
 echo "[3/6] Testing: Start Normal Recording..."
-target/release/scythe-ui --start
+target/release/scythe --start
 echo "Recording in progress for 3 seconds..."
 sleep 3
 
 # Test 2: Stop Normal Recording
 echo "[4/6] Testing: Stop Normal Recording..."
-target/release/scythe-ui --stop
+target/release/scythe --stop
 sleep 1
 
 # Test 3: Save Instant Replay
 echo "[5/6] Testing: Save Instant Replay buffer..."
-target/release/scythe-ui --save
+target/release/scythe --save
 sleep 2
 
 # Test 4: Quit Daemon
 echo "[6/6] Testing: Clean Daemon Shutdown..."
-target/release/scythe-ui --quit
+target/release/scythe --quit
 wait $DAEMON_PID 2>/dev/null || true
 echo "Daemon shutdown cleanly."
 
