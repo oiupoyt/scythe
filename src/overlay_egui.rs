@@ -3626,10 +3626,7 @@ fn render_scythe_notification_card(
         _ => accent,
     };
 
-    // 1. Deep window drop shadow
-    draw_window_shadow(painter, rect, 0.75 * anim_alpha);
-
-    // 2. Obsidian panel fill (#111111, zero roundness, no outline)
+    // 1. Obsidian panel fill (#111111, zero roundness, no outline, no shadow bloom)
     painter.rect_filled(
         rect,
         CornerRadius::ZERO,
@@ -3656,7 +3653,7 @@ fn render_scythe_notification_card(
         Color32::from_rgba_unmultiplied(active_color.r(), active_color.g(), active_color.b(), (255.0 * anim_alpha) as u8),
     );
 
-    // 5. Square icon cell (28x28 recessed #0e0e0e, hairline #222222)
+    // 5. Square icon cell (28x28 recessed #0e0e0e, no outline)
     let badge_size = 28.0_f32;
     let badge_rect = egui::Rect::from_min_size(
         egui::pos2(rect.left() + 26.0, rect.top() + 14.0),
@@ -3666,12 +3663,6 @@ fn render_scythe_notification_card(
         badge_rect,
         CornerRadius::ZERO,
         Color32::from_rgba_unmultiplied(14, 14, 14, (255.0 * anim_alpha) as u8),
-    );
-    painter.rect_stroke(
-        badge_rect,
-        CornerRadius::ZERO,
-        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(34, 34, 34, (220.0 * anim_alpha) as u8)),
-        egui::StrokeKind::Inside,
     );
 
     // 6. Icon render inside badge
