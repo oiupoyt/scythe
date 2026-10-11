@@ -9,29 +9,6 @@ Scythe is a native, ultra-lightweight alternative to NVIDIA ShadowPlay and GPU S
 
 ---
 
-## Pipeline Architecture
-
-```text
-[ Desktop Surface ]
-  │
-  ├── Wayland : ashpd screencast ──> PipeWire DMA-BUF fd (zero-copy)
-  ├── X11     : XCB MIT-SHM      ──> Shared Memory frame pool
-  └── Windows : D3D11 DXGI       ──> Desktop Duplication texture
-  │
-  ▼
-[ Hardware Encoder Surface ]
-  ├── NVENC / AMF / QSV / VAAPI  (direct hardware ingest)
-  └── libx264 / libx265 / libsvtav1 (CPU fallback)
-  │
-  ▼
-[ Memory Ring Buffer ] ──(Ctrl+Shift+R)──> [ MP4 Muxer (AVPacket Rebase) ] ──> ~/Videos/Scythe/
-  │ (rolling circular buffer)
-  ▼
-[ Live Stream / Record Engine ] ─────────> Local MP4 / RTMP Broadcast
-```
-
----
-
 ## Features
 
 - **Instant Replay Buffer**: Constantly records gameplay into a high-speed in-memory circular ring buffer. Save the last 15s to 5 minutes of action instantly with one hotkey (`Ctrl+Shift+R`) without writing temporary files to disk.
