@@ -3629,19 +3629,11 @@ fn render_scythe_notification_card(
     // 1. Deep window drop shadow
     draw_window_shadow(painter, rect, 0.75 * anim_alpha);
 
-    // 2. Obsidian panel fill (#111111, zero roundness)
+    // 2. Obsidian panel fill (#111111, zero roundness, no outline)
     painter.rect_filled(
         rect,
         CornerRadius::ZERO,
         Color32::from_rgba_unmultiplied(17, 17, 17, (250.0 * anim_alpha) as u8),
-    );
-
-    // 3. Hairline border (#222222)
-    painter.rect_stroke(
-        rect,
-        CornerRadius::ZERO,
-        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(34, 34, 34, (220.0 * anim_alpha) as u8)),
-        egui::StrokeKind::Inside,
     );
 
     // 4. Functional 6px status square + 2px accent rule (no glow)

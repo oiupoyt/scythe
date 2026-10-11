@@ -446,9 +446,21 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
     #[allow(unused_variables, unused_assignments)]
     let mut audio_capture = audio_capture_initial.map(|(c, _, _)| c);
 
+    fn effective_replay_active(cfg: &crate::config::ScytheConfig) -> bool {
+        if !cfg.replay_enabled {
+            return false;
+        }
+        if cfg.autostart_power_only && !crate::config::ScytheConfig::is_ac_power_connected() {
+            return false;
+        }
+        true
+    }
+
     let recorder_handle = thread::spawn(move || {
         let mut config = crate::config::ScytheConfig::load();
-        replay_state_clone.store(config.replay_enabled, Ordering::SeqCst);
+        let mut replay_effective = effective_replay_active(&config);
+        replay_state_clone.store(replay_effective, Ordering::SeqCst);
+        let mut last_power_state = crate::config::ScytheConfig::is_ac_power_connected();
 
         let active_bitrate = if config.replay_enabled {
             config.replay_bitrate_kbps
@@ -670,11 +682,8 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
                                 }
                             }
 
-                            if config.replay_enabled {
-                                let power_ok = !config.autostart_power_only || crate::config::ScytheConfig::is_ac_power_connected();
-                                if power_ok {
-                                    ring.push_overwrite(pkt);
-                                }
+                            if replay_effective {
+                                ring.push_overwrite(pkt);
                             }
                         }
                     }
@@ -735,9 +744,15 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
                                     std::process::exit(0);
                                 }
                                 config = new_config;
-                                replay_state_clone.store(config.replay_enabled, Ordering::SeqCst);
+                                replay_effective = effective_replay_active(&config);
+                                replay_state_clone.store(replay_effective, Ordering::SeqCst);
+                                last_power_state = crate::config::ScytheConfig::is_ac_power_connected();
+                                if !replay_effective && config.replay_enabled {
+                                    while ring.try_pop().is_some() {}
+                                    eprintln!("Replay paused: power-only armed and running on battery.");
+                                }
                                 audio_muted_clone.store(config.audio_mode == "muted", Ordering::SeqCst);
-                                println!("Daemon config reloaded! Audio mode: {}", config.audio_mode);
+                                println!("Daemon config reloaded! Audio mode: {} replay_effective: {}", config.audio_mode, replay_effective);
                                 let new_capacity = if config.replay_enabled {
                                     (config.replay_duration_sec as usize) * (config.fps as usize + 50) + 60
                                 } else {
@@ -770,7 +785,7 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
                                 ticker = crossbeam_channel::tick(std::time::Duration::from_nanos(1_000_000_000 / config.fps.max(1) as u64));
                             },
                             Command::SaveReplay => {
-                                if config.replay_enabled {
+                                if replay_effective {
                                     let now = std::time::Instant::now();
                                     if now.duration_since(last_replay_save) > std::time::Duration::from_millis(800) {
                                         last_replay_save = now;
@@ -995,11 +1010,8 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
                                                 let _ = tx.try_send(rebased);
                                             }
                                         }
-                                    if config.replay_enabled {
-                                        let power_ok = !config.autostart_power_only || crate::config::ScytheConfig::is_ac_power_connected();
-                                        if power_ok {
-                                            ring.push_overwrite(pkt);
-                                        }
+                                    if replay_effective {
+                                        ring.push_overwrite(pkt);
                                     }
                                 }
                             }
@@ -1016,7 +1028,19 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
                     }
 
                     let is_streaming = stream_sender.is_some();
-                    if !normal_recording && !config.replay_enabled && !is_streaming {
+                    let power_now = crate::config::ScytheConfig::is_ac_power_connected();
+                    if power_now != last_power_state {
+                        last_power_state = power_now;
+                        replay_effective = effective_replay_active(&config);
+                        replay_state_clone.store(replay_effective, Ordering::SeqCst);
+                        if !replay_effective {
+                            while ring.try_pop().is_some() {}
+                            eprintln!("AC power lost: replay buffer paused and drained.");
+                        } else {
+                            println!("AC power restored: replay buffer resumed.");
+                        }
+                    }
+                    if !normal_recording && !replay_effective && !is_streaming {
                         has_new_frame = false;
                         continue;
                     }
