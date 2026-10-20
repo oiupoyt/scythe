@@ -1,0 +1,113 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+jobs:
+  build-linux:
+    name: Linux (check, test, build)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config clang libva-dev \
+            libavcodec-dev libavformat-dev libavutil-dev \
+            libswresample-dev libswscale-dev libavfilter-dev libavdevice-dev \
+            libpipewire-0.3-dev libxcb1-dev libxcb-shm0-dev libxcb-xfixes0-dev \
+            libasound2-dev
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: linux-${{ hashFiles('Cargo.lock') }}
+          restore-keys: linux-
+
+      - name: Format check (advisory)
+        continue-on-error: true
+        run: cargo fmt --check
+
+      - name: Type check
+        run: cargo check --locked --all-targets
+
+      - name: Unit tests
+        run: cargo test --locked
+
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Build release
+        run: cargo build --locked --release
+
+      - name: Verify binary
+        run: |
+          ./target/release/scythe --help | head -3
+          test -x target/release/scythe
+          ls -la target/release/scythe
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: scythe-linux-x86_64
+          path: target/release/scythe
+          if-no-files-found: error
+
+  build-windows:
+    name: Windows (cross build)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          path-type: minimal
+          install: >-
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-rust
+            mingw-w64-x86_64-ffmpeg
+            mingw-w64-x86_64-pkg-config
+            mingw-w64-x86_64-clang
+
+      - name: Build release
+        shell: msys2 {0}
+        env:
+          LIBCLANG_PATH: /mingw64/bin
+          BINDGEN_EXTRA_CLANG_ARGS: "--target=x86_64-w64-windows-gnu"
+        run: |
+          cargo build --release
+          ls -la target/release/scythe.exe
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: scythe-windows-x86_64
+          path: target/release/scythe.exe
+          if-no-files-found: error

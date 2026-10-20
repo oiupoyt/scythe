@@ -727,6 +727,13 @@ mod tests {
 
     #[test]
     fn test_audio_probe() {
+        // Requires a live PulseAudio/PipeWire or CoreAudio/WASAPI session. CI runners
+        // have no audio server, so this is opt-in rather than a hard assertion.
+        if std::env::var("SCYTHE_HW_TESTS").is_err() {
+            eprintln!("skipping test_audio_probe: set SCYTHE_HW_TESTS=1 to run hardware audio tests");
+            return;
+        }
+
         // 1. Test System audio
         let (tx, rx) = crossbeam_channel::unbounded();
         let sys_cap = AudioCapture::new_with_device_and_mode(tx, None, "system");

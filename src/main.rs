@@ -577,7 +577,11 @@ fn run_client(args: Vec<String>) -> Result<(), Box<dyn std::error::Error + Send 
                 println!("  scythe --quit         Stop background daemon");
                 return Ok(());
             }
-            _ => {}
+            other => {
+                eprintln!("scythe: unknown argument '{}'", other);
+                eprintln!("Run 'scythe --help' for usage.");
+                std::process::exit(2);
+            }
         }
     } else {
         ensure_daemon_running_async();
