@@ -4,7 +4,7 @@ runtime-version: '46'
 sdk: org.gnome.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
-command: scythe-ui
+command: scythe
 finish-args:
   - --share=ipc
   - --socket=fallback-x11
@@ -26,11 +26,11 @@ modules:
     buildsystem: simple
     build-commands:
       - cargo build --release --verbose
-      - install -Dm755 target/release/scythe-daemon /app/bin/scythe-daemon
-      - install -Dm755 target/release/scythe-ui /app/bin/scythe-ui
       - install -Dm755 target/release/scythe /app/bin/scythe
-      - ln -sf /app/bin/scythe-daemon /app/bin/vrec-daemon
-      - ln -sf /app/bin/scythe-ui /app/bin/vrec-ui
+      - ln -sf /app/bin/scythe /app/bin/scythe-daemon
+      - ln -sf /app/bin/scythe /app/bin/scythe-ui
+      - ln -sf /app/bin/scythe /app/bin/vrec-daemon
+      - ln -sf /app/bin/scythe /app/bin/vrec-ui
       - ln -sf /app/bin/scythe /app/bin/vrec
       - install -Dm644 packaging/scythe.desktop /app/share/applications/com.scythe.Scythe.desktop
     sources:

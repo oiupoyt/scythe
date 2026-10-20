@@ -33,14 +33,15 @@ jobs:
       - name: Build Release Binaries
         run: cargo build --release
 
-      - name: Package Linux Tarball (Generic Binaries)
+      - name: Package Linux Tarball (Unified Binary)
         run: |
           mkdir -p dist/scythe-linux-x86_64
-          cp target/release/scythe-daemon target/release/scythe-ui dist/scythe-linux-x86_64/
-          ln -sf scythe-daemon dist/scythe-linux-x86_64/vrec-daemon
-          ln -sf scythe-ui dist/scythe-linux-x86_64/vrec-ui
-          ln -sf scythe-ui dist/scythe-linux-x86_64/scythe
-          ln -sf scythe-ui dist/scythe-linux-x86_64/vrec
+          cp target/release/scythe dist/scythe-linux-x86_64/
+          ln -sf scythe dist/scythe-linux-x86_64/scythe-daemon
+          ln -sf scythe dist/scythe-linux-x86_64/scythe-ui
+          ln -sf scythe dist/scythe-linux-x86_64/vrec-daemon
+          ln -sf scythe dist/scythe-linux-x86_64/vrec-ui
+          ln -sf scythe dist/scythe-linux-x86_64/vrec
           cp packaging/scythe.desktop dist/scythe-linux-x86_64/
           tar -czvf dist/scythe-linux-x86_64.tar.gz -C dist scythe-linux-x86_64
 
@@ -63,12 +64,12 @@ jobs:
           Description: High-performance GPU hardware screen recorder and instant replay overlay
           Depends: libgtk-3-0, libgtk-layer-shell0, libpipewire-0.3-0, libva2, libasound2
           EOF
-          cp target/release/scythe-daemon "deb/scythe_${VERSION}/usr/bin/"
-          cp target/release/scythe-ui "deb/scythe_${VERSION}/usr/bin/"
-          ln -sf scythe-daemon "deb/scythe_${VERSION}/usr/bin/vrec-daemon"
-          ln -sf scythe-ui "deb/scythe_${VERSION}/usr/bin/vrec-ui"
-          ln -sf scythe-ui "deb/scythe_${VERSION}/usr/bin/scythe"
-          ln -sf scythe-ui "deb/scythe_${VERSION}/usr/bin/vrec"
+          cp target/release/scythe "deb/scythe_${VERSION}/usr/bin/scythe"
+          ln -sf scythe "deb/scythe_${VERSION}/usr/bin/scythe-daemon"
+          ln -sf scythe "deb/scythe_${VERSION}/usr/bin/scythe-ui"
+          ln -sf scythe "deb/scythe_${VERSION}/usr/bin/vrec-daemon"
+          ln -sf scythe "deb/scythe_${VERSION}/usr/bin/vrec-ui"
+          ln -sf scythe "deb/scythe_${VERSION}/usr/bin/vrec"
           cp packaging/scythe.desktop "deb/scythe_${VERSION}/usr/share/applications/"
           dpkg-deb --build "deb/scythe_${VERSION}" "dist/scythe_${VERSION}_amd64.deb"
 
@@ -81,17 +82,18 @@ jobs:
       - name: Package Standalone AppImage
         run: |
           mkdir -p AppDir/usr/bin AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/scalable/apps
-          cp target/release/scythe-ui AppDir/usr/bin/
-          cp target/release/scythe-daemon AppDir/usr/bin/
-          ln -sf scythe-ui AppDir/usr/bin/scythe
-          ln -sf scythe-ui AppDir/usr/bin/vrec-ui
-          ln -sf scythe-daemon AppDir/usr/bin/vrec-daemon
+          cp target/release/scythe AppDir/usr/bin/
+          ln -sf scythe AppDir/usr/bin/scythe-ui
+          ln -sf scythe AppDir/usr/bin/scythe-daemon
+          ln -sf scythe AppDir/usr/bin/vrec-ui
+          ln -sf scythe AppDir/usr/bin/vrec-daemon
+          ln -sf scythe AppDir/usr/bin/vrec
           cp packaging/scythe.desktop AppDir/usr/share/applications/
           
           cat > AppDir/AppRun << 'EOF'
           #!/bin/sh
           HERE="$(dirname "$(readlink -f "${0}")")"
-          exec "${HERE}/usr/bin/scythe-ui" "$@"
+          exec "${HERE}/usr/bin/scythe" "$@"
           EOF
           chmod +x AppDir/AppRun
 
@@ -140,8 +142,7 @@ jobs:
         run: |
           cargo build --release
           mkdir -p dist/bundle
-          cp target/release/scythe-daemon.exe dist/bundle/
-          cp target/release/scythe-ui.exe dist/bundle/
+          cp target/release/scythe.exe dist/bundle/
           python3 packaging/windows/bundle_deps.py dist/bundle
           strip dist/bundle/*.exe || true
           strip --strip-unneeded dist/bundle/*.dll || true

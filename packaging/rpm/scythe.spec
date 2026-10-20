@@ -32,19 +32,19 @@ cargo build --release
 
 %install
 rm -rf $RPM_BUILD_ROOT
-install -D -m 0755 target/release/scythe-daemon %{buildroot}%{_bindir}/scythe-daemon
-install -D -m 0755 target/release/scythe-ui %{buildroot}%{_bindir}/scythe-ui
 install -D -m 0755 target/release/scythe %{buildroot}%{_bindir}/scythe
-ln -sf %{_bindir}/scythe-daemon %{buildroot}%{_bindir}/vrec-daemon
-ln -sf %{_bindir}/scythe-ui %{buildroot}%{_bindir}/vrec-ui
+ln -sf %{_bindir}/scythe %{buildroot}%{_bindir}/scythe-daemon
+ln -sf %{_bindir}/scythe %{buildroot}%{_bindir}/scythe-ui
+ln -sf %{_bindir}/scythe %{buildroot}%{_bindir}/vrec-daemon
+ln -sf %{_bindir}/scythe %{buildroot}%{_bindir}/vrec-ui
 ln -sf %{_bindir}/scythe %{buildroot}%{_bindir}/vrec
 install -D -m 0644 packaging/scythe.desktop %{buildroot}%{_datadir}/applications/scythe.desktop
 ln -sf %{_datadir}/applications/scythe.desktop %{buildroot}%{_datadir}/applications/vrec.desktop
 
 %files
+%{_bindir}/scythe
 %{_bindir}/scythe-daemon
 %{_bindir}/scythe-ui
-%{_bindir}/scythe
 %{_bindir}/vrec-daemon
 %{_bindir}/vrec-ui
 %{_bindir}/vrec
