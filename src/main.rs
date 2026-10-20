@@ -384,12 +384,31 @@ fn handle_toggle_streaming() -> Result<(), Box<dyn std::error::Error + Send + Sy
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let args: Vec<String> = env::args().collect();
-    let exe_name = env::current_exe()
+/// Name the binary was invoked as.
+///
+/// `current_exe()` reads /proc/self/exe, which resolves symlinks to the real
+/// file, so the installed `scythe-daemon` / `scythe-ui` aliases would all
+/// report "scythe" and dispatch to the client. argv[0] keeps the invocation
+/// name, which is what multicall dispatch needs.
+fn invoked_stem() -> String {
+    if let Some(arg0) = env::args_os().next() {
+        let path = std::path::Path::new(&arg0);
+        if let Some(stem) = path.file_stem() {
+            let stem = stem.to_string_lossy().to_string();
+            if !stem.is_empty() {
+                return stem;
+            }
+        }
+    }
+    env::current_exe()
         .ok()
         .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().to_string()))
-        .unwrap_or_default();
+        .unwrap_or_default()
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let args: Vec<String> = env::args().collect();
+    let exe_name = invoked_stem();
 
     // Multicall dispatch: scythe-daemon executable, symlink, or subcommand
     let is_daemon = exe_name == "scythe-daemon"
@@ -535,27 +554,27 @@ fn run_client(args: Vec<String>) -> Result<(), Box<dyn std::error::Error + Send 
                 return send_command(Command::StopDaemon);
             }
             "--help" | "-h" => {
-                println!("scythe-ui - UI Overlay and Hotkey listener for scythe");
+                println!("scythe {} - GPU screen recorder, instant replay and HUD overlay", scythe::updater::CURRENT_VERSION);
                 println!("Usage:");
-                println!("  scythe-ui                Open the interactive overlay UI menu (default)");
-                println!("  scythe-ui --menu         Open the interactive overlay UI menu");
-                println!("  scythe-ui --gtk          Open legacy GTK layer-shell overlay (Linux)");
-                println!("  scythe-ui --hotkeys      Run global hotkey manager in background");
-                println!("  scythe-ui --status       Query current daemon status");
-                println!("  scythe-ui --save         Save instant replay and show notification");
-                println!("  scythe-ui --save-replay  Alias for --save");
-                println!("  scythe-ui --notify-save  Show instant replay saved notification toast");
-                println!("  scythe-ui --notify-start Show recording started notification toast");
-                println!("  scythe-ui --notify-stop  Show recording saved notification toast");
-                println!("  scythe-ui --toast <t> <s> Show custom ShadowPlay notification toast");
-                println!("  scythe-ui --record       Toggle normal recording on/off (with notification)");
-                println!("  scythe-ui --stream       Toggle livestreaming on/off (with notification)");
-                println!("  scythe-ui --cursor       Toggle mouse cursor recording on/off (with notification)");
-                println!("  scythe-ui --show-overlay Open the HUD overlay via the daemon (no toggle)");
-                println!("  scythe-ui --start        Start normal recording");
-                println!("  scythe-ui --stop         Stop normal recording");
-                println!("  scythe-ui --reload       Reload daemon configuration");
-                println!("  scythe-ui --quit         Stop background daemon");
+                println!("  scythe                Open the interactive overlay UI menu (default)");
+                println!("  scythe --menu         Open the interactive overlay UI menu");
+                println!("  scythe --gtk          Deprecated alias for --menu (GTK backend retired)");
+                println!("  scythe --hotkeys      Run global hotkey manager in background");
+                println!("  scythe --status       Query current daemon status");
+                println!("  scythe --save         Save instant replay and show notification");
+                println!("  scythe --save-replay  Alias for --save");
+                println!("  scythe --notify-save  Show instant replay saved notification toast");
+                println!("  scythe --notify-start Show recording started notification toast");
+                println!("  scythe --notify-stop  Show recording saved notification toast");
+                println!("  scythe --toast <t> <s> Show custom ShadowPlay notification toast");
+                println!("  scythe --record       Toggle normal recording on/off (with notification)");
+                println!("  scythe --stream       Toggle livestreaming on/off (with notification)");
+                println!("  scythe --cursor       Toggle mouse cursor recording on/off (with notification)");
+                println!("  scythe --show-overlay Open the HUD overlay via the daemon (no toggle)");
+                println!("  scythe --start        Start normal recording");
+                println!("  scythe --stop         Stop normal recording");
+                println!("  scythe --reload       Reload daemon configuration");
+                println!("  scythe --quit         Stop background daemon");
                 return Ok(());
             }
             _ => {}

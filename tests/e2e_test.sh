@@ -11,17 +11,39 @@ cargo build --release --quiet
 
 SOCKET_PATH="${XDG_RUNTIME_DIR:-/tmp}/scythe.sock"
 
+# Liveness probe with no side effects. `scythe --status` calls
+# ensure_daemon_running(), so probing with it spawns a daemon and the check
+# starts chasing its own tail.
+daemon_alive() {
+    [ -S "$SOCKET_PATH" ] || return 1
+    python3 -c '
+import socket, sys
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.settimeout(0.5)
+try:
+    s.connect(sys.argv[1])
+except OSError:
+    sys.exit(1)
+finally:
+    s.close()
+' "$SOCKET_PATH" 2>/dev/null
+}
+
 # A live daemon owns this socket. Removing the path entry while it runs leaves the
 # kernel socket bound but unreachable, breaking the user's session until restart.
-# Shut it down gracefully instead, and refuse to run if it will not stop.
-if [ -S "$SOCKET_PATH" ] && target/release/scythe --status >/dev/null 2>&1; then
-    echo "[0/6] Stopping existing scythe daemon..."
+# Stop it gracefully, remember how it ran, and put it back when the test finishes.
+PREVIOUS_DAEMON_CMD=""
+PREVIOUS_DAEMON_CWD=""
+if daemon_alive; then
+    PREVIOUS_DAEMON_CMD=$(pgrep -af 'scythe.*daemon' 2>/dev/null | head -1 | cut -d' ' -f2- || true)
+    PREVIOUS_DAEMON_CWD=$(readlink -f /proc/"$(pgrep -f 'scythe.*daemon' 2>/dev/null | head -1)"/cwd 2>/dev/null || true)
+    echo "[0/6] Existing daemon detected; stopping it for the test run..."
     target/release/scythe --quit >/dev/null 2>&1 || true
-    for _ in $(seq 1 50); do
-        [ -S "$SOCKET_PATH" ] || break
+    for _ in $(seq 1 80); do
+        daemon_alive || break
         sleep 0.1
     done
-    if target/release/scythe --status >/dev/null 2>&1; then
+    if daemon_alive; then
         echo "ERROR: A scythe daemon is running and did not stop cleanly."
         echo "       Refusing to unlink its socket. Stop it first: scythe --quit"
         exit 1
@@ -52,6 +74,10 @@ cleanup() {
     rm -f daemon_test.log
     if [ "$WAS_SERVICE_ACTIVE" -eq 1 ]; then
         systemctl --user start scythe-daemon.service 2>/dev/null || true
+    elif [ -n "$PREVIOUS_DAEMON_CMD" ]; then
+        echo "Restoring the daemon that was running before the test..."
+        ( cd "${PREVIOUS_DAEMON_CWD:-$PWD}" && setsid $PREVIOUS_DAEMON_CMD >/dev/null 2>&1 & ) || true
+        sleep 1
     fi
 }
 trap cleanup EXIT

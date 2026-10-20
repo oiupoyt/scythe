@@ -249,6 +249,14 @@ This checklist tracks known bugs, UI refinements, optimizations, and technical d
 
 ---
 
+## 4a. Binary Dispatch
+
+- [x] **Symlink Aliases Dispatched to the UI Instead of the Daemon**:
+  - **Issue**: [`src/main.rs`](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/src/main.rs) decided daemon mode from `std::env::current_exe()`, which reads `/proc/self/exe` and resolves symlinks. Because every installed alias points at the real `scythe` file, all of them reported the stem `scythe`, so `scythe-daemon` and `vrec-daemon` fell through to client mode and opened the HUD instead of starting the recording engine. The aliases shipped by [`install.sh`](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/install.sh), the `.deb`/`.rpm`/Flatpak packages, and the Hyprland `exec_cmd("scythe-daemon")` autostart line were all affected. A stale pre-consolidation `target/release/scythe-daemon` from an older build masked the bug during local testing.
+  - **Resolution**: Added `invoked_stem()`, which reads argv[0] and only falls back to `current_exe()` when argv[0] has no usable stem. Verified against a packaged tarball: `scythe-daemon` and `vrec-daemon` now report the running-instance guard, while `scythe`, `scythe-ui`, `vrec` and `vrec-ui` open the client.
+
+---
+
 ## 4b. Release Pipeline & Packaging Consolidation
 
 - [x] **CI/CD Referenced Binaries That No Longer Build**:
@@ -281,7 +289,7 @@ This checklist tracks known bugs, UI refinements, optimizations, and technical d
 
 - [x] **E2E Test Unlinked a Live Daemon's Socket**:
   - **Issue**: [`tests/e2e_test.sh`](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/tests/e2e_test.sh) ran `rm -f "$SOCKET_PATH"` unconditionally and only stopped the systemd unit. A daemon started any other way (Hyprland `execs.lua`, manual launch) kept the flock; the test removed its socket path entry, leaving the kernel socket bound but unreachable. The session stayed broken until the process was killed.
-  - **Resolution**: The script now queries `--status`, sends `StopDaemon`, waits for the socket to disappear, and aborts without unlinking if the daemon will not stop.
+  - **Resolution**: The script now probes liveness with a direct Unix-socket connect (not `--status`, which calls `ensure_daemon_running()` and spawns a daemon while probing), records the running daemon's command line and working directory, sends `StopDaemon`, waits for the socket to disappear, aborts without unlinking if it will not stop, and restores the original daemon on exit.
 
 ---
 

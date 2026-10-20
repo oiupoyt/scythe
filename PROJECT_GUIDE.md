@@ -91,6 +91,7 @@ Scythe uses a unified multicall binary dispatch model:
 
 ### Multicall Dispatching:
 - **Daemon Mode**: Invoked when `args[1] == "daemon"`, `args[1] == "--mock"`, or when executed via symlink `scythe-daemon` / `vrec-daemon`. Runs the headless capture and recording engine ([`src/daemon.rs`](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/src/daemon.rs)).
+- **Dispatch uses argv[0], not `current_exe()`**: `current_exe()` reads `/proc/self/exe`, which resolves symlinks to the real file. Every installed alias would therefore report `scythe` and dispatch to the client, so `scythe-daemon` would open the HUD instead of starting the engine. `invoked_stem()` reads argv[0] and falls back to `current_exe()` only when argv[0] has no usable stem.
 - **Client / UI Mode**: Invoked when executed as `scythe`, `scythe-ui`, or with client arguments (`save`, `record`, `screenshot`, `status`, `menu`, etc.). Runs [`src/main.rs`](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/src/main.rs) and launches [`src/overlay_egui.rs`](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/src/overlay_egui.rs).
 
 ---
@@ -381,7 +382,13 @@ bash install.sh
 bash tests/e2e_test.sh
 ```
 
-`tests/e2e_test.sh` refuses to unlink a socket owned by a running daemon. Unix sockets cannot be re-linked: removing the path entry of a live daemon leaves the kernel socket bound but unreachable, and the user's session stays broken until it restarts. The script therefore sends `StopDaemon` and waits for the socket to disappear first, aborting if the daemon will not stop.
+`tests/e2e_test.sh` treats a running daemon as a resource it borrows rather than deletes. Unix sockets cannot be re-linked: removing the path entry of a live daemon leaves the kernel socket bound but unreachable, and the session stays broken until that process dies.
+
+The script therefore:
+1. probes liveness by connecting to the socket directly (`scythe --status` cannot be used for this, because it calls `ensure_daemon_running()` and would spawn a daemon while probing);
+2. records the running daemon's command line and working directory;
+3. sends `StopDaemon` and waits for the socket to disappear, aborting without unlinking if it will not stop;
+4. restores that daemon on exit, so a developer's recorder survives a test run.
 
 ### Windows Cross-Compilation (from Linux Host):
 ```bash
