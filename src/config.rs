@@ -390,6 +390,11 @@ X-GNOME-Autostart-enabled=true\n";
         }
     }
 
+    /// Enable or disable session autostart for the daemon and the overlay.
+    ///
+    /// Linux only: systemd user units and XDG autostart entries. Windows has no
+    /// equivalent implementation yet, so the call is a no-op there.
+    #[cfg_attr(not(target_os = "linux"), allow(unused_variables))]
     pub fn apply_autostart_system(enable_replay: bool, enable_overlay: bool) {
         #[cfg(target_os = "linux")]
         {

@@ -14,18 +14,17 @@ This document is the definitive technical reference for developers and AI agents
 | Remote | URL | Role | Status |
 |---|---|---|---|
 | `forgejo` | `https://git.oiupoyt.space/oiupoyt/scythe.git` | Self-hosted primary; source of truth, release assets | Active |
-| `spearzificial` | `https://spearzificial@github.com/spearzificial/scythe.git` | **Active development mirror** (currently maintained account) | Active |
-| `origin` | `https://github.com/oiupoyt/scythe.git` | Legacy GitHub mirror | Read-only / stale token |
+| `origin` | `https://spearzificial@github.com/spearzificial/scythe.git` | **GitHub development mirror** (currently maintained account) | Active |
 | `gitlab` | `https://gitlab.com/oiupoyt.cat/scythe.git` | Optional mirror | Optional |
 
-**GitHub account policy:** GitHub pushes now go to the `spearzificial` account. The `oiupoyt` GitHub OAuth token is expired, so `origin` is not a valid push target. Always name the account in the remote URL (`https://spearzificial@github.com/...`) so Git selects the correct stored credential when multiple GitHub accounts exist in the credential store.
+**GitHub account policy:** GitHub pushes go to the `spearzificial` account, and `origin` points at that account's repository. The `oiupoyt` GitHub OAuth token is expired, so the old `oiupoyt` repository is not a push target. Always name the account in the remote URL (`https://spearzificial@github.com/...`) so Git selects the correct stored credential when multiple GitHub accounts exist in the credential store.
 
 ### Dual-Push Rule
 
 Every push must reach both active remotes:
 
 ```bash
-git push spearzificial main
+git push origin main
 git push forgejo main
 ```
 
@@ -324,6 +323,8 @@ Implemented in [`src/config.rs`](file:///home/oiupoyt/my%20stuff%20yea/projects/
 1. Systemd user service: `systemctl --user enable/disable scythe-daemon.service`.
 2. Standard XDG autostart desktop entries in `~/.config/autostart/scythe-daemon.desktop` and `scythe-overlay.desktop`.
 
+Linux only. The Windows path is a no-op: there is no registry `Run` key write in either the overlay toggle or the NSIS installer, so the autostart switch in the UI currently has no effect on Windows.
+
 ### Retired Settings (v0.2.18 cleanup):
 These keys were accepted by the settings UI and persisted to disk, but nothing in the capture, encoder, or daemon paths ever read them. They were removed from `ScytheConfig` and the corresponding UI controls were deleted, so the overlay no longer presents options that do nothing:
 
@@ -398,6 +399,23 @@ PKG_CONFIG_ALLOW_CROSS=1 \
 cargo build --release --target x86_64-pc-windows-gnu
 ```
 
+### GitHub Actions:
+
+| Workflow | Trigger | Purpose |
+|---|---|---|
+| [`ci.yml`](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/.github/workflows/ci.yml) | push to `main`, pull request, manual | Compiles and tests both targets on every push. Linux job: `cargo check --all-targets`, `cargo test`, `cargo clippy -D warnings`, `cargo build --release`, then runs `scythe --help` to prove the binary starts. Windows job: MSYS2 MINGW64 `cargo build --release`. Both binaries upload as artifacts. |
+| [`release.yml`](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/.github/workflows/release.yml) | push of a `v*` tag | Packages `.tar.gz`, `.deb`, `.rpm`, `.AppImage` and the NSIS Windows installer, then publishes a GitHub Release. |
+
+The CI workflow is the only thing that compiles the Windows target on a routine basis, and it exists because the Windows build had already rotted: `src/config.rs` calls `GetSystemPowerStatus` but the `windows` crate feature list never enabled `Win32_System_Power`, so `cargo build --target x86_64-pc-windows-gnu` failed with `E0432`. Tag pushes were the only previous trigger, so nothing caught it before a release was attempted.
+
+The `cargo fmt --check` step is advisory (`continue-on-error: true`). The tree has formatting drift that is intentionally not mass-fixed, because reformatting every file would bury the real changes in a diff.
+
+Tests that need real hardware (a live audio server) are opt-in:
+
+```bash
+SCYTHE_HW_TESTS=1 cargo test
+```
+
 ---
 
 ## 14. Behavioral Rules & Coding Standards
@@ -405,9 +423,9 @@ cargo build --release --target x86_64-pc-windows-gnu
 1. **ABSOLUTELY ZERO EMOJIS**: Under no circumstances should emojis be added to code, comments, log outputs, commit messages, or communication.
 2. **File & Symbol Links**: Every file path or code symbol mentioned in communication must be formatted as a clickable markdown link using the `file://` scheme (e.g., [`src/encoder.rs`](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/src/encoder.rs)).
 3. **KAT Square Minimalist**: Strict `border-radius: 0 !important;` on all visual elements.
-4. **Dual-Push Rule**: When pushing commits or tags, always push to both active remotes (`forgejo` and `spearzificial`):
+4. **Dual-Push Rule**: When pushing commits or tags, always push to both active remotes (`origin` for GitHub and `forgejo` for self-hosted):
    ```bash
-   git push spearzificial <branch>
+   git push origin <branch>
    git push forgejo <branch>
    ```
 5. **Memory Safety & Process Isolation**: Avoid blocking the audio or video capture loops. Use unbounded or high-capacity crossbeam channels for frame dispatch.
