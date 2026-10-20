@@ -8,8 +8,27 @@ This document is the definitive technical reference for developers and AI agents
 
 **Current Version:** `v0.2.18`  
 **License:** Dual MIT / Apache 2.0  
-**Primary Repository & Releases:** Forgejo (`https://git.oiupoyt.space/oiupoyt/scythe`)  
-**Secondary Mirror:** GitHub (`https://github.com/oiupoyt/scythe`)  
+
+### Repository Topology
+
+| Remote | URL | Role | Status |
+|---|---|---|---|
+| `forgejo` | `https://git.oiupoyt.space/oiupoyt/scythe.git` | Self-hosted primary; source of truth, release assets | Active |
+| `spearzificial` | `https://spearzificial@github.com/spearzificial/scythe.git` | **Active development mirror** (currently maintained account) | Active |
+| `origin` | `https://github.com/oiupoyt/scythe.git` | Legacy GitHub mirror | Read-only / stale token |
+| `gitlab` | `https://gitlab.com/oiupoyt.cat/scythe.git` | Optional mirror | Optional |
+
+**GitHub account policy:** GitHub pushes now go to the `spearzificial` account. The `oiupoyt` GitHub OAuth token is expired, so `origin` is not a valid push target. Always name the account in the remote URL (`https://spearzificial@github.com/...`) so Git selects the correct stored credential when multiple GitHub accounts exist in the credential store.
+
+### Dual-Push Rule
+
+Every push must reach both active remotes:
+
+```bash
+git push spearzificial main
+git push forgejo main
+```
+
 
 Scythe is a cross-platform, ultra-low-overhead desktop screen recorder, instant replay buffer, and livestreamer written in Rust. It delivers functionality comparable to NVIDIA ShadowPlay and GPU Screen Recorder with minimal CPU and GPU overhead.
 
@@ -93,6 +112,7 @@ Packets are framed with a 4-byte little-endian length prefix followed by JSON-se
   - `ToggleAudio`: Toggles microphone/system audio mute state.
   - `CycleAudioMode`: Cycles through System -> Mic -> Both -> Muted.
   - `ToggleCursor`: Inverts cursor visibility state and triggers capture synchronization.
+  - `ShowOverlay`: Opens the HUD overlay via the daemon if it is not already running (`scythe --show-overlay`). Distinct from `--menu`, which toggles an already-open overlay closed.
   - `ReloadConfig`: Live-reloads configuration changes without restarting the daemon unless video parameters change.
   - `PowerStateChanged(bool)`: Internal notification dispatched by the power poller when AC state transitions.
   - `GetStatus`: Requests the current `DaemonStatus`.
@@ -303,6 +323,23 @@ Implemented in [`src/config.rs`](file:///home/oiupoyt/my%20stuff%20yea/projects/
 1. Systemd user service: `systemctl --user enable/disable scythe-daemon.service`.
 2. Standard XDG autostart desktop entries in `~/.config/autostart/scythe-daemon.desktop` and `scythe-overlay.desktop`.
 
+### Retired Settings (v0.2.18 cleanup):
+These keys were accepted by the settings UI and persisted to disk, but nothing in the capture, encoder, or daemon paths ever read them. They were removed from `ScytheConfig` and the corresponding UI controls were deleted, so the overlay no longer presents options that do nothing:
+
+| Retired key | Why it was removed |
+|---|---|
+| `capture_source` | Capture always selected the focused monitor; window/region modes were never implemented |
+| `replay_storage` | Replay buffer is always RAM-backed; the disk path was never built |
+| `change_resolution`, `resolution_w`, `resolution_h` | Encoder always used native capture dimensions |
+| `container_format` | Muxer always writes MP4 |
+| `show_scroll_lock_led` | No LED driver integration existed |
+| `autostart_on_game` | No game-detection layer existed |
+| `save_folder_by_game`, `name_by_game` | No game detection; filenames are timestamp-based |
+| `language`, `ui_color_theme` | No translation layer or theme engine; `accent_color` drives the real palette |
+| `record_enabled` | Dead field superseded by runtime `is_recording` state |
+
+Unknown keys in an existing `config.json` are ignored by serde, so upgrading does not break saved configurations. `scythe` rewrites the file without these keys on the next save.
+
 ---
 
 ## 12. In-App Auto-Updater
@@ -344,6 +381,8 @@ bash install.sh
 bash tests/e2e_test.sh
 ```
 
+`tests/e2e_test.sh` refuses to unlink a socket owned by a running daemon. Unix sockets cannot be re-linked: removing the path entry of a live daemon leaves the kernel socket bound but unreachable, and the user's session stays broken until it restarts. The script therefore sends `StopDaemon` and waits for the socket to disappear first, aborting if the daemon will not stop.
+
 ### Windows Cross-Compilation (from Linux Host):
 ```bash
 FFMPEG_DIR="$HOME/.local/share/ffmpeg-win64/ffmpeg-n9.0-latest-win64-gpl-shared-9.0" \
@@ -359,9 +398,9 @@ cargo build --release --target x86_64-pc-windows-gnu
 1. **ABSOLUTELY ZERO EMOJIS**: Under no circumstances should emojis be added to code, comments, log outputs, commit messages, or communication.
 2. **File & Symbol Links**: Every file path or code symbol mentioned in communication must be formatted as a clickable markdown link using the `file://` scheme (e.g., [`src/encoder.rs`](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/src/encoder.rs)).
 3. **KAT Square Minimalist**: Strict `border-radius: 0 !important;` on all visual elements.
-4. **Dual-Push Rule**: When pushing commits or tags, always push to both remotes:
+4. **Dual-Push Rule**: When pushing commits or tags, always push to both active remotes (`forgejo` and `spearzificial`):
    ```bash
-   git push origin <branch>
+   git push spearzificial <branch>
    git push forgejo <branch>
    ```
 5. **Memory Safety & Process Isolation**: Avoid blocking the audio or video capture loops. Use unbounded or high-capacity crossbeam channels for frame dispatch.
