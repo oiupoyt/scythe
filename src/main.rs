@@ -444,6 +444,17 @@ fn run_client(args: Vec<String>) -> Result<(), Box<dyn std::error::Error + Send 
             "--pause" => {
                 return handle_toggle_recording();
             }
+            "--show-overlay" | "--open" => {
+                ensure_daemon_running();
+                // Daemon owns overlay lifetime; if it is unreachable, open the HUD directly.
+                if send_command(Command::ShowOverlay).is_err() {
+                    ensure_hotkeys_running();
+                    if !check_and_toggle_overlay() {
+                        scythe::overlay_egui::run_egui_overlay();
+                    }
+                }
+                return Ok(());
+            }
             "--toast" => {
                 let title = args.get(2).map(|s| s.as_str()).unwrap_or("SCYTHE");
                 let subtitle = args.get(3).map(|s| s.as_str()).unwrap_or("");
@@ -540,6 +551,7 @@ fn run_client(args: Vec<String>) -> Result<(), Box<dyn std::error::Error + Send 
                 println!("  scythe-ui --record       Toggle normal recording on/off (with notification)");
                 println!("  scythe-ui --stream       Toggle livestreaming on/off (with notification)");
                 println!("  scythe-ui --cursor       Toggle mouse cursor recording on/off (with notification)");
+                println!("  scythe-ui --show-overlay Open the HUD overlay via the daemon (no toggle)");
                 println!("  scythe-ui --start        Start normal recording");
                 println!("  scythe-ui --stop         Stop normal recording");
                 println!("  scythe-ui --reload       Reload daemon configuration");

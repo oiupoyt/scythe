@@ -10,6 +10,24 @@ echo "[1/6] Building release binaries..."
 cargo build --release --quiet
 
 SOCKET_PATH="${XDG_RUNTIME_DIR:-/tmp}/scythe.sock"
+
+# A live daemon owns this socket. Removing the path entry while it runs leaves the
+# kernel socket bound but unreachable, breaking the user's session until restart.
+# Shut it down gracefully instead, and refuse to run if it will not stop.
+if [ -S "$SOCKET_PATH" ] && target/release/scythe --status >/dev/null 2>&1; then
+    echo "[0/6] Stopping existing scythe daemon..."
+    target/release/scythe --quit >/dev/null 2>&1 || true
+    for _ in $(seq 1 50); do
+        [ -S "$SOCKET_PATH" ] || break
+        sleep 0.1
+    done
+    if target/release/scythe --status >/dev/null 2>&1; then
+        echo "ERROR: A scythe daemon is running and did not stop cleanly."
+        echo "       Refusing to unlink its socket. Stop it first: scythe --quit"
+        exit 1
+    fi
+fi
+
 rm -f "$SOCKET_PATH"
 rm -f record_*.mp4 replay_*.mp4
 

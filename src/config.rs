@@ -10,8 +10,6 @@ fn default_fps() -> u32 { 60 }
 fn default_video_codec() -> String { "h264".to_string() }
 fn default_audio_device() -> String { "default".to_string() }
 fn default_audio_mode() -> String { "system".to_string() }
-fn default_lang() -> String { "en".to_string() }
-fn default_theme() -> String { "dark".to_string() }
 fn default_save_hotkey() -> String { "Ctrl+Shift+R".to_string() }
 fn default_menu_hotkey() -> String { "Alt+Z".to_string() }
 fn default_record_hotkey() -> String { "Ctrl+Shift+F9".to_string() }
@@ -24,14 +22,9 @@ fn default_stream_service() -> String { "twitch".to_string() }
 fn default_stream_url() -> String { "rtmp://live.twitch.tv/app/".to_string() }
 fn default_screenshot_hotkey() -> String { "Ctrl+Shift+S".to_string() }
 fn default_screenshot_format() -> String { "png".to_string() }
-fn default_capture_source() -> String { "focused".to_string() }
 fn default_video_quality_mode() -> String { "cbr".to_string() }
 fn default_color_range() -> String { "limited".to_string() }
 fn default_audio_codec() -> String { "opus".to_string() }
-fn default_replay_storage() -> String { "ram".to_string() }
-fn default_container_format() -> String { "mp4".to_string() }
-fn default_res_w() -> u32 { 1920 }
-fn default_res_h() -> u32 { 1080 }
 fn default_screenshot_quality() -> u32 { 90 }
 fn default_screenshot_preset() -> String { "balanced".to_string() }
 fn default_pause_hotkey() -> String { "Ctrl+Shift+F8".to_string() }
@@ -50,8 +43,6 @@ pub struct ScytheConfig {
     #[serde(default = "default_replay_bitrate")]
     pub replay_bitrate_kbps: u32,
     
-    #[serde(default)]
-    pub record_enabled: bool,
     #[serde(default = "default_record_bitrate")]
     pub record_bitrate_kbps: u32,
     #[serde(default = "default_fps")]
@@ -77,10 +68,6 @@ pub struct ScytheConfig {
     pub autostart_replay: bool,
     #[serde(default)]
     pub autostart_overlay: bool,
-    #[serde(default = "default_lang")]
-    pub language: String,
-    #[serde(default = "default_theme")]
-    pub ui_color_theme: String,
     #[serde(default = "default_save_hotkey")]
     pub save_hotkey: String,
     #[serde(default = "default_menu_hotkey")]
@@ -109,39 +96,19 @@ pub struct ScytheConfig {
     #[serde(default)]
     pub screenshot_cursor: bool,
 
-    #[serde(default = "default_capture_source")]
-    pub capture_source: String,
     #[serde(default = "default_video_quality_mode")]
     pub video_quality_mode: String,
     #[serde(default = "default_color_range")]
     pub color_range: String,
     #[serde(default = "default_audio_codec")]
     pub audio_codec: String,
-    #[serde(default = "default_replay_storage")]
-    pub replay_storage: String,
     #[serde(default)]
     pub record_low_power: bool,
     #[serde(default = "default_true")]
     pub show_replay_notifications: bool,
 
-    #[serde(default = "default_container_format")]
-    pub container_format: String,
-    #[serde(default)]
-    pub change_resolution: bool,
-    #[serde(default = "default_res_w")]
-    pub resolution_w: u32,
-    #[serde(default = "default_res_h")]
-    pub resolution_h: u32,
-    #[serde(default)]
-    pub save_folder_by_game: bool,
-    #[serde(default)]
-    pub name_by_game: bool,
     #[serde(default = "default_true")]
     pub restart_replay_on_save: bool,
-    #[serde(default)]
-    pub show_scroll_lock_led: bool,
-    #[serde(default)]
-    pub autostart_on_game: bool,
     #[serde(default)]
     pub autostart_power_only: bool,
 
@@ -171,7 +138,6 @@ impl Default for ScytheConfig {
             replay_duration_sec: 60,
             replay_bitrate_kbps: 18000,
             
-            record_enabled: false,
             record_bitrate_kbps: 20000,
             fps: 60,
             video_codec: "h264".to_string(),
@@ -185,8 +151,6 @@ impl Default for ScytheConfig {
             autostart: false,
             autostart_replay: false,
             autostart_overlay: false,
-            language: "en".to_string(),
-            ui_color_theme: "dark".to_string(),
             save_hotkey: "Ctrl+Shift+R".to_string(),
             menu_hotkey: "Alt+Z".to_string(),
             record_hotkey: "Ctrl+Shift+F9".to_string(),
@@ -202,23 +166,13 @@ impl Default for ScytheConfig {
             screenshot_format: default_screenshot_format(),
             screenshot_cursor: false,
 
-            capture_source: default_capture_source(),
             video_quality_mode: default_video_quality_mode(),
             color_range: default_color_range(),
             audio_codec: default_audio_codec(),
-            replay_storage: default_replay_storage(),
             record_low_power: false,
             show_replay_notifications: true,
 
-            container_format: default_container_format(),
-            change_resolution: false,
-            resolution_w: default_res_w(),
-            resolution_h: default_res_h(),
-            save_folder_by_game: false,
-            name_by_game: false,
             restart_replay_on_save: true,
-            show_scroll_lock_led: false,
-            autostart_on_game: false,
             autostart_power_only: false,
 
             screenshot_quality: default_screenshot_quality(),
@@ -577,21 +531,11 @@ mod tests {
         assert_eq!(parsed.stream_url, "rtmp://live.twitch.tv/app/");
         assert_eq!(parsed.stream_key, "");
 
-        assert_eq!(parsed.container_format, "mp4");
-        assert!(!parsed.change_resolution);
-        assert_eq!(parsed.resolution_w, 1920);
-        assert_eq!(parsed.resolution_h, 1080);
-        assert!(!parsed.save_folder_by_game);
-        assert!(!parsed.name_by_game);
         assert!(parsed.restart_replay_on_save);
-        assert!(!parsed.show_scroll_lock_led);
-        assert!(!parsed.autostart_on_game);
         assert!(!parsed.autostart_power_only);
-        assert_eq!(parsed.capture_source, "focused");
         assert_eq!(parsed.video_quality_mode, "cbr");
         assert_eq!(parsed.color_range, "limited");
         assert_eq!(parsed.audio_codec, "opus");
-        assert_eq!(parsed.replay_storage, "ram");
         assert!(!parsed.record_low_power);
         assert!(parsed.show_replay_notifications);
         assert_eq!(parsed.screenshot_hotkey, "Ctrl+Shift+S");

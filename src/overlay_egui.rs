@@ -1131,21 +1131,11 @@ pub struct ScytheOverlayApp {
     pub screenshot_dir: String,
     pub screenshot_format: String,
     pub screenshot_cursor: bool,
-    pub capture_source: String,
     pub video_quality_mode: String,
     pub color_range: String,
-    pub replay_storage: String,
     pub record_low_power: bool,
     pub show_replay_notifications: bool,
-    pub container_format: String,
-    pub change_resolution: bool,
-    pub resolution_w: u32,
-    pub resolution_h: u32,
-    pub res_w_str: String,
-    pub res_h_str: String,
     pub restart_replay_on_save: bool,
-    pub show_scroll_lock_led: bool,
-    pub autostart_on_game: bool,
     pub autostart_power_only: bool,
     pub screenshot_quality: u32,
     pub screenshot_preset: String,
@@ -1225,22 +1215,12 @@ impl ScytheOverlayApp {
         let screenshot_dir = config.screenshot_directory.clone();
         let screenshot_format = config.screenshot_format.clone();
         let screenshot_cursor = config.screenshot_cursor;
-        let capture_source = config.capture_source.clone();
         let video_quality_mode = config.video_quality_mode.clone();
         let color_range = config.color_range.clone();
-        let replay_storage = config.replay_storage.clone();
         let record_low_power = config.record_low_power;
         let show_replay_notifications = config.show_replay_notifications;
 
-        let container_format = config.container_format.clone();
-        let change_resolution = config.change_resolution;
-        let resolution_w = config.resolution_w;
-        let resolution_h = config.resolution_h;
-        let res_w_str = resolution_w.to_string();
-        let res_h_str = resolution_h.to_string();
         let restart_replay_on_save = config.restart_replay_on_save;
-        let show_scroll_lock_led = config.show_scroll_lock_led;
-        let autostart_on_game = config.autostart_on_game;
         let autostart_power_only = config.autostart_power_only;
         let screenshot_quality = config.screenshot_quality;
         let screenshot_preset = config.screenshot_preset.clone();
@@ -1307,21 +1287,11 @@ impl ScytheOverlayApp {
             screenshot_dir,
             screenshot_format,
             screenshot_cursor,
-            capture_source,
             video_quality_mode,
             color_range,
-            replay_storage,
             record_low_power,
             show_replay_notifications,
-            container_format,
-            change_resolution,
-            resolution_w,
-            resolution_h,
-            res_w_str,
-            res_h_str,
             restart_replay_on_save,
-            show_scroll_lock_led,
-            autostart_on_game,
             autostart_power_only,
             screenshot_quality,
             screenshot_preset,
@@ -1362,19 +1332,11 @@ impl ScytheOverlayApp {
         self.config.screenshot_directory = self.screenshot_dir.clone();
         self.config.screenshot_format = self.screenshot_format.clone();
         self.config.screenshot_cursor = self.screenshot_cursor;
-        self.config.capture_source = self.capture_source.clone();
         self.config.video_quality_mode = self.video_quality_mode.clone();
         self.config.color_range = self.color_range.clone();
-        self.config.replay_storage = self.replay_storage.clone();
         self.config.record_low_power = self.record_low_power;
         self.config.show_replay_notifications = self.show_replay_notifications;
-        self.config.container_format = "mp4".to_string();
-        self.config.change_resolution = self.change_resolution;
-        self.config.resolution_w = self.resolution_w;
-        self.config.resolution_h = self.resolution_h;
         self.config.restart_replay_on_save = self.restart_replay_on_save;
-        self.config.show_scroll_lock_led = self.show_scroll_lock_led;
-        self.config.autostart_on_game = self.autostart_on_game;
         self.config.autostart_power_only = self.autostart_power_only;
         self.config.screenshot_quality = self.screenshot_quality;
         self.config.screenshot_preset = self.screenshot_preset.clone();
@@ -1405,21 +1367,11 @@ impl ScytheOverlayApp {
         self.screenshot_dir = def.screenshot_directory;
         self.screenshot_format = def.screenshot_format;
         self.screenshot_cursor = def.screenshot_cursor;
-        self.capture_source = def.capture_source;
         self.video_quality_mode = def.video_quality_mode;
         self.color_range = def.color_range;
-        self.replay_storage = def.replay_storage;
         self.record_low_power = def.record_low_power;
         self.show_replay_notifications = def.show_replay_notifications;
-        self.container_format = "mp4".to_string();
-        self.change_resolution = def.change_resolution;
-        self.resolution_w = def.resolution_w;
-        self.resolution_h = def.resolution_h;
-        self.res_w_str = def.resolution_w.to_string();
-        self.res_h_str = def.resolution_h.to_string();
         self.restart_replay_on_save = def.restart_replay_on_save;
-        self.show_scroll_lock_led = def.show_scroll_lock_led;
-        self.autostart_on_game = def.autostart_on_game;
         self.autostart_power_only = def.autostart_power_only;
         self.screenshot_quality = def.screenshot_quality;
         self.screenshot_preset = def.screenshot_preset;
@@ -2467,18 +2419,6 @@ impl ScytheOverlayApp {
         ui.add_space(10.0);
 
         render_section_card(ui, "General", accent, |ui| {
-            ui.label(egui::RichText::new("Where should temporary replay data be stored?").size(11.5).color(Color32::from_rgb(180, 185, 190)));
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                if squared_button(ui, "RAM", self.replay_storage == "ram", accent) {
-                    self.replay_storage = "ram".to_string();
-                }
-                if squared_button(ui, "Disk (Not recommended on SSDs)", self.replay_storage == "disk", accent) {
-                    self.replay_storage = "disk".to_string();
-                }
-            });
-
-            ui.add_space(8.0);
             ui.horizontal(|ui| {
                 let mut rrs = self.restart_replay_on_save;
                 if toggle_switch(ui, &mut rrs, accent).changed() {
@@ -2552,14 +2492,6 @@ impl ScytheOverlayApp {
                 }
                 ui.label(egui::RichText::new("Show replay notifications").size(11.5).color(Color32::WHITE));
             });
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                let mut led_on = self.show_scroll_lock_led;
-                if toggle_switch(ui, &mut led_on, accent).changed() {
-                    self.show_scroll_lock_led = led_on;
-                }
-                ui.label(egui::RichText::new("Show replay status with scroll lock LED").size(11.5).color(Color32::WHITE));
-            });
         });
 
         ui.add_space(10.0);
@@ -2596,52 +2528,6 @@ impl ScytheOverlayApp {
     }
 
     fn render_tab_record(&mut self, ui: &mut egui::Ui, accent: Color32) {
-        render_section_card(ui, "Capture", accent, |ui| {
-            ui.label(egui::RichText::new("Capture source:").size(11.5).color(Color32::from_rgb(180, 185, 190)));
-            ui.add_space(3.0);
-            ui.horizontal(|ui| {
-                if squared_button(ui, "Focused monitor", self.capture_source == "focused", accent) {
-                    self.capture_source = "focused".to_string();
-                }
-                if squared_button(ui, "Monitor eDP-1 (1920x1080)", self.capture_source == "monitor", accent) {
-                    self.capture_source = "monitor".to_string();
-                }
-                if squared_button(ui, "Window", self.capture_source == "window", accent) {
-                    self.capture_source = "window".to_string();
-                }
-                if squared_button(ui, "Region", self.capture_source == "region", accent) {
-                    self.capture_source = "region".to_string();
-                }
-            });
-
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                let mut chg_res = self.change_resolution;
-                if toggle_switch(ui, &mut chg_res, accent).changed() {
-                    self.change_resolution = chg_res;
-                }
-                ui.label(egui::RichText::new("Change video resolution").size(11.5).color(Color32::WHITE));
-            });
-
-            if self.change_resolution {
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Resolution:").size(11.5).color(Color32::from_rgb(180, 185, 190)));
-                    let mut w = self.resolution_w;
-                    if numeric_input_box(ui, &mut self.res_w_str, &mut w, 640, 7680, 160, "W", accent) {
-                        self.resolution_w = w;
-                    }
-                    ui.label(egui::RichText::new("x").size(11.5).color(Color32::WHITE));
-                    let mut h = self.resolution_h;
-                    if numeric_input_box(ui, &mut self.res_h_str, &mut h, 480, 4320, 90, "H", accent) {
-                        self.resolution_h = h;
-                    }
-                });
-            }
-        });
-
-        ui.add_space(10.0);
-
         self.render_audio_controls(ui, accent);
 
         ui.add_space(10.0);
@@ -2840,16 +2726,6 @@ impl ScytheOverlayApp {
                 ui.label(egui::RichText::new("Capture mouse cursor in screenshot").size(11.5).color(Color32::WHITE));
             });
 
-            ui.add_space(8.0);
-            ui.label(egui::RichText::new("Capture source:").size(11.5).color(Color32::from_rgb(180, 185, 190)));
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                for (src_id, label) in [("focused", "Focused monitor"), ("full", "Full desktop")] {
-                    if squared_button(ui, label, self.capture_source == src_id, accent) {
-                        self.capture_source = src_id.to_string();
-                    }
-                }
-            });
 
             ui.add_space(8.0);
             ui.horizontal(|ui| {
@@ -4458,13 +4334,7 @@ mod tests {
     #[test]
     fn test_overlay_app_options_synchronization() {
         let mut app = ScytheOverlayApp::new();
-        app.container_format = "mp4".to_string();
-        app.change_resolution = true;
-        app.resolution_w = 2560;
-        app.resolution_h = 1440;
         app.restart_replay_on_save = false;
-        app.show_scroll_lock_led = true;
-        app.capture_source = "window".to_string();
         app.video_quality_mode = "vbr".to_string();
         app.color_range = "full".to_string();
         app.config.audio_codec = "opus".to_string();
@@ -4474,13 +4344,7 @@ mod tests {
 
         app.save_and_apply_settings();
 
-        assert_eq!(app.config.container_format, "mp4");
-        assert!(app.config.change_resolution);
-        assert_eq!(app.config.resolution_w, 2560);
-        assert_eq!(app.config.resolution_h, 1440);
         assert!(!app.config.restart_replay_on_save);
-        assert!(app.config.show_scroll_lock_led);
-        assert_eq!(app.config.capture_source, "window");
         assert_eq!(app.config.video_quality_mode, "vbr");
         assert_eq!(app.config.color_range, "full");
         assert_eq!(app.config.audio_codec, "opus");
@@ -4489,11 +4353,7 @@ mod tests {
         assert_eq!(app.config.screenshot_resolution, "1080p");
 
         app.reset_settings_to_defaults();
-        assert_eq!(app.container_format, "mp4");
-        assert!(!app.change_resolution);
         assert!(app.restart_replay_on_save);
-        assert!(!app.show_scroll_lock_led);
-        assert_eq!(app.capture_source, "focused");
         assert_eq!(app.video_quality_mode, "cbr");
         assert_eq!(app.color_range, "limited");
         assert_eq!(app.config.audio_codec, "opus");

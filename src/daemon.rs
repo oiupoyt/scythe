@@ -13,6 +13,67 @@ use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
+/// Returns true when the overlay process recorded in the pid file is still alive.
+fn overlay_alive() -> bool {
+    let pid_path = crate::ipc::get_overlay_pid_path();
+    let Ok(content) = std::fs::read_to_string(&pid_path) else {
+        return false;
+    };
+    let Ok(pid) = content.trim().parse::<i32>() else {
+        return false;
+    };
+    if pid <= 0 {
+        return false;
+    }
+
+    #[cfg(unix)]
+    {
+        unsafe { libc::kill(pid, 0) == 0 }
+    }
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
+        use windows::Win32::System::Threading::{
+            GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+        unsafe {
+            let Ok(handle) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid as u32) else {
+                return false;
+            };
+            let mut code = 0u32;
+            let alive = GetExitCodeProcess(handle, &mut code).is_ok() && code == STILL_ACTIVE.0 as u32;
+            let _ = CloseHandle(handle);
+            alive
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        false
+    }
+}
+
+/// Opens the HUD overlay without toggling an already-visible one closed.
+fn spawn_overlay_once() {
+    if overlay_alive() {
+        return;
+    }
+    let exe = std::env::current_exe()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "scythe".to_string());
+
+    let mut cmd = std::process::Command::new(exe);
+    cmd.arg("--menu")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    let _ = cmd.spawn();
+}
+
 fn mask_stream_url(url: &str) -> String {
     if let Some((base, key)) = url.rsplit_once('/')
         && key.len() > 4 {
@@ -277,6 +338,10 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
                                             let _ = cfg.save();
                                             println!("Audio mode cycled to: {}", cfg.audio_mode);
                                             let _ = cmd_tx_ipc.try_send(Command::ReloadConfig);
+                                        },
+                                        Command::ShowOverlay => {
+                                            println!("ShowOverlay requested: opening HUD overlay.");
+                                            std::thread::spawn(spawn_overlay_once);
                                         },
                                         Command::StopDaemon => {
                                             println!("StopDaemon requested: Finalizing active recordings...");
