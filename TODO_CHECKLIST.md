@@ -293,7 +293,30 @@ This checklist tracks known bugs, UI refinements, optimizations, and technical d
 
 ---
 
-## 5. Verification Commands
+## 4d. Build & CI
+
+- [x] **No CI Ran on Routine Commits**:
+  - **Issue**: GitHub Actions only triggered on `v*` tag pushes. Nothing compiled the project between releases, so breakage accumulated unnoticed and every release was the first real build in weeks.
+  - **Resolution**: Added [`ci.yml`](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/.github/workflows/ci.yml), which runs on every push to `main`, on pull requests, and manually. The Linux job type-checks, tests, lints with `-D warnings`, builds the release binary, runs `scythe --help` to prove the binary starts, and uploads it as an artifact. The Windows job builds through MSYS2 MINGW64 and uploads `scythe.exe`. Both binaries are downloadable from the run.
+
+- [x] **The Windows Target Did Not Compile**:
+  - **Issue**: [`src/config.rs`](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/src/config.rs) reads AC line status through `GetSystemPowerStatus`, but the `windows` crate feature list in [`Cargo.toml`](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/Cargo.toml) never enabled `Win32_System_Power`. `cargo build --target x86_64-pc-windows-gnu` failed with `E0432: unresolved import windows::Win32::System::Power`. The build had been broken since the power-monitoring feature landed, and only tag pushes could have revealed it.
+  - **Resolution**: Added the `Win32_System_Power` feature. The Windows job now builds green on every push.
+
+- [x] **Unknown CLI Arguments Became a Background Hotkey Daemon**:
+  - **Issue**: The dispatch match in [`src/main.rs`](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/src/main.rs) ended in `_ => {}`, so an unrecognised flag fell through into the global hotkey loop. `scythe --version` registered the Hyprland binds and then blocked forever instead of reporting the bad flag.
+  - **Resolution**: The catch-all arm now prints the offending argument with a pointer to `--help` and exits with status 2.
+
+- [x] **The Audio Test Needed Hardware CI Could Not Provide**:
+  - **Issue**: `test_audio_probe` asserts that a system audio device opens and emits samples. A headless runner has no audio server, so the unit suite could never pass in CI.
+  - **Resolution**: The test is opt-in through `SCYTHE_HW_TESTS=1` and still runs on a real desktop session. The remaining 27 tests run everywhere.
+
+- [x] **Windows Autostart Does Nothing**:
+  - **Issue**: `apply_autostart_system` has only a Linux body (systemd user unit plus XDG autostart entries). On Windows the call is a no-op, and the NSIS installer writes no registry `Run` key either, so the autostart switch in the overlay has no effect there.
+  - **Resolution**: Parameters marked intentionally unused off Linux so the Windows build is warning-free, and the gap is recorded in [`PROJECT_GUIDE.md`](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/PROJECT_GUIDE.md). Implementing the registry entry is still open.
+
+---
+
 
 Run these commands before any commit or release to verify project health:
 
@@ -312,6 +335,11 @@ cargo build --release
 
 # Run the automated end-to-end pipeline test (mock capture, ffprobe validation)
 bash tests/e2e_test.sh
+
+# Hardware-dependent tests (needs a live audio server)
+SCYTHE_HW_TESTS=1 cargo test
 ```
+
+GitHub Actions runs the same checks on every push to `main`, for both the Linux and the Windows target. See [`ci.yml`](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/.github/workflows/ci.yml).
 
 Formatting is currently advisory: `cargo fmt --check` still reports drift across the tree. Run `cargo fmt` as an isolated commit before turning it into a release gate.
