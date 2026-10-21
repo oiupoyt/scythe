@@ -371,7 +371,7 @@ Implemented in [`src/updater.rs`](file:///home/oiupoyt/my%20stuff%20yea/projects
 # Type check all targets
 cargo check --all-targets
 
-# Run the complete unit test suite (27 tests)
+# Run the complete unit test suite (32 tests)
 cargo test
 
 # Strict clippy lint verification
@@ -409,6 +409,22 @@ cargo build --release --target x86_64-pc-windows-gnu
 |---|---|---|
 | [`ci.yml`](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/.github/workflows/ci.yml) | push to `main`, pull request, manual | Compiles and tests both targets on every push. Linux job: `cargo check --all-targets`, `cargo test`, `cargo clippy -D warnings`, `cargo build --release`, then runs `scythe --help` to prove the binary starts. Windows job: MSYS2 MINGW64 `cargo build --release`. Both binaries upload as artifacts. |
 | [`release.yml`](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/.github/workflows/release.yml) | push of a `v*` tag | Packages `.tar.gz`, `.deb`, `.rpm`, `.AppImage` and the NSIS Windows installer, then publishes a GitHub Release. |
+
+### Cutting a Release:
+
+1. Bump the version in `Cargo.toml`, `Cargo.lock`, `packaging/rpm/scythe.spec`, `packaging/aur/PKGBUILD` and the version line of this guide. `Cargo.lock` matters on its own: CI builds with `--locked`, which fails outright when the manifest and the lock file disagree on the version.
+2. Commit and push `main` to all three remotes.
+3. Tag and push: `git tag -a v<version> -F -` with the release notes, then push the tag to `origin`, `spearzificial` and `forgejo`.
+4. The tag push runs `release.yml`, which publishes the GitHub Release.
+
+The version has to be new. `v0.2.18` was already published to Forgejo on 2026-10-11, so the changes made since then went out as `v0.2.19` onward rather than as a retag.
+
+Packaging details worth knowing:
+
+- The Debian dependencies are taken from the dynamic section of the binary the workflow built, not from a hand maintained list.
+- The RPM is built with `rpmbuild` from a generated spec for the same reason. `alien` was used before and silently dropped `libva2`.
+- The AppImage bundles the shared library closure that `ldd` resolves and sets `RPATH=$ORIGIN/../lib` on the binary. The C runtime is left on the host.
+- The Windows bundle copies the FFmpeg DLLs next to the executable, so the portable build is self-contained.
 
 The CI workflow is the only thing that compiles the Windows target on a routine basis, and it exists because the Windows build had already rotted: `src/config.rs` calls `GetSystemPowerStatus` but the `windows` crate feature list never enabled `Win32_System_Power`, so `cargo build --target x86_64-pc-windows-gnu` failed with `E0432`. Tag pushes were the only previous trigger, so nothing caught it before a release was attempted.
 

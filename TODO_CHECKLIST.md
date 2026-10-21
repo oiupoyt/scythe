@@ -309,14 +309,40 @@ This checklist tracks known bugs, UI refinements, optimizations, and technical d
 
 - [x] **The Audio Test Needed Hardware CI Could Not Provide**:
   - **Issue**: `test_audio_probe` asserts that a system audio device opens and emits samples. A headless runner has no audio server, so the unit suite could never pass in CI.
-  - **Resolution**: The test is opt-in through `SCYTHE_HW_TESTS=1` and still runs on a real desktop session. The remaining 27 tests run everywhere.
+  - **Resolution**: The test is opt-in through `SCYTHE_HW_TESTS=1` and still runs on a real desktop session. The remaining 32 tests run everywhere.
 
 - [x] **Windows Autostart Does Nothing**:
   - **Issue**: `apply_autostart_system` has only a Linux body (systemd user unit plus XDG autostart entries). On Windows the call is a no-op, and the NSIS installer writes no registry `Run` key either, so the autostart switch in the overlay has no effect there.
   - **Resolution**: Parameters marked intentionally unused off Linux so the Windows build is warning-free, and the gap is recorded in [`PROJECT_GUIDE.md`](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/PROJECT_GUIDE.md). Implementing the registry entry is still open.
 
+
 ---
 
+## 4e. Release v0.2.21
+
+- [x] **The Debian Package Could Not Run On A Clean Machine**:
+  - **Issue**: The control file required `libgtk-3-0` and `libgtk-layer-shell0`, which belonged to the retired GTK backend, and did not mention FFmpeg at all. The binary links `libavcodec`, `libavformat`, `libavutil`, `libswresample` and `libswscale` directly, so a machine without them could install the package and then fail to start the program.
+  - **Resolution**: The dependency list is now taken from the dynamic section of the binary the workflow actually built, verified against the released package.
+
+- [x] **The AppImage Carried No Libraries**:
+  - **Issue**: The image held the binary and the desktop file and nothing else. It only ran on a host that happened to carry the exact FFmpeg build the binary was linked against, which is the opposite of what an AppImage is for. The published v0.2.19 AppImage was 6.9 MB.
+  - **Resolution**: The packaging step bundles the shared library closure that `ldd` resolves, sets an RPATH of `$ORIGIN/../lib` on the binary and prepends the bundled directory to `LD_LIBRARY_PATH` in `AppRun`. The C runtime stays on the host, because bundling a different glibc than the rest of the system expects breaks the image in ways that are hard to trace. The step fails if fewer than eight libraries were collected or if the image was not produced. The published v0.2.21 AppImage is 69 MB with 133 libraries.
+
+- [x] **The RPM Was Missing Its libva Requirement**:
+  - **Issue**: `alien` silently dropped `libva2` while converting the Debian package, because it has no Debian to RPM name rule for it. libva is opened at runtime by the FFmpeg VAAPI device, so an RPM install would leave hardware encoding unavailable until the user noticed and installed libva by hand.
+  - **Resolution**: The RPM is built with `rpmbuild` from a generated spec, and the requirements are derived from the dynamic section of the built binary, so the package always describes its own linkage. libva is added explicitly and the build fails if it is missing from the finished package.
+
+- [x] **The Updater Only Looked At One Host**:
+  - **Issue**: `check_for_updates` returned on the first host that answered, and Forgejo was listed first. The updater was pinned to the Forgejo feed and never reached GitHub, so a release published only on GitHub was invisible. A user on v0.2.17 was told v0.2.18 was the newest release and was never offered anything after it.
+  - **Resolution**: Both hosts are queried and the highest version wins. On equal versions the release carrying more assets wins, so a mirror that is missing an installer does not hide it. The selection is a function of its own with five tests.
+
+- [ ] **The Forgejo Server Is Out Of Disk**:
+  - **Issue**: The self-hosted Forgejo instance reports `disk quota exceeded` when writing an attachment or unpacking a push. The v0.2.21 release on Forgejo therefore carries 4 of its 7 assets, and the last commits are not on that remote yet. The three missing assets are around 70 MB each, and the free space on the server sits below that.
+  - **Status**: GitHub carries the complete release and the updater prefers the source with more assets, so users are unaffected. The Forgejo server needs its attachment quota raised or its disk freed before the remaining assets and the last commits can be pushed.
+
+---
+
+## 5. Verification Commands
 
 Run these commands before any commit or release to verify project health:
 
@@ -324,7 +350,7 @@ Run these commands before any commit or release to verify project health:
 # Type check all platform targets
 cargo check --all-targets
 
-# Run the complete unit test suite (27 tests)
+# Run the complete unit test suite (32 tests)
 cargo test
 
 # Strict zero-warning clippy verification
