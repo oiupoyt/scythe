@@ -6,7 +6,7 @@ pkgdesc="High-performance GPU hardware screen recorder and instant replay overla
 arch=('x86_64')
 url="https://github.com/oiupoyt/scythe"
 license=('MIT' 'Apache-2.0')
-depends=('ffmpeg' 'pipewire' 'gtk3' 'gtk-layer-shell' 'libpulse' 'libva' 'libxcb')
+depends=('ffmpeg' 'pipewire' 'alsa-lib' 'libpulse' 'libva' 'libxcb')
 makedepends=('cargo' 'git' 'pkgconf' 'clang')
 provides=('scythe' 'vrec' 'vrec-git')
 conflicts=('scythe' 'vrec')
@@ -15,7 +15,7 @@ sha256sums=('SKIP')
 
 pkgver() {
     cd "$srcdir/scythe"
-    git describe --long --tags 2>/dev/null | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g' || echo "0.1.0"
+    git describe --long --tags 2>/dev/null | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g' || echo "0.2.18"
 }
 
 build() {
@@ -25,11 +25,11 @@ build() {
 
 package() {
     cd "$srcdir/scythe"
-    install -Dm755 target/release/scythe-daemon "$pkgdir/usr/bin/scythe-daemon"
-    install -Dm755 target/release/scythe-ui "$pkgdir/usr/bin/scythe-ui"
     install -Dm755 target/release/scythe "$pkgdir/usr/bin/scythe"
-    ln -sf "/usr/bin/scythe-daemon" "$pkgdir/usr/bin/vrec-daemon"
-    ln -sf "/usr/bin/scythe-ui" "$pkgdir/usr/bin/vrec-ui"
+    ln -sf "/usr/bin/scythe" "$pkgdir/usr/bin/scythe-daemon"
+    ln -sf "/usr/bin/scythe" "$pkgdir/usr/bin/scythe-ui"
+    ln -sf "/usr/bin/scythe" "$pkgdir/usr/bin/vrec-daemon"
+    ln -sf "/usr/bin/scythe" "$pkgdir/usr/bin/vrec-ui"
     ln -sf "/usr/bin/scythe" "$pkgdir/usr/bin/vrec"
     install -Dm644 packaging/scythe.desktop "$pkgdir/usr/share/applications/scythe.desktop"
     ln -sf "/usr/share/applications/scythe.desktop" "$pkgdir/usr/share/applications/vrec.desktop"

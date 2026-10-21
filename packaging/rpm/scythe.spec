@@ -1,5 +1,5 @@
 Name:           scythe
-Version:        0.1.0
+Version:        0.2.18
 Release:        1%{?dist}
 Summary:        High-performance GPU hardware screen recorder and instant replay overlay
 
@@ -11,15 +11,17 @@ BuildRequires:  cargo
 BuildRequires:  rust
 BuildRequires:  ffmpeg-devel
 BuildRequires:  pipewire-devel
-BuildRequires:  gtk3-devel
-BuildRequires:  gtk-layer-shell-devel
+BuildRequires:  libva-devel
+BuildRequires:  alsa-lib-devel
 BuildRequires:  libxcb-devel
 BuildRequires:  clang-devel
+BuildRequires:  pkgconf-pkg-config
 
 Requires:       ffmpeg-free
 Requires:       pipewire
-Requires:       gtk3
-Requires:       gtk-layer-shell
+Requires:       libva
+Requires:       alsa-lib
+Requires:       libxcb
 
 %description
 High-performance GPU hardware screen recorder and instant replay overlay for Wayland and X11.
@@ -52,5 +54,11 @@ ln -sf %{_datadir}/applications/scythe.desktop %{buildroot}%{_datadir}/applicati
 %{_datadir}/applications/vrec.desktop
 
 %changelog
+* Tue Oct 21 2026 oiupoyt - 0.2.18-1
+- Unified multicall binary: install scythe with the scythe-daemon, scythe-ui
+  and vrec-* compatibility symlinks
+- Dropped the GTK 3 and GTK layer shell requirements, the GTK backend was
+  retired
+- Version tracked against Cargo.toml
 * Wed Sep 02 2026 oiupoyt - 0.1.0-1
 - Initial release of scythe

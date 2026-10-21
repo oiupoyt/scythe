@@ -62,7 +62,7 @@ jobs:
           Architecture: amd64
           Maintainer: oiupoyt
           Description: High-performance GPU hardware screen recorder and instant replay overlay
-          Depends: libgtk-3-0, libgtk-layer-shell0, libpipewire-0.3-0, libva2, libasound2
+          Depends: libavcodec60, libavformat60, libavutil58, libswresample4, libswscale7, libpipewire-0.3-0, libxcb1, libasound2, libva2
           EOF
           cp target/release/scythe "deb/scythe_${VERSION}/usr/bin/scythe"
           ln -sf scythe "deb/scythe_${VERSION}/usr/bin/scythe-daemon"
@@ -127,7 +127,6 @@ jobs:
           install: >-
             mingw-w64-x86_64-toolchain
             mingw-w64-x86_64-rust
-            mingw-w64-x86_64-gtk3
             mingw-w64-x86_64-ffmpeg
             mingw-w64-x86_64-pkg-config
             mingw-w64-x86_64-clang
