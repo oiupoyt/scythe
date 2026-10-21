@@ -61,6 +61,12 @@ pub fn check_for_updates() -> Option<ReleaseInfo> {
         format!("https://api.github.com/repos/{}/releases/latest", REPO_OWNER_NAME),
     ];
 
+    // Every source is queried and the highest version wins. Returning on the
+    // first answer would pin the updater to whichever host happens to be
+    // listed first, so a release published on the other one would never be
+    // seen.
+    let mut best: Option<ReleaseInfo> = None;
+
     for url in urls {
         let mut cmd = std::process::Command::new("curl");
         cmd.args([
@@ -81,7 +87,7 @@ pub fn check_for_updates() -> Option<ReleaseInfo> {
                 let clean_ver = release.tag_name.trim().trim_start_matches('v').to_string();
                 let has_update = is_newer(&clean_ver, CURRENT_VERSION);
 
-                return Some(ReleaseInfo {
+                let info = ReleaseInfo {
                     tag_name: release.tag_name,
                     version: clean_ver,
                     name: release.name.unwrap_or_else(|| format!("v{}", CURRENT_VERSION)),
@@ -89,10 +95,15 @@ pub fn check_for_updates() -> Option<ReleaseInfo> {
                     release_notes: release.body.unwrap_or_default(),
                     has_update,
                     assets: release.assets,
+                };
+
+                best = Some(match best {
+                    Some(current) if !is_newer(&info.version, &current.version) => current,
+                    _ => info,
                 });
         }
     }
-    None
+    best
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
