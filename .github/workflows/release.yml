@@ -25,7 +25,7 @@ jobs:
             libavcodec-dev libavformat-dev libavutil-dev libswresample-dev libswscale-dev \
             libavfilter-dev libavdevice-dev \
             libpipewire-0.3-dev libgtk-3-dev libgtk-layer-shell-dev libxcb1-dev libasound2-dev \
-            rpm alien wget patchelf
+            rpm wget patchelf
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -75,16 +75,93 @@ jobs:
 
       - name: Build RPM Package (.rpm)
         run: |
-          DEB_FILE=$(ls dist/*.deb | head -n 1)
-          alien --to-rpm --scripts "$DEB_FILE"
-          mv *.rpm dist/
-          # alien resolves the Debian package names to sonames, but it drops
-          # libva2 because there is no matching Debian to RPM name rule.
-          # libva is loaded at runtime by the FFmpeg VAAPI device, so the
-          # requirement has to be added back explicitly.
-          rpm --addrequires "libva.so.2()(64bit)" dist/*.rpm
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "main" ]; then
+            VERSION=$(grep '^version' Cargo.toml | head -n1 | cut -d '"' -f2)
+          fi
+          echo "Packaging RPM version: ${VERSION}"
+
+          # The requirements are derived from the binary that was actually
+          # built, so the package always describes its own linkage. Building
+          # through alien instead dropped libva2, because it has no Debian to
+          # RPM name rule for it, which would have left hardware encoding
+          # unavailable on an RPM install.
+          REQUIRES=""
+          for soname in $(objdump -p target/release/scythe | awk '/NEEDED/ {print $2}' | sort -u); do
+            case "$soname" in
+              libc.so.6|libm.so.6|libgcc_s.so.1|ld-linux*.so.2) continue ;;
+            esac
+            REQUIRES="${REQUIRES}Requires:       ${soname}()(64bit)\n"
+          done
+          # libva is opened at runtime by the FFmpeg VAAPI device, so it is
+          # not a link time dependency but is still needed for hardware
+          # encoding to work.
+          REQUIRES="${REQUIRES}Requires:       libva.so.2()(64bit)\n"
+
+          mkdir -p rpmbuild
+          cat > rpmbuild/scythe.spec << 'SPEC'
+          Name:           scythe
+          Version:        RPM_VERSION
+          Release:        1%{?dist}
+          Summary:        High-performance GPU hardware screen recorder and instant replay overlay
+          License:        MIT
+          URL:            https://github.com/oiupoyt/scythe
+          BuildArch:      x86_64
+          Provides:       vrec
+          RPM_REQUIRES
+
+          %description
+          High-performance GPU hardware screen recorder and instant replay overlay for Wayland and X11.
+
+          %prep
+
+          %build
+
+          %install
+          rm -rf %{buildroot}
+          mkdir -p %{buildroot}%{_bindir} %{buildroot}%{_datadir}/applications
+          install -m 0755 %{_binary_path} %{buildroot}%{_bindir}/scythe
+          ln -sf %{_bindir}/scythe %{buildroot}%{_bindir}/scythe-daemon
+          ln -sf %{_bindir}/scythe %{buildroot}%{_bindir}/scythe-ui
+          ln -sf %{_bindir}/scythe %{buildroot}%{_bindir}/vrec-daemon
+          ln -sf %{_bindir}/scythe %{buildroot}%{_bindir}/vrec-ui
+          ln -sf %{_bindir}/scythe %{buildroot}%{_bindir}/vrec
+          install -m 0644 %{_desktop_path} %{buildroot}%{_datadir}/applications/scythe.desktop
+          ln -sf %{_datadir}/applications/scythe.desktop %{buildroot}%{_datadir}/applications/vrec.desktop
+
+          %files
+          %{_bindir}/scythe
+          %{_bindir}/scythe-daemon
+          %{_bindir}/scythe-ui
+          %{_bindir}/vrec-daemon
+          %{_bindir}/vrec-ui
+          %{_bindir}/vrec
+          %{_datadir}/applications/scythe.desktop
+          %{_datadir}/applications/vrec.desktop
+
+          %changelog
+          * Tue Oct 21 2026 oiupoyt - RPM_VERSION-1
+          - Unified multicall binary with the compatibility symlinks
+          - Dropped the retired GTK 3 requirements
+          - Runtime dependencies taken from the built binary
+          SPEC
+
+          sed -i "s|RPM_VERSION|${VERSION}|g" rpmbuild/scythe.spec
+          # The literal \n sequences are expanded by sed itself. Passing real
+          # newlines instead would split the s command across lines and sed
+          # would reject it as unterminated.
+          sed -i "s|RPM_REQUIRES|${REQUIRES}|" rpmbuild/scythe.spec
+
+          rpmbuild --define "_topdir ${PWD}/rpmbuild" \
+                   --define "_binary_path ${PWD}/target/release/scythe" \
+                   --define "_desktop_path ${PWD}/packaging/scythe.desktop" \
+                   -bb rpmbuild/scythe.spec
+          mv rpmbuild/RPMS/x86_64/*.rpm dist/
+
           rpm -qp --requires dist/*.rpm | grep -q "libva.so.2" \
             || { echo "::error::libva requirement missing from the RPM"; exit 1; }
+          rpm -qp --requires dist/*.rpm | grep -q "libavcodec" \
+            || { echo "::error::FFmpeg requirement missing from the RPM"; exit 1; }
 
       - name: Package Standalone AppImage
         run: |
@@ -112,9 +189,15 @@ jobs:
             esac
             cp -L "$lib" "AppDir/usr/lib/$base"
           done
-          lib_count=$(ls -1 AppDir/usr/lib | wc -l)
-          echo "bundled libraries: ${lib_count}"
-          ls -1 AppDir/usr/lib
+          # libva is opened at runtime by the FFmpeg VAAPI device, so it is
+          # not part of the link time closure and ldd never reports it.
+          va_path=$(ldconfig -p | awk '$1=="libva.so.2" {print $NF; exit}')
+          if [ -n "$va_path" ]; then
+            cp -L "$va_path" AppDir/usr/lib/libva.so.2
+          else
+            echo "::error::libva.so.2 not found, hardware encoding would not work in the image"
+            exit 1
+          fi
 
           # Prefer the bundled copies over anything the host provides.
           patchelf --set-rpath '$ORIGIN/../lib' AppDir/usr/bin/scythe
@@ -139,7 +222,7 @@ jobs:
           # The image is only useful if the libraries actually made it in.
           lib_count=$(ls -1 AppDir/usr/lib | wc -l)
           echo "bundled libraries: ${lib_count}"
-          if [ "${lib_count}" -lt 5 ]; then
+          if [ "${lib_count}" -lt 8 ]; then
             echo "::error::AppImage bundled only ${lib_count} libraries, expected the FFmpeg closure"
             exit 1
           fi
