@@ -1,5 +1,5 @@
 Name:           scythe
-Version:        0.2.18
+Version:        0.2.19
 Release:        1%{?dist}
 Summary:        High-performance GPU hardware screen recorder and instant replay overlay
 
@@ -54,11 +54,12 @@ ln -sf %{_datadir}/applications/scythe.desktop %{buildroot}%{_datadir}/applicati
 %{_datadir}/applications/vrec.desktop
 
 %changelog
-* Tue Oct 21 2026 oiupoyt - 0.2.18-1
+* Tue Oct 21 2026 oiupoyt - 0.2.19-1
 - Unified multicall binary: install scythe with the scythe-daemon, scythe-ui
   and vrec-* compatibility symlinks
 - Dropped the GTK 3 and GTK layer shell requirements, the GTK backend was
   retired
+- Corrected the runtime dependency list against the actual build output
 - Version tracked against Cargo.toml
 * Wed Sep 02 2026 oiupoyt - 0.1.0-1
 - Initial release of scythe
