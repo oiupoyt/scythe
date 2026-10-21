@@ -14,18 +14,22 @@ This document is the definitive technical reference for developers and AI agents
 | Remote | URL | Role | Status |
 |---|---|---|---|
 | `forgejo` | `https://git.oiupoyt.space/oiupoyt/scythe.git` | Self-hosted primary; source of truth, release assets | Active |
-| `origin` | `https://spearzificial@github.com/spearzificial/scythe.git` | **GitHub development mirror** (currently maintained account) | Active |
-| `gitlab` | `https://gitlab.com/oiupoyt.cat/scythe.git` | Optional mirror | Optional |
+| `origin` | `https://oiupoyt@github.com/oiupoyt/scythe.git` | **GitHub primary** (the `oiupoyt` account) | Active |
+| `spearzificial` | `https://spearzificial@github.com/spearzificial/scythe.git` | GitHub mirror under the `spearzificial` account | Active |
+| `gitlab` | `https://gitlab.com/oiupoyt.cat/scythe.git` | Optional mirror | Optional / stale |
 
-**GitHub account policy:** GitHub pushes go to the `spearzificial` account, and `origin` points at that account's repository. The `oiupoyt` GitHub OAuth token is expired, so the old `oiupoyt` repository is not a push target. Always name the account in the remote URL (`https://spearzificial@github.com/...`) so Git selects the correct stored credential when multiple GitHub accounts exist in the credential store.
+**GitHub account policy:** two GitHub accounts are authenticated in the credential store, `oiupoyt` and `spearzificial`, and both have a repository for this project. `origin` is the `oiupoyt` repository; `spearzificial` is the mirror. Always name the account in the remote URL (`https://oiupoyt@github.com/...`, `https://spearzificial@github.com/...`) so Git selects the matching stored credential instead of guessing between them.
+
+The two GitHub repositories started as separate histories. They diverged once, on the commit that added the LICENSE files, which was authored independently on both sides with byte-identical content. They are now joined by a merge commit, so a push to either one is a fast-forward from the other.
 
 ### Dual-Push Rule
 
-Every push must reach both active remotes:
+Every push must reach every active remote:
 
 ```bash
 git push origin main
 git push forgejo main
+git push spearzificial main
 ```
 
 
@@ -423,9 +427,10 @@ SCYTHE_HW_TESTS=1 cargo test
 1. **ABSOLUTELY ZERO EMOJIS**: Under no circumstances should emojis be added to code, comments, log outputs, commit messages, or communication.
 2. **File & Symbol Links**: Every file path or code symbol mentioned in communication must be formatted as a clickable markdown link using the `file://` scheme (e.g., [`src/encoder.rs`](file:///home/oiupoyt/my%20stuff%20yea/projects/scythe/src/encoder.rs)).
 3. **KAT Square Minimalist**: Strict `border-radius: 0 !important;` on all visual elements.
-4. **Dual-Push Rule**: When pushing commits or tags, always push to both active remotes (`origin` for GitHub and `forgejo` for self-hosted):
+4. **Dual-Push Rule**: When pushing commits or tags, always push to every active remote (`origin` and `spearzificial` for GitHub, `forgejo` for self-hosted):
    ```bash
    git push origin <branch>
+   git push spearzificial <branch>
    git push forgejo <branch>
    ```
 5. **Memory Safety & Process Isolation**: Avoid blocking the audio or video capture loops. Use unbounded or high-capacity crossbeam channels for frame dispatch.

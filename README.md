@@ -2,7 +2,7 @@
 
 > High-performance, zero-copy GPU hardware screen recorder and instant replay overlay for Linux (Wayland & X11) and Windows.
 
-[![Release](https://img.shields.io/github/v/release/spearzificial/scythe?style=flat-square)](https://github.com/spearzificial/scythe/releases)
+[![Release](https://img.shields.io/github/v/release/oiupoyt/scythe?style=flat-square)](https://github.com/oiupoyt/scythe/releases)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue?style=flat-square)](LICENSE)
 
 Scythe is a native, ultra-lightweight alternative to NVIDIA ShadowPlay and GPU Screen Recorder. It records gameplay and desktop screens with near-zero CPU and GPU overhead by leveraging hardware video acceleration and zero-copy direct memory pipelines.
@@ -55,7 +55,7 @@ makepkg -si
 
 ### Pre-Built Packages (Releases)
 
-Download the latest packages directly from [GitHub Releases](https://github.com/spearzificial/scythe/releases) or [Forgejo Releases](https://git.oiupoyt.space/oiupoyt/scythe/releases):
+Download the latest packages directly from [GitHub Releases](https://github.com/oiupoyt/scythe/releases) or [Forgejo Releases](https://git.oiupoyt.space/oiupoyt/scythe/releases):
 
 - **Windows Setup**: `scythe-setup.exe` (Official installer with Start Menu & Desktop shortcuts)
 - **Windows Portable**: `scythe.exe` (Standalone self-contained executable) & `scythe-windows-x86_64.zip`
@@ -68,15 +68,17 @@ Download the latest packages directly from [GitHub Releases](https://github.com/
 
 #### Prerequisites
 
-- Rust (1.80+)
+- Rust (1.85+, the crate uses the 2024 edition)
 - FFmpeg 6+ / 7+ development libraries (`libavcodec`, `libavformat`, `libavutil`, `libswresample`, `libswscale`)
 - PipeWire (`libpipewire-0.3-dev`)
-- GTK 3 and GTK Layer Shell (`libgtk-3-dev`, `libgtk-layer-shell-dev`)
+- XCB (`libxcb1-dev`, `libxcb-shm0-dev`, `libxcb-xfixes0-dev`)
+- ALSA (`libasound2-dev`)
+- `clang` and `pkg-config` for the FFmpeg bindings
 
 #### Compile & Install
 
 ```bash
-git clone https://github.com/spearzificial/scythe.git
+git clone https://github.com/oiupoyt/scythe.git
 cd scythe
 bash install.sh
 ```
