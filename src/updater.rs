@@ -55,6 +55,28 @@ pub fn is_newer(latest: &str, current: &str) -> bool {
     l_nums.len() > c_nums.len()
 }
 
+/// Choose the release to offer between the one found so far and a candidate.
+///
+/// A newer version always wins. On equal versions the release carrying
+/// more assets wins, so a mirror that is missing an installer does not hide
+/// it from the user.
+fn pick_newer_release(current: Option<ReleaseInfo>, candidate: ReleaseInfo) -> ReleaseInfo {
+    match current {
+        None => candidate,
+        Some(current) => {
+            if is_newer(&candidate.version, &current.version) {
+                candidate
+            } else if candidate.version == current.version
+                && candidate.assets.len() > current.assets.len()
+            {
+                candidate
+            } else {
+                current
+            }
+        }
+    }
+}
+
 pub fn check_for_updates() -> Option<ReleaseInfo> {
     let urls = [
         format!("{}/api/v1/repos/{}/releases/latest", FORGEJO_HOST, REPO_OWNER_NAME),
@@ -97,10 +119,7 @@ pub fn check_for_updates() -> Option<ReleaseInfo> {
                     assets: release.assets,
                 };
 
-                best = Some(match best {
-                    Some(current) if !is_newer(&info.version, &current.version) => current,
-                    _ => info,
-                });
+                best = Some(pick_newer_release(best, info));
         }
     }
     best
@@ -468,5 +487,50 @@ mod tests {
         assert!(!is_newer("0.2.0", "0.2.0"));
         assert!(is_newer("0.2.1", "0.2.0"));
         assert!(!is_newer("0.0.9", "0.1.0"));
+    }
+
+    fn release(version: &str, assets: usize) -> ReleaseInfo {
+        ReleaseInfo {
+            tag_name: format!("v{version}"),
+            version: version.to_string(),
+            assets: (0..assets).map(|i| ReleaseAsset {
+                name: format!("asset-{i}"),
+                browser_download_url: String::new(),
+                size: None,
+            }).collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_newer_release_wins_over_older() {
+        let picked = pick_newer_release(Some(release("0.2.18", 2)), release("0.2.21", 1));
+        assert_eq!(picked.version, "0.2.21");
+    }
+
+    #[test]
+    fn test_older_release_does_not_win() {
+        let picked = pick_newer_release(Some(release("0.2.21", 7)), release("0.2.18", 2));
+        assert_eq!(picked.version, "0.2.21");
+    }
+
+    #[test]
+    fn test_equal_version_prefers_more_assets() {
+        // A mirror that is missing assets must not hide them from the user.
+        let picked = pick_newer_release(Some(release("0.2.21", 4)), release("0.2.21", 7));
+        assert_eq!(picked.assets.len(), 7);
+    }
+
+    #[test]
+    fn test_equal_version_keeps_first_when_assets_match() {
+        let picked = pick_newer_release(Some(release("0.2.21", 7)), release("0.2.21", 7));
+        assert_eq!(picked.tag_name, "v0.2.21");
+        assert_eq!(picked.assets.len(), 7);
+    }
+
+    #[test]
+    fn test_first_release_is_kept_when_nothing_to_compare() {
+        let picked = pick_newer_release(None, release("0.2.21", 7));
+        assert_eq!(picked.version, "0.2.21");
     }
 }
