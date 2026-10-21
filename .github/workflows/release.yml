@@ -25,7 +25,7 @@ jobs:
             libavcodec-dev libavformat-dev libavutil-dev libswresample-dev libswscale-dev \
             libavfilter-dev libavdevice-dev \
             libpipewire-0.3-dev libgtk-3-dev libgtk-layer-shell-dev libxcb1-dev libasound2-dev \
-            rpm alien wget
+            rpm alien wget patchelf
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -78,10 +78,17 @@ jobs:
           DEB_FILE=$(ls dist/*.deb | head -n 1)
           alien --to-rpm --scripts "$DEB_FILE"
           mv *.rpm dist/
+          # alien resolves the Debian package names to sonames, but it drops
+          # libva2 because there is no matching Debian to RPM name rule.
+          # libva is loaded at runtime by the FFmpeg VAAPI device, so the
+          # requirement has to be added back explicitly.
+          rpm --addrequires "libva.so.2()(64bit)" dist/*.rpm
+          rpm -qp --requires dist/*.rpm | grep -q "libva.so.2" \
+            || { echo "::error::libva requirement missing from the RPM"; exit 1; }
 
       - name: Package Standalone AppImage
         run: |
-          mkdir -p AppDir/usr/bin AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/scalable/apps
+          mkdir -p AppDir/usr/bin AppDir/usr/lib AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/scalable/apps
           cp target/release/scythe AppDir/usr/bin/
           ln -sf scythe AppDir/usr/bin/scythe-ui
           ln -sf scythe AppDir/usr/bin/scythe-daemon
@@ -89,10 +96,34 @@ jobs:
           ln -sf scythe AppDir/usr/bin/vrec-daemon
           ln -sf scythe AppDir/usr/bin/vrec
           cp packaging/scythe.desktop AppDir/usr/share/applications/
-          
+
+          # Bundle the shared library closure. Without this the image only
+          # runs on a host that happens to carry the exact FFmpeg build the
+          # binary was linked against, which defeats the point of an
+          # AppImage. ldd already resolves the full transitive closure.
+          ldd target/release/scythe | awk '/=>/ {print $3}' | sort -u | while read -r lib; do
+            [ -e "$lib" ] || continue
+            base=$(basename "$lib")
+            # The C runtime stays on the host: bundling a different glibc
+            # than the kernel and the other system libraries expect breaks
+            # the image in ways that are hard to diagnose.
+            case "$base" in
+              libc.so.6|libm.so.6|libgcc_s.so.1|ld-linux*.so.2|libpthread.so.0|libdl.so.2|librt.so.1) continue ;;
+            esac
+            cp -L "$lib" "AppDir/usr/lib/$base"
+          done
+          lib_count=$(ls -1 AppDir/usr/lib | wc -l)
+          echo "bundled libraries: ${lib_count}"
+          ls -1 AppDir/usr/lib
+
+          # Prefer the bundled copies over anything the host provides.
+          patchelf --set-rpath '$ORIGIN/../lib' AppDir/usr/bin/scythe
+          patchelf --print-rpath AppDir/usr/bin/scythe
+
           cat > AppDir/AppRun << 'EOF'
           #!/bin/sh
           HERE="$(dirname "$(readlink -f "${0}")")"
+          export LD_LIBRARY_PATH="${HERE}/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
           exec "${HERE}/usr/bin/scythe" "$@"
           EOF
           chmod +x AppDir/AppRun
@@ -104,6 +135,18 @@ jobs:
           wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage -O appimagetool
           chmod +x appimagetool
           ./appimagetool --appimage-extract-and-run AppDir dist/scythe-x86_64.AppImage || true
+
+          # The image is only useful if the libraries actually made it in.
+          lib_count=$(ls -1 AppDir/usr/lib | wc -l)
+          echo "bundled libraries: ${lib_count}"
+          if [ "${lib_count}" -lt 5 ]; then
+            echo "::error::AppImage bundled only ${lib_count} libraries, expected the FFmpeg closure"
+            exit 1
+          fi
+          if [ ! -f dist/scythe-x86_64.AppImage ]; then
+            echo "::error::AppImage was not produced"
+            exit 1
+          fi
 
       - name: Upload Linux Artifacts
         uses: actions/upload-artifact@v4
