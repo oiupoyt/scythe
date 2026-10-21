@@ -64,15 +64,10 @@ fn pick_newer_release(current: Option<ReleaseInfo>, candidate: ReleaseInfo) -> R
     match current {
         None => candidate,
         Some(current) => {
-            if is_newer(&candidate.version, &current.version) {
-                candidate
-            } else if candidate.version == current.version
-                && candidate.assets.len() > current.assets.len()
-            {
-                candidate
-            } else {
-                current
-            }
+            let candidate_wins = is_newer(&candidate.version, &current.version)
+                || (candidate.version == current.version
+                    && candidate.assets.len() > current.assets.len());
+            if candidate_wins { candidate } else { current }
         }
     }
 }
