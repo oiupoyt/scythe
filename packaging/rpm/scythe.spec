@@ -1,5 +1,5 @@
 Name:           scythe
-Version:        0.2.21
+Version:        0.2.22
 Release:        1%{?dist}
 Summary:        High-performance GPU hardware screen recorder and instant replay overlay
 

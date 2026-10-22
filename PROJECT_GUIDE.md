@@ -6,7 +6,7 @@ This document is the definitive technical reference for developers and AI agents
 
 ## 1. Project Overview & Current Status
 
-**Current Version:** `v0.2.21`  
+**Current Version:** `v0.2.22`  
 **License:** Dual MIT / Apache 2.0  
 
 ### Repository Topology
