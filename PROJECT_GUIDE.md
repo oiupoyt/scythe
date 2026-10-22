@@ -288,9 +288,10 @@ Implemented in [`src/overlay_egui.rs`](file:///home/oiupoyt/my%20stuff%20yea/pro
   - Screenshot: Resolution presets (`Native`, `1080p`, `1440p`, `2160p`, `720p`), format (`PNG` vs `JPEG`), and cursor capture toggle.
   - General: Theme accents, 8 global keybinds with interactive recording listener, compact `Reset Hotkeys` button, and typography toggle.
 - **Notification Toasts (`ShadowPlayToastApp`)**:
-  - Borderless, shadowless terminal-style card.
-  - Obsidian `#111111` fill with 2px vertical accent rule and 6px status dot.
-  - Uppercase monospace title, lowercase metadata subtitle, and 2px hairline progress countdown line.
+  - Rebuilt from scratch replicating the 1:1 visual architecture of `gpu-screen-recorder-ui` (`gsr-notify`).
+  - Borderless, shadowless pitch-black (`#000000`) background card with zero rounding (`border-radius: 0`).
+  - 4px vertical accent bar on left edge, left icon matching notification type, bold text label, and smooth 0.15s cubic ease-out sliding animation with automatic fade out.
+  - Hyprland window rules configured with `no_border = true` and `border_size = 0` to eliminate compositor-drawn borders.
 
 ---
 

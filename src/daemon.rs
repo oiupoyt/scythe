@@ -880,14 +880,14 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
                                     while ring.try_pop().is_some() {}
                                     eprintln!("Power lost: replay buffer paused and drained.");
                                     if config.autostart_power_only && config.show_replay_notifications {
-                                        spawn_power_toast("POWER", "power lost, replay paused", "error");
+                                        spawn_power_toast("POWER", "Power lost, turning off replay", "error");
                                     }
                                 } else if replay_effective && !was_effective {
                                     encoder.force_keyframe();
                                     has_new_frame = true;
                                     println!("Power restored: replay buffer resumed.");
                                     if config.show_replay_notifications {
-                                        spawn_power_toast("POWER", "power restored, replay resumed", "replay");
+                                        spawn_power_toast("POWER", "Power connected, turning on replay", "replay");
                                     }
                                 }
                             },
@@ -1205,7 +1205,7 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
                     }
 
                     let is_streaming = stream_sender.is_some();
-                    if !normal_recording && !config.replay_enabled && !is_streaming {
+                    if !normal_recording && !replay_effective && !is_streaming {
                         if last_malloc_trim.elapsed().as_secs() >= 5 {
                             last_malloc_trim = std::time::Instant::now();
                             #[cfg(target_os = "linux")]

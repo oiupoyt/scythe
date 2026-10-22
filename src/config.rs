@@ -444,28 +444,36 @@ X-GNOME-Autostart-enabled=true\n";
         #[cfg(target_os = "linux")]
         {
             if let Ok(entries) = std::fs::read_dir("/sys/class/power_supply") {
-                let mut has_power_status = false;
+                let mut ac_found = false;
                 for entry in entries.flatten() {
                     let path = entry.path();
-                    // Check AC online status
-                    let online_path = path.join("online");
-                    if let Ok(content) = std::fs::read_to_string(&online_path) {
-                        has_power_status = true;
-                        if content.trim() == "1" {
-                            return true;
-                        }
-                    }
-                    // Check battery status
-                    let status_path = path.join("status");
-                    if let Ok(content) = std::fs::read_to_string(&status_path) {
-                        let s = content.trim().to_lowercase();
-                        if s == "charging" || s == "full" {
-                            return true;
+                    let supply_type = std::fs::read_to_string(path.join("type")).unwrap_or_default().trim().to_lowercase();
+                    if supply_type == "mains" || supply_type.contains("ac") || supply_type == "usb" {
+                        ac_found = true;
+                        let online_path = path.join("online");
+                        if let Ok(content) = std::fs::read_to_string(&online_path)
+                            && content.trim() == "1" {
+                                return true;
                         }
                     }
                 }
-                if has_power_status {
+                if ac_found {
                     return false;
+                }
+                // Fallback check on battery status
+                if let Ok(entries) = std::fs::read_dir("/sys/class/power_supply") {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        let supply_type = std::fs::read_to_string(path.join("type")).unwrap_or_default().trim().to_lowercase();
+                        if supply_type == "battery" {
+                            let status = std::fs::read_to_string(path.join("status")).unwrap_or_default().trim().to_lowercase();
+                            if status == "discharging" {
+                                return false;
+                            } else if status == "charging" || status == "full" {
+                                return true;
+                            }
+                        }
+                    }
                 }
             }
             true
