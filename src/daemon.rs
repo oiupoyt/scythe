@@ -535,15 +535,13 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
     });
 
     fn spawn_power_toast(title: &str, subtitle: &str, icon: &str) {
-        let exe = std::env::current_exe()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|_| "scythe".to_string());
-        let _ = std::process::Command::new(exe)
-            .args(["--toast", title, subtitle, icon])
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn();
+        let toast_icon = match icon {
+            "error" => crate::ipc::ToastIcon::Error,
+            "replay" => crate::ipc::ToastIcon::Replay,
+            "record" => crate::ipc::ToastIcon::Record,
+            _ => crate::ipc::ToastIcon::Info,
+        };
+        crate::overlay::show_shadowplay_toast(title, subtitle, toast_icon);
     }
 
     let recorder_handle = thread::spawn(move || {

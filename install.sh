@@ -25,6 +25,14 @@ ln -sf "$BIN_DIR/scythe" "$BIN_DIR/vrec-daemon"
 ln -sf "$BIN_DIR/scythe" "$BIN_DIR/vrec-ui"
 ln -sf "$BIN_DIR/scythe" "$BIN_DIR/vrec"
 
+# Install gsr-notify for native 1:1 notifications (matching gpu-screen-recorder-ui)
+if [ -f "assets/gsr-notify/gsr-notify" ]; then
+    echo "Installing gsr-notify companion..."
+    install -m 755 assets/gsr-notify/gsr-notify "$BIN_DIR/gsr-notify"
+    mkdir -p "$HOME/.local/share/gsr-notify/images"
+    install -m 644 assets/gsr-notify/images/* "$HOME/.local/share/gsr-notify/images/"
+fi
+
 SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
 mkdir -p "$SYSTEMD_USER_DIR"
 cat > "$SYSTEMD_USER_DIR/scythe-daemon.service" << EOF
