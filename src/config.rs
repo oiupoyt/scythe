@@ -255,12 +255,8 @@ impl ScytheConfig {
 
     pub fn load() -> Self {
         let path = Self::config_path();
-        if let Ok(content) = fs::read_to_string(&path)
-            && let Ok(mut cfg) = serde_json::from_str::<Self>(&content) {
-                if cfg.autostart && !cfg.autostart_replay {
-                    cfg.autostart_replay = true;
-                }
-                return cfg;
+        if let Some(cfg) = Self::read_primary(&path) {
+            return cfg;
         }
         let legacy = Self::legacy_config_path();
         if let Ok(content) = fs::read_to_string(&legacy)
@@ -280,13 +276,23 @@ impl ScytheConfig {
         default_cfg
     }
 
+    /// Reads and parses the primary config file, if it exists and is valid.
+    fn read_primary(path: &std::path::Path) -> Option<Self> {
+        let content = fs::read_to_string(path).ok()?;
+        let mut cfg = serde_json::from_str::<Self>(&content).ok()?;
+        if cfg.autostart && !cfg.autostart_replay {
+            cfg.autostart_replay = true;
+        }
+        Some(cfg)
+    }
+
     pub fn save(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let path = Self::config_path();
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
         let json = serde_json::to_string_pretty(self)?;
-        fs::write(&path, &json)?;
+        write_config_file(&path, &json)?;
 
         // Also update legacy config if its directory exists, ensuring backward compatibility
         let legacy = Self::legacy_config_path();
@@ -516,9 +522,72 @@ X-GNOME-Autostart-enabled=true\n";
     }
 }
 
+/// Writes the config JSON to `path`.
+fn write_config_file(path: &std::path::Path, json: &str) -> std::io::Result<()> {
+    fs::write(path, json)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn scratch_dir(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("scythe-cfgtest-{}-{}", tag, std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// While a save is in progress, a reader must see either the old file
+    /// or the new one, never a truncated one. Readers that saw a truncated
+    /// file treated it as missing and wrote defaults over it, wiping the
+    /// stream key, output folder and hotkeys.
+    #[test]
+    fn test_concurrent_readers_never_see_a_partial_config() {
+        let dir = scratch_dir("atomic");
+        let path = dir.join("config.json");
+        let mut a = ScytheConfig::default();
+        a.stream_key = "a".repeat(4096);
+        let mut b = ScytheConfig::default();
+        b.stream_key = "b".repeat(4096);
+        let ja = serde_json::to_string_pretty(&a).unwrap();
+        let jb = serde_json::to_string_pretty(&b).unwrap();
+        write_config_file(&path, &ja).unwrap();
+
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let bad = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let readers: Vec<_> = (0..4).map(|_| {
+            let (stop, bad, path) = (stop.clone(), bad.clone(), path.clone());
+            std::thread::spawn(move || {
+                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    if ScytheConfig::read_primary(&path).is_none() {
+                        bad.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
+                }
+            })
+        }).collect();
+        for i in 0..400 {
+            write_config_file(&path, if i % 2 == 0 { &jb } else { &ja }).unwrap();
+        }
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        for r in readers { r.join().unwrap(); }
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(bad.load(std::sync::atomic::Ordering::Relaxed), 0, "readers saw a missing or truncated config");
+    }
+
+    /// The config holds the stream key, so other users must not be able to
+    /// read it.
+    #[cfg(unix)]
+    #[test]
+    fn test_config_file_is_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = scratch_dir("perm");
+        let path = dir.join("config.json");
+        write_config_file(&path, "{}").unwrap();
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(mode & 0o077, 0, "config mode is {:o}", mode);
+    }
 
     #[test]
     fn test_config_defaults_and_json() {
