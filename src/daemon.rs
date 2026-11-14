@@ -117,6 +117,18 @@ impl VideoPtsClock {
     }
 }
 
+/// What the Wayland capture startup should do after a portal failure.
+struct PortalRetryPlan {
+    retry: bool,
+    restart_portal_service: bool,
+}
+
+/// Current behaviour: every failure is retried and restarts the portal.
+fn portal_retry_plan(error: &str) -> PortalRetryPlan {
+    let _ = error;
+    PortalRetryPlan { retry: true, restart_portal_service: true }
+}
+
 /// Decides which encoded packet a recording or stream segment may start on.
 ///
 /// The encoder pipelines several frames and emits a periodic IDR, so when a
@@ -1341,6 +1353,45 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A rejected or cancelled ScreenCast request is not fixed by bouncing
+    /// the session-wide portal service, and restarting it breaks every other
+    /// app using the portal at that moment. Only a portal that is not on the
+    /// bus yet (login race) is worth waiting for.
+    #[test]
+    fn test_portal_failures_never_restart_the_shared_portal() {
+        let errors = [
+            "Failed to start ScreenCast session: Portal(ZBus(MethodError(OwnedErrorName(\"org.freedesktop.DBus.Error.AccessDenied\"), Some(\"Invalid session\")",
+            "Failed to select ScreenCast sources: Response(Cancelled)",
+            "Failed to initialize XDG ScreenCast portal (ZBus(MethodError(OwnedErrorName(\"org.freedesktop.DBus.Error.ServiceUnknown\")",
+            "No ScreenCast streams returned by portal",
+        ];
+        for e in errors {
+            assert!(
+                !portal_retry_plan(e).restart_portal_service,
+                "would restart xdg-desktop-portal for: {}",
+                e
+            );
+        }
+    }
+
+    /// A portal that is not registered on the bus yet is the one transient
+    /// case: retrying after a short wait is correct.
+    #[test]
+    fn test_portal_not_yet_on_bus_is_retried() {
+        let e = "Failed to initialize XDG ScreenCast portal (ZBus(MethodError(OwnedErrorName(\"org.freedesktop.DBus.Error.ServiceUnknown\")";
+        assert!(portal_retry_plan(e).retry);
+    }
+
+    /// A request the portal rejected or the user cancelled will be rejected
+    /// again; retrying five times only delays the error and re-prompts.
+    #[test]
+    fn test_rejected_request_is_not_retried() {
+        let e = "Failed to start ScreenCast session: Portal(ZBus(MethodError(OwnedErrorName(\"org.freedesktop.DBus.Error.AccessDenied\"), Some(\"Invalid session\")";
+        assert!(!portal_retry_plan(e).retry);
+        let e = "Failed to select ScreenCast sources: Response(Cancelled)";
+        assert!(!portal_retry_plan(e).retry);
+    }
 
     /// The encoder pipelines frames, so packets come out a few frames after
     /// they went in. A keyframe already in flight when recording is
