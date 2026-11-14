@@ -1328,6 +1328,25 @@ mod tests {
         assert_eq!(third - second, 1);
     }
 
+    /// Audio timestamps count samples from pipeline start, and replay save
+    /// pairs audio with the opening keyframe by absolute time. Video must stay
+    /// on that same timeline from its very first frame, or a replay picks
+    /// audio from before the keyframe and plays out of sync.
+    #[test]
+    fn test_video_pts_stays_on_the_pipeline_timeline() {
+        let fps = 60;
+        let mut clock = VideoPtsClock::new();
+        for t_ms in [15_000u64, 15_016, 15_033, 20_000, 20_016] {
+            let pts = clock.next(std::time::Duration::from_millis(t_ms), fps);
+            let expected = (t_ms as f64 / 1000.0 * fps as f64).round() as i64;
+            assert!(
+                (pts - expected).abs() <= 4,
+                "frame at {} ms got pts {}, pipeline timeline says {}",
+                t_ms, pts, expected
+            );
+        }
+    }
+
     /// A genuine stall while encoding (the encoder was busy, the capture
     /// source paused) should still advance PTS by real time, so audio and
     /// video stay in sync across the stall.
