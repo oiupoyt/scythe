@@ -120,13 +120,18 @@ impl VideoPtsClock {
 /// What the Wayland capture startup should do after a portal failure.
 struct PortalRetryPlan {
     retry: bool,
-    restart_portal_service: bool,
 }
 
-/// Current behaviour: every failure is retried and restarts the portal.
+/// Classifies a Wayland capture startup error.
+///
+/// Only a portal that is not on the session bus yet (the daemon raced the
+/// portal at login) is transient. A request the portal rejected or the user
+/// cancelled is rejected the same way on every attempt. The shared portal
+/// service is never restarted: it serves every application in the session,
+/// and bouncing it does not change how the backend answers a request.
 fn portal_retry_plan(error: &str) -> PortalRetryPlan {
-    let _ = error;
-    PortalRetryPlan { retry: true, restart_portal_service: true }
+    let not_on_bus_yet = error.contains("ServiceUnknown") || error.contains("NameHasNoOwner");
+    PortalRetryPlan { retry: not_on_bus_yet }
 }
 
 /// Decides which encoded packet a recording or stream segment may start on.
@@ -494,11 +499,16 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
                         break;
                     }
                     Err(e) => {
-                        eprintln!("Wayland capture attempt {} failed: {}", attempt, e);
+                        let msg = e.to_string();
+                        eprintln!("Wayland capture attempt {} failed: {}", attempt, msg);
+                        if !portal_retry_plan(&msg).retry {
+                            eprintln!(
+                                "The ScreenCast portal rejected the request; retrying will not change that. \
+                                 Check the share picker configured for xdg-desktop-portal."
+                            );
+                            break;
+                        }
                         if attempt < 5 {
-                            let _ = std::process::Command::new("systemctl")
-                                .args(["--user", "restart", "xdg-desktop-portal"])
-                                .status();
                             tokio::time::sleep(std::time::Duration::from_millis(600)).await;
                         }
                     }
@@ -1360,19 +1370,12 @@ mod tests {
     /// bus yet (login race) is worth waiting for.
     #[test]
     fn test_portal_failures_never_restart_the_shared_portal() {
-        let errors = [
-            "Failed to start ScreenCast session: Portal(ZBus(MethodError(OwnedErrorName(\"org.freedesktop.DBus.Error.AccessDenied\"), Some(\"Invalid session\")",
-            "Failed to select ScreenCast sources: Response(Cancelled)",
-            "Failed to initialize XDG ScreenCast portal (ZBus(MethodError(OwnedErrorName(\"org.freedesktop.DBus.Error.ServiceUnknown\")",
-            "No ScreenCast streams returned by portal",
-        ];
-        for e in errors {
-            assert!(
-                !portal_retry_plan(e).restart_portal_service,
-                "would restart xdg-desktop-portal for: {}",
-                e
-            );
-        }
+        let src = include_str!("daemon.rs");
+        let restart = ["\"restart\"", "\"xdg-desktop-portal\""].join(", ");
+        assert!(
+            !src.contains(&restart),
+            "daemon still restarts the session-wide xdg-desktop-portal service"
+        );
     }
 
     /// A portal that is not registered on the bus yet is the one transient
