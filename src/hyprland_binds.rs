@@ -288,12 +288,16 @@ pub fn unregister_hyprland_binds(config: &ScytheConfig) {
 /// Hotkeys the daemon removes from the compositor when it stops.
 #[cfg(unix)]
 fn unregister_targets(config: &ScytheConfig) -> Vec<&String> {
-    // Current behaviour: only four of the eight registered hotkeys.
+    // The same eight hotkeys register_hyprland_binds binds.
     vec![
         &config.menu_hotkey,
         &config.save_hotkey,
         &config.record_hotkey,
+        &config.pause_hotkey,
         &config.cursor_hotkey,
+        &config.screenshot_hotkey,
+        &config.mute_mic_hotkey,
+        &config.mute_sys_hotkey,
     ]
 }
 
