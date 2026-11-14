@@ -344,6 +344,15 @@ impl VaapiEncoder {
 
                             if av_hwframe_map(direct_hw, drm_frame, 0) >= 0 {
                                 (*direct_hw).pts = pts;
+                                // Honour a pending forced keyframe here too, or a
+                                // recording started on this path waits for the next
+                                // periodic IDR and the request leaks onto a later frame.
+                                if self.force_idr {
+                                    (*direct_hw).pict_type = AVPictureType::AV_PICTURE_TYPE_I;
+                                    self.force_idr = false;
+                                } else {
+                                    (*direct_hw).pict_type = AVPictureType::AV_PICTURE_TYPE_NONE;
+                                }
 
                                 if avcodec_send_frame(self.codec_ctx, direct_hw) >= 0 {
                                     let mut pkt = av_packet_alloc();
@@ -354,7 +363,11 @@ impl VaapiEncoder {
                                     }
                                     av_packet_free(&mut pkt);
                                     mapped_direct = true;
-                                    self.has_frame = true;
+                                    // staged_nv12 was not written on this path, so
+                                    // there is no cached frame to re-send. Leaving
+                                    // has_frame false makes encode_cached_frame
+                                    // fail and the caller re-encode the latest frame.
+                                    self.has_frame = false;
                                 }
                             } else {
                                 self.direct_drm_unsupported = true;
