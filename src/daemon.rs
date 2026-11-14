@@ -75,22 +75,35 @@ fn spawn_overlay_once() {
 }
 
 /// Assigns presentation timestamps, in frame units, to encoded video frames.
+///
+/// Timestamps are measured from the first frame ever encoded, not from when
+/// the capture pipeline started. The daemon idles without encoding until
+/// something consumes frames, so measuring from pipeline start put a jump the
+/// length of that idle time right after the first keyframe, and a recording
+/// begun after N idle seconds froze for N seconds.
+///
+/// The timeline is never rewound: the encoder lives for the whole daemon, so
+/// later segments continue from where the last one stopped. The jump across
+/// an idle stretch lands just before the segment's forced keyframe, where the
+/// recording and replay rebasing cut it off.
 struct VideoPtsClock {
     last: i64,
+    origin: Option<std::time::Duration>,
 }
 
 impl VideoPtsClock {
     fn new() -> Self {
-        Self { last: -1 }
-    }
-
-    fn reset(&mut self) {
-        self.last = -1;
+        Self { last: -1, origin: None }
     }
 
     /// `elapsed` is the time since the capture pipeline started.
     fn next(&mut self, elapsed: std::time::Duration, fps: u32) -> i64 {
-        let raw_pts = (elapsed.as_secs_f64() * fps as f64).round() as i64;
+        let origin = *self.origin.get_or_insert(elapsed);
+        let since_origin = elapsed.saturating_sub(origin);
+        let raw_pts = (since_origin.as_secs_f64() * fps as f64).round() as i64;
+        // Follow real time across a stall so video stays in step with audio,
+        // but within a few frames prefer strictly consecutive values: frames
+        // arriving early or late by jitter must not repeat or skip a pts.
         let pts = if self.last < 0 {
             0
         } else if raw_pts > self.last + 4 {
@@ -1344,18 +1357,20 @@ mod tests {
         assert!(b > a && c > b, "pts must increase: {} {} {}", a, b, c);
     }
 
-    /// After the pipeline goes idle again (recording stopped, nothing else
-    /// consuming frames) and is restarted, the clock must not carry the idle
-    /// period into the next segment either.
+    /// A later segment, started after the pipeline sat idle, may jump across
+    /// the idle stretch on its first frame (the forced keyframe the segment
+    /// is cut from), but must run consecutively after it and must never go
+    /// backwards, since the encoder keeps one timeline for its lifetime.
     #[test]
-    fn test_reset_after_idle_period() {
+    fn test_later_segment_after_idle_has_no_gap_after_its_first_frame() {
         let fps = 60;
         let mut clock = VideoPtsClock::new();
         let _ = clock.next(std::time::Duration::from_secs(1), fps);
-        let _ = clock.next(std::time::Duration::from_millis(1016), fps);
-        clock.reset();
+        let prev = clock.next(std::time::Duration::from_millis(1016), fps);
+        // 29 s with nothing encoded, then the next recording starts.
         let first = clock.next(std::time::Duration::from_secs(30), fps);
         let second = clock.next(std::time::Duration::from_millis(30_016), fps);
-        assert_eq!(second - first, 1);
+        assert!(first > prev, "timeline went backwards: {} after {}", first, prev);
+        assert_eq!(second - first, 1, "gap after the segment's first frame: {} -> {}", first, second);
     }
 }
