@@ -74,6 +74,35 @@ fn spawn_overlay_once() {
     let _ = cmd.spawn();
 }
 
+/// Assigns presentation timestamps, in frame units, to encoded video frames.
+struct VideoPtsClock {
+    last: i64,
+}
+
+impl VideoPtsClock {
+    fn new() -> Self {
+        Self { last: -1 }
+    }
+
+    fn reset(&mut self) {
+        self.last = -1;
+    }
+
+    /// `elapsed` is the time since the capture pipeline started.
+    fn next(&mut self, elapsed: std::time::Duration, fps: u32) -> i64 {
+        let raw_pts = (elapsed.as_secs_f64() * fps as f64).round() as i64;
+        let pts = if self.last < 0 {
+            0
+        } else if raw_pts > self.last + 4 {
+            raw_pts
+        } else {
+            self.last + 1
+        };
+        self.last = pts;
+        pts
+    }
+}
+
 fn mask_stream_url(url: &str) -> String {
     if let Some((base, key)) = url.rsplit_once('/')
         && key.len() > 4 {
@@ -707,7 +736,7 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
         });
 
         let stream_start = std::time::Instant::now();
-        let mut last_video_pts: i64 = -1;
+        let mut video_pts_clock = VideoPtsClock::new();
         let target_frame_duration = std::time::Duration::from_nanos(1_000_000_000 / config.fps.max(1) as u64);
         let mut ticker = crossbeam_channel::tick(target_frame_duration);
         let mut latest_frame: Option<Frame> = None;
@@ -1141,16 +1170,7 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
                     let now = std::time::Instant::now();
                     let jitter_margin = target_frame_duration / 8;
                     if now + jitter_margin >= next_frame_time {
-                        let elapsed = now.duration_since(stream_start);
-                        let raw_pts = (elapsed.as_secs_f64() * config.fps as f64).round() as i64;
-                        let pts = if last_video_pts < 0 {
-                            0
-                        } else if raw_pts > last_video_pts + 4 {
-                            raw_pts
-                        } else {
-                            last_video_pts + 1
-                        };
-                        last_video_pts = pts;
+                        let pts = video_pts_clock.next(now.duration_since(stream_start), config.fps);
                         last_frame_encoded_time = now;
                         if next_frame_time + target_frame_duration <= now {
                             next_frame_time = now + target_frame_duration;
@@ -1216,16 +1236,7 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
                     let now = std::time::Instant::now();
                     let jitter_margin = target_frame_duration / 8;
                     if now.duration_since(last_frame_encoded_time) >= target_frame_duration.saturating_sub(jitter_margin) {
-                        let elapsed = now.duration_since(stream_start);
-                        let raw_pts = (elapsed.as_secs_f64() * config.fps as f64).round() as i64;
-                        let pts = if last_video_pts < 0 {
-                            0
-                        } else if raw_pts > last_video_pts + 4 {
-                            raw_pts
-                        } else {
-                            last_video_pts + 1
-                        };
-                        last_video_pts = pts;
+                        let pts = video_pts_clock.next(now.duration_since(stream_start), config.fps);
                         last_frame_encoded_time = now;
                         if next_frame_time + target_frame_duration <= now {
                             next_frame_time = now + target_frame_duration;
@@ -1279,4 +1290,72 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
     #[cfg(windows)]
     let _ = std::fs::remove_file(crate::ipc::get_ipc_port_path());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The first frame encoded after the daemon has been idle must not be
+    /// followed by a jump to the wall-clock frame index. Recording starts on
+    /// that first keyframe, so any gap between it and the next frame ends up
+    /// inside the file as a frozen stretch as long as the idle period.
+    #[test]
+    fn test_first_frame_after_idle_has_no_pts_gap() {
+        let fps = 60;
+        // Daemon started, then sat idle for 15 s before the first record.
+        let idle = std::time::Duration::from_secs(15);
+        let mut clock = VideoPtsClock::new();
+
+        let first = clock.next(idle, fps);
+        let second = clock.next(idle + std::time::Duration::from_millis(16), fps);
+        let third = clock.next(idle + std::time::Duration::from_millis(33), fps);
+
+        assert_eq!(second - first, 1, "frame after the first keyframe jumped from {} to {}", first, second);
+        assert_eq!(third - second, 1);
+    }
+
+    /// A genuine stall while encoding (the encoder was busy, the capture
+    /// source paused) should still advance PTS by real time, so audio and
+    /// video stay in sync across the stall.
+    #[test]
+    fn test_stall_during_encoding_advances_by_real_time() {
+        let fps = 60;
+        let mut clock = VideoPtsClock::new();
+        let start = std::time::Duration::from_secs(2);
+        let a = clock.next(start, fps);
+        let b = clock.next(start + std::time::Duration::from_millis(16), fps);
+        // One second with no frames, then encoding resumes.
+        let c = clock.next(start + std::time::Duration::from_millis(1016), fps);
+        assert_eq!(b - a, 1);
+        assert!((c - b - 60).abs() <= 1, "a 1 s stall should advance ~60 frames, got {}", c - b);
+    }
+
+    /// Frames that arrive faster than the frame interval must still produce
+    /// strictly increasing PTS, or the muxer rejects them as non-monotonic.
+    #[test]
+    fn test_pts_strictly_increasing_when_frames_arrive_early() {
+        let fps = 60;
+        let mut clock = VideoPtsClock::new();
+        let t = std::time::Duration::from_secs(1);
+        let a = clock.next(t, fps);
+        let b = clock.next(t, fps);
+        let c = clock.next(t + std::time::Duration::from_millis(1), fps);
+        assert!(b > a && c > b, "pts must increase: {} {} {}", a, b, c);
+    }
+
+    /// After the pipeline goes idle again (recording stopped, nothing else
+    /// consuming frames) and is restarted, the clock must not carry the idle
+    /// period into the next segment either.
+    #[test]
+    fn test_reset_after_idle_period() {
+        let fps = 60;
+        let mut clock = VideoPtsClock::new();
+        let _ = clock.next(std::time::Duration::from_secs(1), fps);
+        let _ = clock.next(std::time::Duration::from_millis(1016), fps);
+        clock.reset();
+        let first = clock.next(std::time::Duration::from_secs(30), fps);
+        let second = clock.next(std::time::Duration::from_millis(30_016), fps);
+        assert_eq!(second - first, 1);
+    }
 }
