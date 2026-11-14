@@ -156,6 +156,12 @@ impl SegmentStartGate {
     }
 }
 
+/// Arguments for re-launching this daemon after a capture-settings change.
+fn daemon_restart_args(current: impl Iterator<Item = String>) -> Vec<String> {
+    let _ = current.count();
+    Vec::new()
+}
+
 fn mask_stream_url(url: &str) -> String {
     if let Some((base, key)) = url.rsplit_once('/')
         && key.len() > 4 {
@@ -902,7 +908,8 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
                                     }
                                     if let Ok(exe) = std::env::current_exe() {
                                         let mut cmd = std::process::Command::new(exe);
-                                        cmd.stdin(std::process::Stdio::null())
+                                        cmd.args(daemon_restart_args(std::env::args().skip(1)))
+                                            .stdin(std::process::Stdio::null())
                                             .stdout(std::process::Stdio::null())
                                             .stderr(std::process::Stdio::null());
                                         #[cfg(target_os = "windows")]
@@ -1363,6 +1370,35 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn args(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// current_exe() resolves the scythe-daemon symlink to the plain
+    /// `scythe` binary, and multicall dispatch only runs the daemon when told
+    /// to. Relaunching it with no arguments started the UI client instead,
+    /// so a capture-settings change killed the daemon outside systemd.
+    #[test]
+    fn test_restart_relaunches_as_daemon() {
+        let a = daemon_restart_args(args(&[]).into_iter());
+        assert_eq!(a.first().map(String::as_str), Some("daemon"), "restart args: {:?}", a);
+    }
+
+    /// A daemon started in mock mode must come back in mock mode.
+    #[test]
+    fn test_restart_keeps_mock_mode() {
+        let a = daemon_restart_args(args(&["daemon", "--mock"]).into_iter());
+        assert!(a.iter().any(|x| x == "--mock"), "restart args: {:?}", a);
+        assert_eq!(a.iter().filter(|x| x.as_str() == "daemon").count(), 1);
+    }
+
+    /// Nothing else from the original command line is forwarded.
+    #[test]
+    fn test_restart_drops_unrelated_args() {
+        let a = daemon_restart_args(args(&["--daemon", "--something-else"]).into_iter());
+        assert_eq!(a, args(&["daemon"]));
+    }
 
     /// A rejected or cancelled ScreenCast request is not fixed by bouncing
     /// the session-wide portal service, and restarting it breaks every other
