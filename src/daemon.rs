@@ -1488,6 +1488,28 @@ mod tests {
         assert_eq!(replay_ring_capacity(&cfg), 1);
     }
 
+    /// Every IPC command that changes the saved config must make the
+    /// recorder reload it. ToggleCursor saved the new value but never sent
+    /// ReloadConfig, so capture kept the old cursor setting while the CLI
+    /// and status reported the new one.
+    #[test]
+    fn test_config_changing_ipc_commands_reload_the_recorder() {
+        let src = include_str!("daemon.rs");
+        let body = &src[..src.find("#[cfg(test)]").unwrap()];
+        for arm in ["Command::ToggleCursor =>", "Command::CycleAudioMode =>"] {
+            let start = body.find(arm).unwrap_or_else(|| panic!("{} arm missing", arm));
+            let rest = &body[start..];
+            let end = rest.find("},").expect("arm end");
+            let arm_body = &rest[..end];
+            assert!(arm_body.contains(".save()"), "{} no longer saves", arm);
+            assert!(
+                arm_body.contains("Command::ReloadConfig"),
+                "{} saves the config but never tells the recorder to reload it",
+                arm
+            );
+        }
+    }
+
     /// Shutdown must wait for the recorder to report that the recording
     /// file is finalized, however long the faststart rewrite takes. A fixed
     /// 350 ms sleep cut long recordings off mid-rewrite.
