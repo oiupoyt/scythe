@@ -111,6 +111,22 @@ impl VideoPtsClock {
     }
 }
 
+/// Decides which encoded packet a recording or stream segment may start on.
+struct SegmentStartGate {
+    start_pts: i64,
+}
+
+impl SegmentStartGate {
+    fn new(start_pts: i64) -> Self {
+        Self { start_pts }
+    }
+
+    fn accepts(&self, is_keyframe: bool, pts: i64) -> bool {
+        // Current daemon behaviour: any keyframe opens the segment.
+        is_keyframe && (pts >= self.start_pts || pts < self.start_pts)
+    }
+}
+
 fn mask_stream_url(url: &str) -> String {
     if let Some((base, key)) = url.rsplit_once('/')
         && key.len() > 4 {
@@ -1303,6 +1319,37 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The encoder pipelines frames, so packets come out a few frames after
+    /// they went in. A keyframe already in flight when recording is
+    /// requested belongs to before the request; opening the file on it puts
+    /// that stale picture first and the real start seconds later.
+    #[test]
+    fn test_recording_ignores_keyframe_submitted_before_start() {
+        // Recording requested while frame 300 was being submitted.
+        let gate = SegmentStartGate::new(300);
+        // A periodic IDR from frame 120 drains out of the encoder first.
+        assert!(!gate.accepts(true, 120), "opened the file on a stale keyframe");
+        assert!(!gate.accepts(false, 299));
+        // The forced IDR for frame 300 is the first acceptable packet.
+        assert!(gate.accepts(true, 300));
+    }
+
+    /// A non-keyframe can never open a segment, however late it is.
+    #[test]
+    fn test_recording_never_opens_on_a_delta_frame() {
+        let gate = SegmentStartGate::new(300);
+        assert!(!gate.accepts(false, 300));
+        assert!(!gate.accepts(false, 10_000));
+    }
+
+    /// A keyframe after the requested frame is fine: the forced IDR may land
+    /// a frame or two late when the encoder is busy.
+    #[test]
+    fn test_recording_accepts_keyframe_after_start() {
+        let gate = SegmentStartGate::new(300);
+        assert!(gate.accepts(true, 302));
+    }
 
     /// The first frame encoded after the daemon has been idle must not be
     /// followed by a jump to the wall-clock frame index. Recording starts on
