@@ -76,6 +76,39 @@ jobs:
           path: target/release/scythe
           if-no-files-found: error
 
+  build-arch:
+    # The Ubuntu job links FFmpeg 6.1 (libavcodec.so.60), which an Arch host
+    # running FFmpeg 9 (libavcodec.so.63) cannot load. This job builds against
+    # the current Arch packages so the artifact runs on rolling-release
+    # desktops, and is what feature testing on such a machine uses.
+    name: Arch Linux (build for rolling-release hosts)
+    runs-on: ubuntu-24.04
+    container: archlinux:latest
+    steps:
+      - name: Install System Dependencies
+        run: |
+          pacman -Syu --noconfirm --needed \
+            base-devel git rust clang pkgconf \
+            ffmpeg pipewire libva libxcb alsa-lib
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build release
+        run: cargo build --locked --release
+
+      - name: Verify binary
+        run: |
+          ./target/release/scythe --help | head -3
+          objdump -p target/release/scythe | awk '/NEEDED/ {print $2}' | grep -E 'libav|libsw'
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: scythe-arch-x86_64
+          path: target/release/scythe
+          if-no-files-found: error
+
   build-windows:
     name: Windows (cross build)
     runs-on: windows-latest
