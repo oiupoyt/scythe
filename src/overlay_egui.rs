@@ -4302,6 +4302,33 @@ pub fn run_egui_toast(title: &str, subtitle: &str, icon: crate::overlay::ToastIc
 mod tests {
     use super::*;
 
+    /// Custom widgets sense clicks, so egui makes them keyboard-focusable
+    /// and activates them with Space or Enter. They painted their highlight
+    /// only on hover, so Tab moved an invisible focus. Every custom
+    /// highlight must also show for keyboard focus.
+    #[test]
+    fn test_custom_widget_highlights_show_keyboard_focus() {
+        let src = include_str!("overlay_egui.rs");
+        let body = &src[..src.find("#[cfg(test)]").unwrap()];
+        let hover_only: Vec<&str> = body
+            .lines()
+            .filter(|l| {
+                let t = l.trim_start();
+                t.starts_with("let ") && t.contains(".hovered();") && !t.contains("has_focus")
+            })
+            .collect();
+        assert!(hover_only.is_empty(), "highlights that ignore keyboard focus:\n{}", hover_only.join("\n"));
+    }
+
+    /// The toggle switch had no hover or focus state at all.
+    #[test]
+    fn test_toggle_switch_shows_hover_and_focus() {
+        let src = include_str!("overlay_egui.rs");
+        let start = src.find("fn toggle_switch(").expect("toggle_switch");
+        let body = &src[start..start + src[start..].find("\n}\n").unwrap()];
+        assert!(body.contains("is_highlighted(&response)"), "toggle_switch draws no hover or focus state");
+    }
+
     /// Save & Close ran register_hyprland_binds on the UI thread: dozens of
     /// sequential hyprctl calls (65-73 on the first save, since rules are
     /// set up once per process and the overlay is a new process each time),
