@@ -314,8 +314,59 @@ pub fn clean_toast_pid() {
     let _ = std::fs::remove_file(get_toast_pid_path());
 }
 
+/// Largest IPC message accepted, in bytes. Commands and status replies are
+/// a few hundred bytes of JSON.
+pub const MAX_FRAME_LEN: usize = 64 * 1024;
+
+/// Reads one length-prefixed (u32 little-endian) IPC frame.
+pub fn read_frame(stream: &mut impl std::io::Read) -> std::io::Result<Vec<u8>> {
+    let mut len_buf = [0u8; 4];
+    stream.read_exact(&mut len_buf)?;
+    // Current behaviour: allocate whatever length the peer sent.
+    let len = u32::from_le_bytes(len_buf) as usize;
+    let mut payload = vec![0u8; len];
+    stream.read_exact(&mut payload)?;
+    Ok(payload)
+}
+
 #[cfg(test)]
 mod tests {
+
+    /// A peer that sends a huge length prefix must not make the daemon
+    /// allocate it. "GET " from an HTTP client parses as ~542 MB, and with
+    /// panic=abort a failed allocation kills the daemon and the replay.
+    #[test]
+    fn test_oversized_length_prefix_is_rejected_without_allocating() {
+        let mut wire = Vec::new();
+        wire.extend_from_slice(&u32::MAX.to_le_bytes());
+        wire.extend_from_slice(b"{}");
+        let mut r = std::io::Cursor::new(wire);
+        let err = read_frame(&mut r).expect_err("accepted a 4 GiB frame");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn test_http_request_is_rejected() {
+        let mut r = std::io::Cursor::new(b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n".to_vec());
+        assert!(read_frame(&mut r).is_err());
+    }
+
+    #[test]
+    fn test_normal_frame_round_trips() {
+        let body = br#"{"GetStatus":null}"#;
+        let mut wire = (body.len() as u32).to_le_bytes().to_vec();
+        wire.extend_from_slice(body);
+        let mut r = std::io::Cursor::new(wire);
+        assert_eq!(read_frame(&mut r).unwrap(), body.to_vec());
+    }
+
+    #[test]
+    fn test_frame_at_the_cap_is_accepted() {
+        let body = vec![b' '; MAX_FRAME_LEN];
+        let mut wire = (body.len() as u32).to_le_bytes().to_vec();
+        wire.extend_from_slice(&body);
+        assert!(read_frame(&mut std::io::Cursor::new(wire)).is_ok());
+    }
     use super::*;
 
     #[test]
