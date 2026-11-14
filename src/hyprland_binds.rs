@@ -280,16 +280,21 @@ pub fn unregister_hyprland_binds(config: &ScytheConfig) {
         return;
     }
 
-    let hotkeys = [
+    for hotkey in unregister_targets(config) {
+        unbind_hotkey(hotkey);
+    }
+}
+
+/// Hotkeys the daemon removes from the compositor when it stops.
+#[cfg(unix)]
+fn unregister_targets(config: &ScytheConfig) -> Vec<&String> {
+    // Current behaviour: only four of the eight registered hotkeys.
+    vec![
         &config.menu_hotkey,
         &config.save_hotkey,
         &config.record_hotkey,
         &config.cursor_hotkey,
-    ];
-
-    for hotkey in hotkeys {
-        unbind_hotkey(hotkey);
-    }
+    ]
 }
 
 #[cfg(not(unix))]
@@ -344,6 +349,23 @@ pub fn spawn_hyprland_reload_watcher() {}
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    /// Every hotkey that register_hyprland_binds binds must be unbound on
+    /// shutdown. Pause, screenshot, mute-mic and mute-sys were left bound,
+    /// so after `scythe --quit` pressing the pause key respawned the daemon
+    /// and started a recording.
+    #[test]
+    fn test_shutdown_unbinds_every_registered_hotkey() {
+        let cfg = ScytheConfig::default();
+        let targets: Vec<&str> = unregister_targets(&cfg).into_iter().map(String::as_str).collect();
+        for registered in [
+            &cfg.menu_hotkey, &cfg.save_hotkey, &cfg.record_hotkey, &cfg.pause_hotkey,
+            &cfg.cursor_hotkey, &cfg.screenshot_hotkey, &cfg.mute_mic_hotkey, &cfg.mute_sys_hotkey,
+        ] {
+            assert!(targets.contains(&registered.as_str()), "{} stays bound after shutdown", registered);
+        }
+    }
+
     #[test]
     fn test_hotkey_to_hyprland_conversion() {
         assert_eq!(
@@ -388,4 +410,5 @@ mod tests {
         );
     }
 }
+
 
