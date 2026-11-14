@@ -198,6 +198,19 @@ fn shutdown_daemon(shutdown_tx: &crossbeam_channel::Sender<crossbeam_channel::Se
     std::process::exit(0);
 }
 
+/// Number of packets the replay ring needs for the configured replay.
+fn replay_ring_capacity(config: &crate::config::ScytheConfig) -> usize {
+    // Current behaviour: the startup formula, which differs in low-power mode.
+    if !config.replay_enabled {
+        return 1;
+    }
+    if config.record_low_power {
+        (config.replay_duration_sec as usize) * (config.fps as usize + 15) + 30
+    } else {
+        (config.replay_duration_sec as usize) * (config.fps as usize + 50) + 60
+    }
+}
+
 fn mask_stream_url(url: &str) -> String {
     if let Some((base, key)) = url.rsplit_once('/')
         && key.len() > 4 {
@@ -1439,6 +1452,51 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn replay_cfg(fps: u32, secs: u32, low_power: bool) -> crate::config::ScytheConfig {
+        crate::config::ScytheConfig {
+            replay_enabled: true,
+            fps,
+            replay_duration_sec: secs,
+            record_low_power: low_power,
+            ..Default::default()
+        }
+    }
+
+    /// The ring must hold the requested replay length: one video packet
+    /// per frame plus up to 50 audio packets a second (Opus, 20 ms frames).
+    /// Low-power mode does not change the audio rate, but it sized the ring
+    /// as fps+15 a second, so a 60 s replay at 60 fps held only about 41 s.
+    #[test]
+    fn test_ring_holds_full_replay_in_low_power_mode() {
+        let (fps, secs) = (60u32, 60u32);
+        let needed = (secs * (fps + 50)) as usize;
+        assert!(replay_ring_capacity(&replay_cfg(fps, secs, true)) >= needed);
+        assert!(replay_ring_capacity(&replay_cfg(fps, secs, false)) >= needed);
+    }
+
+    /// Startup and reload must compute the same size. They used different
+    /// formulas, so with low-power on every config reload resized the ring
+    /// and silently emptied the replay buffer.
+    #[test]
+    fn test_reload_does_not_resize_an_unchanged_ring() {
+        let src = include_str!("daemon.rs");
+        let body = &src[..src.find("#[cfg(test)]").unwrap()];
+        // Built from parts so this test does not match its own source.
+        let inline_formula = ["(config.replay_duration_sec as usize) * (config.fps as usize", " +"].concat();
+        assert_eq!(
+            body.matches(&inline_formula).count(),
+            0,
+            "the ring is still sized inline instead of through replay_ring_capacity, so startup and reload can disagree"
+        );
+    }
+
+    #[test]
+    fn test_ring_is_minimal_when_replay_is_off() {
+        let mut cfg = replay_cfg(60, 60, false);
+        cfg.replay_enabled = false;
+        assert_eq!(replay_ring_capacity(&cfg), 1);
+    }
 
     /// Shutdown must wait for the recorder to report that the recording
     /// file is finalized, however long the faststart rewrite takes. A fixed
