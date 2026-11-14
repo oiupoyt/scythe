@@ -422,8 +422,8 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
                     std::thread::spawn(move || {
                         let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(1500)));
                         let _ = stream.set_write_timeout(Some(std::time::Duration::from_millis(1500)));
-                        if let Ok(payload) = crate::ipc::read_frame(&mut stream) {
-                            if let Ok(cmd) = serde_json::from_slice::<Command>(&payload) {
+                        if let Ok(payload) = crate::ipc::read_frame(&mut stream)
+                            && let Ok(cmd) = serde_json::from_slice::<Command>(&payload) {
                                     match cmd {
                                         Command::GetStatus => {
                                             let rec = is_recording_state_ipc.load(Ordering::SeqCst);
@@ -494,7 +494,6 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
                                             let _ = cmd_tx_ipc.send(other);
                                         }
                                     }
-                                }
                         }
                     });
                 }
