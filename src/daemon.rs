@@ -109,9 +109,22 @@ impl VideoPtsClock {
         self.last = pts;
         pts
     }
+
+    /// Lower bound for the pts of the next frame this clock will issue.
+    fn next_floor(&self, elapsed: std::time::Duration, fps: u32) -> i64 {
+        let raw_pts = (elapsed.as_secs_f64() * fps as f64).round() as i64;
+        raw_pts.min(self.last + 1).max(0)
+    }
 }
 
 /// Decides which encoded packet a recording or stream segment may start on.
+///
+/// The encoder pipelines several frames and emits a periodic IDR, so when a
+/// segment is requested a keyframe for an earlier frame may still be in
+/// flight. Opening the segment on it puts a stale picture first and the
+/// forced keyframe for the requested frame seconds of timeline later. Only a
+/// keyframe at or after the frame current when the request arrived may open
+/// the segment.
 struct SegmentStartGate {
     start_pts: i64,
 }
@@ -122,8 +135,7 @@ impl SegmentStartGate {
     }
 
     fn accepts(&self, is_keyframe: bool, pts: i64) -> bool {
-        // Current daemon behaviour: any keyframe opens the segment.
-        is_keyframe && (pts >= self.start_pts || pts < self.start_pts)
+        is_keyframe && pts >= self.start_pts
     }
 }
 
@@ -643,7 +655,6 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
         let mut normal_muxer: Option<Muxer> = None;
         let mut normal_recording = false;
         let mut normal_waiting_keyframe = false;
-        let mut normal_keyframe_timeout: usize = 0;
         let mut last_replay_save = std::time::Instant::now() - std::time::Duration::from_secs(10);
         let mut rec_base_video_pts: i64 = 0;
         let mut rec_base_audio_pts: i64 = -1;
@@ -761,6 +772,8 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
 
         let stream_start = std::time::Instant::now();
         let mut video_pts_clock = VideoPtsClock::new();
+        let mut normal_start_gate = SegmentStartGate::new(0);
+        let mut stream_start_gate = SegmentStartGate::new(0);
         let target_frame_duration = std::time::Duration::from_nanos(1_000_000_000 / config.fps.max(1) as u64);
         let mut ticker = crossbeam_channel::tick(target_frame_duration);
         let mut latest_frame: Option<Frame> = None;
@@ -777,9 +790,8 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
                         for mut pkt in packets {
                             pkt.set_stream_index(0);
                             if normal_recording {
-                                if normal_waiting_keyframe && (pkt.is_keyframe() || normal_keyframe_timeout >= 20) {
+                                if normal_waiting_keyframe && normal_start_gate.accepts(pkt.is_keyframe(), pkt.pts()) {
                                     normal_waiting_keyframe = false;
-                                    normal_keyframe_timeout = 0;
                                     rec_base_video_pts = pkt.pts();
                                     rec_base_audio_pts = -1;
                                     let codec_ctx = codec_ctx_ptr as *mut ffmpeg_next::ffi::AVCodecContext;
@@ -798,8 +810,6 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
                                             rec_start_clone.store(0, Ordering::SeqCst);
                                         }
                                     }
-                                } else if normal_waiting_keyframe {
-                                    normal_keyframe_timeout += 1;
                                 }
 
                                 if !normal_waiting_keyframe
@@ -810,7 +820,7 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
                             }
 
                             if let Some(ref tx) = stream_sender {
-                                if stream_waiting_keyframe && pkt.is_keyframe() {
+                                if stream_waiting_keyframe && stream_start_gate.accepts(pkt.is_keyframe(), pkt.pts()) {
                                     stream_waiting_keyframe = false;
                                     stream_base_video_pts = pkt.pts();
                                     stream_base_audio_pts = -1;
@@ -965,7 +975,9 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
                                 if !normal_recording {
                                     normal_recording = true;
                                     normal_waiting_keyframe = true;
-                                    normal_keyframe_timeout = 0;
+                                    normal_start_gate = SegmentStartGate::new(
+                                        video_pts_clock.next_floor(stream_start.elapsed(), config.fps),
+                                    );
                                     has_new_frame = true;
                                     encoder.force_keyframe();
                                     rec_state_clone.store(true, Ordering::SeqCst);
@@ -982,7 +994,6 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
                                 }
                                 normal_recording = false;
                                 normal_waiting_keyframe = false;
-                                normal_keyframe_timeout = 0;
                                 rec_base_video_pts = 0;
                                 rec_base_audio_pts = -1;
                                 rec_state_clone.store(false, Ordering::SeqCst);
@@ -998,7 +1009,6 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
                                     }
                                     normal_recording = false;
                                     normal_waiting_keyframe = false;
-                                    normal_keyframe_timeout = 0;
                                     rec_base_video_pts = 0;
                                     rec_base_audio_pts = -1;
                                     rec_state_clone.store(false, Ordering::SeqCst);
@@ -1008,7 +1018,9 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
                                 } else {
                                     normal_recording = true;
                                     normal_waiting_keyframe = true;
-                                    normal_keyframe_timeout = 0;
+                                    normal_start_gate = SegmentStartGate::new(
+                                        video_pts_clock.next_floor(stream_start.elapsed(), config.fps),
+                                    );
                                     has_new_frame = true;
                                     encoder.force_keyframe();
                                     rec_state_clone.store(true, Ordering::SeqCst);
@@ -1043,6 +1055,11 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
                                     );
                                     stream_sender = Some(tx);
                                     stream_waiting_keyframe = true;
+                                    stream_start_gate = SegmentStartGate::new(
+                                        video_pts_clock.next_floor(stream_start.elapsed(), config.fps),
+                                    );
+                                    has_new_frame = true;
+                                    encoder.force_keyframe();
                                     stream_base_video_pts = 0;
                                     stream_base_audio_pts = -1;
                                     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
@@ -1088,6 +1105,11 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
                                         );
                                         stream_sender = Some(tx);
                                         stream_waiting_keyframe = true;
+                                        stream_start_gate = SegmentStartGate::new(
+                                            video_pts_clock.next_floor(stream_start.elapsed(), config.fps),
+                                        );
+                                        has_new_frame = true;
+                                        encoder.force_keyframe();
                                         stream_base_video_pts = 0;
                                         stream_base_audio_pts = -1;
                                         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
