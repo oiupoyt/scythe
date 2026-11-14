@@ -994,6 +994,24 @@ impl Drop for AudioEncoder {
 mod tests {
     use super::*;
 
+    /// encode_cached_frame re-sends staged_nv12 whenever has_frame is set.
+    /// The direct DMA-BUF path encodes a mapped surface and never writes
+    /// staged_nv12, so it must not set has_frame: otherwise every tick with
+    /// no new frame re-encodes uninitialised or stale NV12 data.
+    #[test]
+    fn test_cached_frame_flag_set_only_where_staged_buffer_is_written() {
+        let src = include_str!("encoder.rs");
+        let vaapi = &src[src.find("impl VaapiEncoder").expect("VaapiEncoder impl")..src.find("impl Drop for VaapiEncoder").expect("Drop")];
+        for (idx, _) in vaapi.match_indices("self.has_frame = true;") {
+            let before = &vaapi[idx.saturating_sub(700)..idx];
+            assert!(
+                before.contains("(*self.staged_nv12).data.as_ptr()"),
+                "has_frame is set where staged_nv12 was not written:\n{}",
+                &vaapi[idx.saturating_sub(300)..idx + 30]
+            );
+        }
+    }
+
     #[test]
     fn test_audio_encoder_global_header() {
         let enc = AudioEncoder::new(48000, 2).expect("AudioEncoder creation");
