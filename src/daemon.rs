@@ -216,9 +216,14 @@ fn replay_ring_capacity(config: &crate::config::ScytheConfig) -> usize {
 
 /// Whether any global hotkey differs between two configs.
 fn hotkeys_changed(old: &crate::config::ScytheConfig, new: &crate::config::ScytheConfig) -> bool {
-    // Current behaviour: every reload rebinds.
-    let _ = (old, new);
-    true
+    old.save_hotkey != new.save_hotkey
+        || old.menu_hotkey != new.menu_hotkey
+        || old.record_hotkey != new.record_hotkey
+        || old.cursor_hotkey != new.cursor_hotkey
+        || old.screenshot_hotkey != new.screenshot_hotkey
+        || old.pause_hotkey != new.pause_hotkey
+        || old.mute_mic_hotkey != new.mute_mic_hotkey
+        || old.mute_sys_hotkey != new.mute_sys_hotkey
 }
 
 fn mask_stream_url(url: &str) -> String {
@@ -1003,6 +1008,7 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
                                     std::thread::sleep(std::time::Duration::from_millis(150));
                                     std::process::exit(0);
                                 }
+                                let rebind_needed = hotkeys_changed(&config, &new_config);
                                 config = new_config;
                                 replay_effective = effective_replay_active(&config);
                                 replay_state_clone.store(replay_effective, Ordering::SeqCst);
@@ -1019,7 +1025,11 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
                                     #[cfg(target_os = "linux")]
                                     unsafe { libc::malloc_trim(0); }
                                 }
-                                crate::hyprland_binds::register_hyprland_binds(&config);
+                                if rebind_needed {
+                                    // About 32 hyprctl calls; off the recorder thread so
+                                    // encoding does not stall while they run.
+                                    crate::hyprland_binds::register_hyprland_binds_async(&config);
+                                }
                                 audio_capture = match crate::capture::audio::AudioCapture::new_with_device_mode_volumes_and_levels(
                                     audio_tx_clone.clone(),
                                     Some(&config.audio_device),
