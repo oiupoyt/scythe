@@ -3673,6 +3673,32 @@ fn render_scythe_notification_card(
     );
 }
 
+/// Outcome of one key press while a hotkey is being captured.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum KeybindCapture {
+    Bound(String),
+    NeedsModifier,
+    Cancel,
+}
+
+/// Turns a key press into a hotkey string. Current behaviour: any key
+/// binds, and `command && !ctrl` adds Super.
+fn capture_keybind(key: egui::Key, modifiers: egui::Modifiers) -> KeybindCapture {
+    if key == egui::Key::Escape {
+        return KeybindCapture::Cancel;
+    }
+    let Some(key_name) = format_egui_key(key) else {
+        return KeybindCapture::NeedsModifier;
+    };
+    let mut parts: Vec<&str> = Vec::new();
+    if modifiers.ctrl { parts.push("Ctrl"); }
+    if modifiers.alt { parts.push("Alt"); }
+    if modifiers.shift { parts.push("Shift"); }
+    if modifiers.command && !modifiers.ctrl { parts.push("Super"); }
+    parts.push(&key_name);
+    KeybindCapture::Bound(parts.join("+"))
+}
+
 /// Whether a slider interaction should be saved and pushed to the daemon.
 ///
 /// A commit saves the config and makes the daemon rebuild audio capture, so
@@ -4232,6 +4258,52 @@ pub fn run_egui_toast(title: &str, subtitle: &str, icon: crate::overlay::ToastIc
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn mods(ctrl: bool, alt: bool, shift: bool) -> egui::Modifiers {
+        egui::Modifiers { alt, ctrl, shift, mac_cmd: false, command: ctrl }
+    }
+
+    /// A bare letter bound as a global hotkey hijacks typing everywhere in
+    /// the session. Capture must require a modifier for ordinary keys.
+    #[test]
+    fn test_capture_rejects_bare_letter() {
+        assert_eq!(capture_keybind(egui::Key::A, mods(false, false, false)), KeybindCapture::NeedsModifier);
+        assert_eq!(capture_keybind(egui::Key::Num5, mods(false, false, false)), KeybindCapture::NeedsModifier);
+    }
+
+    /// Function keys are not typed in text, so a bare F-key is fine.
+    #[test]
+    fn test_capture_allows_bare_function_key() {
+        assert_eq!(capture_keybind(egui::Key::F9, mods(false, false, false)), KeybindCapture::Bound("F9".into()));
+    }
+
+    #[test]
+    fn test_capture_builds_modifier_combo() {
+        assert_eq!(capture_keybind(egui::Key::R, mods(true, false, true)), KeybindCapture::Bound("Ctrl+Shift+R".into()));
+        assert_eq!(capture_keybind(egui::Key::Z, mods(false, true, false)), KeybindCapture::Bound("Alt+Z".into()));
+    }
+
+    /// egui reports `command` equal to `ctrl` on Linux and Windows, so
+    /// Ctrl+X must not come out as Ctrl+Super+X or Super+X.
+    #[test]
+    fn test_capture_does_not_invent_super() {
+        assert_eq!(capture_keybind(egui::Key::X, mods(true, false, false)), KeybindCapture::Bound("Ctrl+X".into()));
+    }
+
+    #[test]
+    fn test_capture_escape_cancels() {
+        assert_eq!(capture_keybind(egui::Key::Escape, mods(false, false, false)), KeybindCapture::Cancel);
+    }
+
+    /// Changing settings tab must end capture, or the next key typed in
+    /// another tab (the stream key field, say) becomes a global hotkey.
+    #[test]
+    fn test_settings_tab_click_stops_keybind_capture() {
+        let src = include_str!("overlay_egui.rs");
+        let body = &src[..src.find("mod tests {").unwrap()];
+        let direct = ["if btn_resp.clicked() {\n                            self.active_settings_tab = tab;", "\n                            self.current_view"].concat();
+        assert!(!body.contains(&direct), "settings tab click bypasses switch_view and leaves keybind capture running");
+    }
 
     /// No unit test may write the user's real config, rewrite autostart
     /// files, run hyprctl or reload the live daemon. The settings-sync test
