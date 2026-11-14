@@ -470,6 +470,31 @@ fn open_folder(path: &std::path::Path) {
 }
 
 // Cross-platform folder picker dialog
+/// Which setting a folder picker result belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FolderTarget {
+    Recording,
+    Screenshot,
+}
+
+/// The folder settings a picker can change.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PickedDirs {
+    output: String,
+    screenshot: String,
+}
+
+/// Applies a folder picker result. Returns true if anything changed.
+fn apply_folder_pick(dirs: &mut PickedDirs, target: FolderTarget, picked: String) -> bool {
+    // Current behaviour: every pick goes to the recording folder.
+    let _ = target;
+    if picked.is_empty() {
+        return false;
+    }
+    dirs.output = picked;
+    true
+}
+
 fn pick_folder(current_dir: &str, tx: Sender<String>, is_active: Arc<AtomicBool>) {
     is_active.store(true, Ordering::SeqCst);
     let cur = current_dir.to_string();
@@ -4215,6 +4240,34 @@ mod tests {
     #[test]
     fn test_slider_idle_does_not_commit() {
         assert!(!slider_should_commit(false, false, false));
+    }
+
+    /// The Screenshot tab's Browse used the same picker channel as the
+    /// recording folder, and every pick was applied to the recording folder.
+    /// Choosing a screenshot folder silently moved where recordings go and
+    /// never changed the screenshot folder.
+    #[test]
+    fn test_screenshot_folder_pick_sets_screenshot_dir_only() {
+        let mut dirs = PickedDirs { output: "/rec".into(), screenshot: "/shots".into() };
+        apply_folder_pick(&mut dirs, FolderTarget::Screenshot, "/new/shots".into());
+        assert_eq!(dirs.screenshot, "/new/shots");
+        assert_eq!(dirs.output, "/rec", "screenshot pick changed the recording folder");
+    }
+
+    #[test]
+    fn test_recording_folder_pick_sets_output_dir_only() {
+        let mut dirs = PickedDirs { output: "/rec".into(), screenshot: "/shots".into() };
+        apply_folder_pick(&mut dirs, FolderTarget::Recording, "/new/rec".into());
+        assert_eq!(dirs.output, "/new/rec");
+        assert_eq!(dirs.screenshot, "/shots");
+    }
+
+    /// A cancelled picker returns an empty string; nothing changes.
+    #[test]
+    fn test_cancelled_pick_changes_nothing() {
+        let mut dirs = PickedDirs { output: "/rec".into(), screenshot: "/shots".into() };
+        apply_folder_pick(&mut dirs, FolderTarget::Screenshot, String::new());
+        assert_eq!((dirs.output.as_str(), dirs.screenshot.as_str()), ("/rec", "/shots"));
     }
 
     #[test]
