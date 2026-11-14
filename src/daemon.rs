@@ -170,6 +170,15 @@ fn daemon_restart_args(current: impl Iterator<Item = String>) -> Vec<String> {
     out
 }
 
+/// Waits for the recorder thread to confirm that recordings are finalized.
+/// Returns false if it did not answer within `limit`.
+fn wait_for_shutdown_ack(ack: &crossbeam_channel::Receiver<()>, limit: std::time::Duration) -> bool {
+    // Current behaviour: a fixed 350 ms sleep, whatever the recorder is doing.
+    let _ = (ack, limit);
+    std::thread::sleep(std::time::Duration::from_millis(350));
+    true
+}
+
 fn mask_stream_url(url: &str) -> String {
     if let Some((base, key)) = url.rsplit_once('/')
         && key.len() > 4 {
@@ -1378,6 +1387,34 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Shutdown must wait for the recorder to report that the recording
+    /// file is finalized, however long the faststart rewrite takes. A fixed
+    /// 350 ms sleep cut long recordings off mid-rewrite.
+    #[test]
+    fn test_shutdown_waits_for_finalize_ack() {
+        let (ack_tx, ack_rx) = crossbeam_channel::bounded::<()>(1);
+        std::thread::spawn(move || {
+            // A long recording: the moov rewrite takes over a second.
+            std::thread::sleep(std::time::Duration::from_millis(1200));
+            let _ = ack_tx.send(());
+        });
+        let started = std::time::Instant::now();
+        let finalized = wait_for_shutdown_ack(&ack_rx, std::time::Duration::from_secs(30));
+        assert!(finalized, "shutdown gave up before the recorder finished");
+        assert!(started.elapsed() >= std::time::Duration::from_millis(1100), "returned before the ack");
+    }
+
+    /// A recorder that never answers (wedged encoder) must not keep the
+    /// daemon alive forever: the wait has an upper bound.
+    #[test]
+    fn test_shutdown_wait_is_bounded() {
+        let (_ack_tx, ack_rx) = crossbeam_channel::bounded::<()>(1);
+        let started = std::time::Instant::now();
+        let finalized = wait_for_shutdown_ack(&ack_rx, std::time::Duration::from_millis(300));
+        assert!(!finalized);
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    }
 
     fn args(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
