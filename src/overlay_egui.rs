@@ -4219,6 +4219,29 @@ pub fn run_egui_toast(title: &str, subtitle: &str, icon: crate::overlay::ToastIc
 mod tests {
     use super::*;
 
+    /// No unit test may write the user's real config, rewrite autostart
+    /// files, run hyprctl or reload the live daemon. The settings-sync test
+    /// used to build a full ScytheOverlayApp and call save_and_apply_settings,
+    /// so every `cargo test` on a desktop overwrote ~/.config/scythe and
+    /// restarted the running recorder.
+    #[test]
+    fn test_unit_tests_do_not_touch_the_real_config() {
+        let src = include_str!("overlay_egui.rs");
+        let tests = &src[src.find("mod tests {").expect("tests module")..];
+        // Built from parts so this test does not match its own source.
+        let forbidden_calls = [
+            ["ScytheOverlayApp", "::new()"].concat(),
+            [".save_and_apply", "_settings()"].concat(),
+        ];
+        for forbidden in forbidden_calls.iter() {
+            assert!(
+                !tests.contains(forbidden.as_str()),
+                "a unit test calls {} which has real side effects",
+                forbidden
+            );
+        }
+    }
+
     /// Dragging a volume slider changes its value on almost every frame.
     /// Each committed change saves the config and makes the daemon rebuild
     /// audio capture, so committing mid-drag produced dozens of audio
