@@ -3614,6 +3614,13 @@ fn render_scythe_notification_card(
     );
 }
 
+/// Whether a slider interaction should be saved and pushed to the daemon.
+fn slider_should_commit(changed: bool, dragging: bool, drag_stopped: bool) -> bool {
+    // Current behaviour: commit on every change, including mid-drag.
+    let _ = (dragging, drag_stopped);
+    changed
+}
+
 impl eframe::App for ScytheOverlayApp {
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         [0.0, 0.0, 0.0, 0.0]
@@ -4163,6 +4170,43 @@ pub fn run_egui_toast(title: &str, subtitle: &str, icon: crate::overlay::ToastIc
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Dragging a volume slider changes its value on almost every frame.
+    /// Each committed change saves the config and makes the daemon rebuild
+    /// audio capture, so committing mid-drag produced dozens of audio
+    /// restarts per second and dropouts in the recording.
+    #[test]
+    fn test_slider_does_not_commit_while_dragging() {
+        // A 60-frame drag: value changes every frame, released on the last.
+        let mut commits = 0;
+        for frame in 0..60 {
+            let released = frame == 59;
+            if slider_should_commit(true, !released, released) {
+                commits += 1;
+            }
+        }
+        assert_eq!(commits, 1, "a single drag committed {} times", commits);
+    }
+
+    /// Changes that are not part of a drag (arrow keys, clicking the track)
+    /// commit immediately.
+    #[test]
+    fn test_slider_commits_on_keyboard_or_click_change() {
+        assert!(slider_should_commit(true, false, false));
+    }
+
+    /// Releasing a drag commits, even when the last frame did not change the
+    /// value.
+    #[test]
+    fn test_slider_commits_on_drag_release_without_change() {
+        assert!(slider_should_commit(false, false, true));
+    }
+
+    /// Nothing happened: nothing to commit.
+    #[test]
+    fn test_slider_idle_does_not_commit() {
+        assert!(!slider_should_commit(false, false, false));
+    }
 
     #[test]
     fn test_gsr_3_column_geometry_non_overlapping() {
