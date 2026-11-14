@@ -198,17 +198,20 @@ fn shutdown_daemon(shutdown_tx: &crossbeam_channel::Sender<crossbeam_channel::Se
     std::process::exit(0);
 }
 
-/// Number of packets the replay ring needs for the configured replay.
+/// Audio packets per second: Opus encodes 20 ms frames. AAC frames are
+/// longer (about 47 a second at 48 kHz), so this also covers AAC.
+const AUDIO_PACKETS_PER_SEC: usize = 50;
+
+/// Number of packets the replay ring needs for the configured replay: one
+/// video packet per frame plus the audio packets, for the whole duration,
+/// with a little slack. Startup and reload both use this, so an unchanged
+/// config never resizes (and empties) the ring.
 fn replay_ring_capacity(config: &crate::config::ScytheConfig) -> usize {
-    // Current behaviour: the startup formula, which differs in low-power mode.
     if !config.replay_enabled {
         return 1;
     }
-    if config.record_low_power {
-        (config.replay_duration_sec as usize) * (config.fps as usize + 15) + 30
-    } else {
-        (config.replay_duration_sec as usize) * (config.fps as usize + 50) + 60
-    }
+    let per_sec = config.fps as usize + AUDIO_PACKETS_PER_SEC;
+    config.replay_duration_sec as usize * per_sec + 60
 }
 
 fn mask_stream_url(url: &str) -> String {
@@ -735,16 +738,7 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
         let video_time_base = unsafe { (*(codec_ctx_ptr as *mut ffmpeg_next::ffi::AVCodecContext)).time_base };
         let audio_time_base = audio_codec_ctx_ptr.map(|p| unsafe { (*(p as *mut ffmpeg_next::ffi::AVCodecContext)).time_base });
 
-        let ring_capacity = if config.replay_enabled {
-            if config.record_low_power {
-                (config.replay_duration_sec as usize) * (config.fps as usize + 15) + 30
-            } else {
-                (config.replay_duration_sec as usize) * (config.fps as usize + 50) + 60
-            }
-        } else {
-            1
-        };
-        let mut ring = HeapRb::<Packet>::new(ring_capacity);
+        let mut ring = HeapRb::<Packet>::new(replay_ring_capacity(&config));
         let mut normal_muxer: Option<Muxer> = None;
         let mut normal_recording = false;
         let mut normal_waiting_keyframe = false;
@@ -1013,11 +1007,7 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
                                 }
                                 audio_muted_clone.store(config.audio_mode == "muted", Ordering::SeqCst);
                                 println!("Daemon config reloaded! Audio mode: {} replay_effective: {}", config.audio_mode, replay_effective);
-                                let new_capacity = if config.replay_enabled {
-                                    (config.replay_duration_sec as usize) * (config.fps as usize + 50) + 60
-                                } else {
-                                    1
-                                };
+                                let new_capacity = replay_ring_capacity(&config);
                                 if ring.capacity().get() != new_capacity {
                                     ring = HeapRb::<Packet>::new(new_capacity);
                                     println!("Replay buffer resized to {} packets.", new_capacity);
