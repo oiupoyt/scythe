@@ -2178,8 +2178,7 @@ impl ScytheOverlayApp {
                         );
 
                         if btn_resp.clicked() {
-                            self.active_settings_tab = tab;
-                            self.current_view = ShadowPlayView::Settings(tab);
+                            self.switch_view(ShadowPlayView::Settings(tab), ctx);
                         }
 
                         ui.add_space(3.0);
@@ -3681,8 +3680,13 @@ enum KeybindCapture {
     Cancel,
 }
 
-/// Turns a key press into a hotkey string. Current behaviour: any key
-/// binds, and `command && !ctrl` adds Super.
+/// Turns a key press into a hotkey string.
+///
+/// Ordinary keys need at least one of Ctrl, Alt or Shift: a bare letter or
+/// digit bound globally would swallow that key for typing everywhere.
+/// Function keys may be bound on their own. Super is not offered because
+/// egui on Linux and Windows reports `command` equal to `ctrl`, so it
+/// cannot be told apart from Ctrl.
 fn capture_keybind(key: egui::Key, modifiers: egui::Modifiers) -> KeybindCapture {
     if key == egui::Key::Escape {
         return KeybindCapture::Cancel;
@@ -3690,11 +3694,16 @@ fn capture_keybind(key: egui::Key, modifiers: egui::Modifiers) -> KeybindCapture
     let Some(key_name) = format_egui_key(key) else {
         return KeybindCapture::NeedsModifier;
     };
+    let is_function_key = key_name.len() >= 2
+        && key_name.starts_with('F')
+        && key_name[1..].chars().all(|c| c.is_ascii_digit());
+    if !(modifiers.ctrl || modifiers.alt || modifiers.shift || is_function_key) {
+        return KeybindCapture::NeedsModifier;
+    }
     let mut parts: Vec<&str> = Vec::new();
     if modifiers.ctrl { parts.push("Ctrl"); }
     if modifiers.alt { parts.push("Alt"); }
     if modifiers.shift { parts.push("Shift"); }
-    if modifiers.command && !modifiers.ctrl { parts.push("Super"); }
     parts.push(&key_name);
     KeybindCapture::Bound(parts.join("+"))
 }
@@ -3737,38 +3746,31 @@ impl eframe::App for ScytheOverlayApp {
         // Handle interactive keybind recording mode
         if let Some(action) = self.listening_keybind {
             let mut captured_combo: Option<String> = None;
+            let mut rejected_bare_key = false;
             ctx.input(|i| {
                 for event in &i.events {
                     if let egui::Event::Key { key, pressed: true, modifiers, .. } = event {
-                        if *key == egui::Key::Escape {
-                            captured_combo = Some("CANCEL".to_string());
-                            break;
-                        }
-                        if let Some(key_name) = format_egui_key(*key) {
-                            let k_lower = key_name.to_lowercase();
-                            if ["alt", "ctrl", "control", "shift", "super", "meta", "command"].contains(&k_lower.as_str()) {
-                                continue;
+                        match capture_keybind(*key, *modifiers) {
+                            KeybindCapture::Cancel => {
+                                captured_combo = Some("CANCEL".to_string());
+                                break;
                             }
-                            let mut parts = Vec::new();
-                            if modifiers.ctrl {
-                                parts.push("Ctrl");
+                            KeybindCapture::Bound(combo) => {
+                                captured_combo = Some(combo);
+                                break;
                             }
-                            if modifiers.alt {
-                                parts.push("Alt");
-                            }
-                            if modifiers.shift {
-                                parts.push("Shift");
-                            }
-                            if modifiers.command && !modifiers.ctrl {
-                                parts.push("Super");
-                            }
-                            parts.push(&key_name);
-                            captured_combo = Some(parts.join("+"));
-                            break;
+                            KeybindCapture::NeedsModifier => rejected_bare_key = true,
                         }
                     }
                 }
             });
+            if captured_combo.is_none() && rejected_bare_key {
+                self.show_hud_notification(
+                    "HOTKEY",
+                    "Hold Ctrl, Alt or Shift with the key (F-keys work alone)",
+                    crate::overlay::ToastIcon::Error,
+                );
+            }
 
             if let Some(combo) = captured_combo {
                 if combo == "CANCEL" {
