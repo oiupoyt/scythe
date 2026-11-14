@@ -189,7 +189,7 @@ pub fn send_command(cmd: Command) -> Result<(), Box<dyn std::error::Error + Send
 
 #[cfg(windows)]
 pub fn query_status_port(port: u16) -> Result<DaemonStatus, Box<dyn std::error::Error + Send + Sync>> {
-    use std::io::{Read, Write};
+    use std::io::Write;
     use std::time::Duration;
     use std::net::{SocketAddr, TcpStream};
 
@@ -210,7 +210,7 @@ pub fn query_status_port(port: u16) -> Result<DaemonStatus, Box<dyn std::error::
 }
 
 pub fn query_status() -> Result<DaemonStatus, Box<dyn std::error::Error + Send + Sync>> {
-    use std::io::{Read, Write};
+    use std::io::Write;
     use std::time::Duration;
 
     let payload = serde_json::to_vec(&Command::GetStatus)?;
