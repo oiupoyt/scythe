@@ -2237,18 +2237,24 @@ impl ScytheOverlayApp {
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new("Sys Vol:").size(11.5).color(Color32::WHITE));
                 let mut sv = self.system_volume_pct;
-                if ui.add(egui::Slider::new(&mut sv, 0..=150).suffix("%")).changed() {
+                let resp = ui.add(egui::Slider::new(&mut sv, 0..=150).suffix("%"));
+                if resp.changed() {
                     self.system_volume_pct = sv;
                     self.config.system_volume = sv as f32 / 100.0;
+                }
+                if slider_should_commit(resp.changed(), resp.dragged(), resp.drag_stopped()) {
                     let _ = self.config.save();
                     ScytheConfig::notify_daemon_reload();
                 }
                 ui.add_space(10.0);
                 ui.label(egui::RichText::new("Mic Vol:").size(11.5).color(Color32::WHITE));
                 let mut mv = self.mic_volume_pct;
-                if ui.add(egui::Slider::new(&mut mv, 0..=150).suffix("%")).changed() {
+                let resp = ui.add(egui::Slider::new(&mut mv, 0..=150).suffix("%"));
+                if resp.changed() {
                     self.mic_volume_pct = mv;
                     self.config.mic_volume = mv as f32 / 100.0;
+                }
+                if slider_should_commit(resp.changed(), resp.dragged(), resp.drag_stopped()) {
                     let _ = self.config.save();
                     ScytheConfig::notify_daemon_reload();
                 }
@@ -3615,10 +3621,13 @@ fn render_scythe_notification_card(
 }
 
 /// Whether a slider interaction should be saved and pushed to the daemon.
+///
+/// A commit saves the config and makes the daemon rebuild audio capture, so
+/// it happens once when a drag ends, or right away for a change that is not
+/// part of a drag (arrow keys, a click on the track). The slider still shows
+/// the live value while dragging; only the commit waits.
 fn slider_should_commit(changed: bool, dragging: bool, drag_stopped: bool) -> bool {
-    // Current behaviour: commit on every change, including mid-drag.
-    let _ = (dragging, drag_stopped);
-    changed
+    drag_stopped || (changed && !dragging)
 }
 
 impl eframe::App for ScytheOverlayApp {
