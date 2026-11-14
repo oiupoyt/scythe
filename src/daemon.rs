@@ -76,37 +76,32 @@ fn spawn_overlay_once() {
 
 /// Assigns presentation timestamps, in frame units, to encoded video frames.
 ///
-/// Timestamps are measured from the first frame ever encoded, not from when
-/// the capture pipeline started. The daemon idles without encoding until
-/// something consumes frames, so measuring from pipeline start put a jump the
-/// length of that idle time right after the first keyframe, and a recording
-/// begun after N idle seconds froze for N seconds.
+/// Timestamps sit on the pipeline timeline (frames since capture started),
+/// which audio shares by counting samples from the same start; the replay
+/// saver pairs the two by absolute time.
 ///
-/// The timeline is never rewound: the encoder lives for the whole daemon, so
-/// later segments continue from where the last one stopped. The jump across
-/// an idle stretch lands just before the segment's forced keyframe, where the
-/// recording and replay rebasing cut it off.
+/// The daemon does not encode while idle. The first frame after an idle
+/// stretch therefore takes its timeline value directly, so the jump across
+/// the idle time falls before that frame rather than after it. Recording
+/// and replay both cut from that frame (a forced keyframe), so no gap
+/// reaches the file. Pinning the first frame to 0 instead put the whole
+/// idle period between the opening keyframe and the next frame.
 struct VideoPtsClock {
     last: i64,
-    origin: Option<std::time::Duration>,
 }
 
 impl VideoPtsClock {
     fn new() -> Self {
-        Self { last: -1, origin: None }
+        Self { last: -1 }
     }
 
     /// `elapsed` is the time since the capture pipeline started.
     fn next(&mut self, elapsed: std::time::Duration, fps: u32) -> i64 {
-        let origin = *self.origin.get_or_insert(elapsed);
-        let since_origin = elapsed.saturating_sub(origin);
-        let raw_pts = (since_origin.as_secs_f64() * fps as f64).round() as i64;
+        let raw_pts = (elapsed.as_secs_f64() * fps as f64).round() as i64;
         // Follow real time across a stall so video stays in step with audio,
         // but within a few frames prefer strictly consecutive values: frames
         // arriving early or late by jitter must not repeat or skip a pts.
-        let pts = if self.last < 0 {
-            0
-        } else if raw_pts > self.last + 4 {
+        let pts = if self.last < 0 || raw_pts > self.last + 4 {
             raw_pts
         } else {
             self.last + 1
