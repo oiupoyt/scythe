@@ -342,6 +342,45 @@ This checklist tracks known bugs, UI refinements, optimizations, and technical d
 
 ---
 
+## 4f. Audit and Fixes (2026-11-14)
+
+Three parallel read-only audits (overlay, daemon/IPC, media pipeline) produced 150+ findings. Every fix below went through a failing test on CI first, then the change, then a passing CI run on Linux, Arch and Windows, then verification on the maintainer's machine with the Arch CI artifact.
+
+- [x] **Recordings froze on their first frame**: a recording started after N idle seconds opened on a stale keyframe and froze for about N seconds (idle 3 s gave 7.25 s, idle 15 s gave 19.27 s). The pipelined encoder still had a periodic IDR in flight from before the request. `SegmentStartGate` now opens a recording or stream only on the keyframe at or after the requested frame, and `VideoPtsClock` keeps video on the same timeline as audio. Six fresh-daemon recordings: no gap, audio and video within 60 ms.
+- [x] **The daemon restarted `xdg-desktop-portal` on every launch**: four restarts in two seconds per start (25 in one day), killing the portal for every app. `portal_retry_plan` retries only a portal not yet on the bus and never restarts the shared service.
+- [x] **Self-restart started the UI instead of the daemon**: any capture-setting change killed a daemon launched outside systemd (execs.lua, XDG autostart). `daemon_restart_args` passes `daemon` explicitly.
+- [x] **Config saves could wipe the config**: `fs::write` truncated the file while the daemon and overlay read it about seven times a second; `load()` then wrote defaults over the empty file. Saves are now atomic (temp file, fsync, rename) and mode 0600, and an unparseable config is never overwritten.
+- [x] **Stop and logout produced unplayable files**: shutdown slept a fixed 350 ms and SIGTERM had no handler. StopDaemon, SIGINT and SIGTERM now wait for the recorder to finalize (up to 60 s) and remove the socket file.
+- [x] **Volume sliders restarted audio capture every frame of a drag**: they now commit once on release.
+- [x] **The Screenshot tab's Browse changed the recordings folder**: picks carry a `FolderTarget`.
+- [x] **`cargo test` overwrote the developer's real config** and reloaded the live daemon: the overlay is split into a pure `from_config()` and the I/O-performing `new()`.
+- [x] **A stray key could become a global hotkey**: capture accepted bare letters, and changing settings tab left capture running. Ordinary keys now need Ctrl, Alt or Shift (F-keys work alone), and tab clicks go through `switch_view`.
+- [x] **The overlay redrew 60 times a second while idle**: idle wakeups 680/s to 108/s, CPU 3.6% to 0.6-1.0%. `repaint_interval` redraws per frame only for animations, at 16 ms for live meters, 250 ms for a running timer, 150 ms otherwise.
+- [x] **Replay buffer emptied on reload in low-power mode** and held only 41 s of a 60 s replay: one `replay_ring_capacity` formula sized for the real audio packet rate.
+- [x] **`scythe --cursor` reported a change that capture never applied**: ToggleCursor now sends ReloadConfig.
+- [x] **X11 capture leaked a world-readable screen-sized shm segment per run**: 28 orphaned segments (232 MB) found. Segments are now 0600 and marked for removal right after attach, so the kernel frees them on any exit.
+- [x] **IPC accepted a 4 GiB length prefix**: `read_frame` caps frames at 64 KiB before allocating. Verified: a hostile prefix and an HTTP request leave the daemon alive and its memory unchanged.
+- [x] **Direct DMA-BUF path could re-encode uninitialised frames**: it no longer marks a cached frame it never staged, and it honours forced keyframes.
+- [x] **Every reload stalled recording up to 217 ms**: hotkeys are re-registered only when one changed, on a background thread. Measured after: 0 bind calls on a non-hotkey reload.
+- [x] **Save & Close froze the overlay running hyprctl**: the daemon already rebinds on the reload Save sends.
+- [x] **Stopping the daemon left four hotkeys bound**, and the pause key respawned it: all eight are unbound on stop. Verified: zero binds left after `--quit` and SIGTERM.
+
+Not part of the repository, fixed on the maintainer's machine:
+
+- `~/.local/bin/hypr-picker-auto` printed the selection on the line after `[SELECTION]`. xdg-desktop-portal-hyprland reads it from the same line, so every ScreenCast request on the system was rejected and the daemon fell back to X11 capture of a black screen. The script now prints `[SELECTION]/screen:eDP-1`; the original is kept as `hypr-picker-auto.bak`.
+
+Open, from the audits (most severe first):
+
+- [ ] Audio timestamps count samples while video follows the wall clock, so lost samples and clock drift shift A/V permanently over a long daemon uptime (E-15).
+- [ ] Encoders are never drained at stop, so the last few frames are missing from every recording (E-6).
+- [ ] Frame size is never checked against the encoder size, so a mode change can make swscale read past the frame buffer (E-2, D-6).
+- [ ] Wayland frames carry a borrowed DMA-BUF fd that PipeWire may recycle, and the mmap cache is keyed by fd number (E-3).
+- [ ] The updater installs releases with no checksum or signature (D-8), and the tarball path never updates the `scythe` binary itself (D-7).
+- [ ] Leaving Settings by Back, Escape or click-outside silently drops unsaved edits (O-18).
+- [ ] Windows: TCP IPC has no authentication (D-10); screenshot paths are spliced into PowerShell (D-9).
+
+---
+
 ## 5. Verification Commands
 
 Run these commands before any commit or release to verify project health:
@@ -350,7 +389,7 @@ Run these commands before any commit or release to verify project health:
 # Type check all platform targets
 cargo check --all-targets
 
-# Run the complete unit test suite (32 tests)
+# Run the complete unit test suite (86 tests)
 cargo test
 
 # Strict zero-warning clippy verification
