@@ -1191,6 +1191,28 @@ impl Default for ScytheOverlayApp {
 impl ScytheOverlayApp {
     pub fn new() -> Self {
         let config = ScytheConfig::load();
+
+        let (status_tx, status_rx) = channel::<DaemonStatus>();
+        std::thread::spawn(move || {
+            loop {
+                if let Ok(s) = ipc::query_status() {
+                    let _ = status_tx.send(s);
+                }
+                std::thread::sleep(Duration::from_millis(150));
+            }
+        });
+
+        let clips = scan_recordings(&config.output_directory);
+        let app = Self::from_config(config, status_rx, clips);
+        if app.auto_check_updates {
+            crate::updater::spawn_update_check(app.update_status.clone());
+        }
+        app
+    }
+
+    /// Builds the overlay state from a config, with no I/O: no config file
+    /// read, no status poller, no directory scan, no update check.
+    fn from_config(config: ScytheConfig, status_rx: Receiver<DaemonStatus>, clips: Vec<VideoClipInfo>) -> Self {
         let replay_sec = config.replay_duration_sec;
         let bitrate_mbps = (config.record_bitrate_kbps / 1000).max(1);
         let target_fps = config.fps;
@@ -1218,19 +1240,8 @@ impl ScytheOverlayApp {
             config.stream_url.clone()
         };
 
-        let (status_tx, status_rx) = channel::<DaemonStatus>();
-        std::thread::spawn(move || {
-            loop {
-                if let Ok(s) = ipc::query_status() {
-                    let _ = status_tx.send(s);
-                }
-                std::thread::sleep(Duration::from_millis(150));
-            }
-        });
-
         let (folder_tx, folder_rx) = channel::<(FolderTarget, String)>();
         let folder_picking_active = Arc::new(AtomicBool::new(false));
-        let clips = scan_recordings(&output_dir);
         let fps_input_str = target_fps.to_string();
         let bitrate_input_str = bitrate_mbps.to_string();
         let replay_sec_input_str = replay_sec.to_string();
@@ -1254,9 +1265,6 @@ impl ScytheOverlayApp {
         let use_monospace_font = config.use_monospace_font;
 
         let update_status = Arc::new(std::sync::Mutex::new(crate::updater::UpdateStatus::Idle));
-        if auto_check_updates {
-            crate::updater::spawn_update_check(update_status.clone());
-        }
 
         Self {
             config,
@@ -1329,6 +1337,15 @@ impl ScytheOverlayApp {
     }
 
     pub fn save_and_apply_settings(&mut self) {
+        self.sync_settings_into_config();
+        let _ = self.config.save();
+        crate::hyprland_binds::register_hyprland_binds(&self.config);
+        crate::config::ScytheConfig::notify_daemon_reload();
+    }
+
+    /// Copies the settings panel's buffered fields into `self.config`.
+    /// No I/O: saving and notifying the daemon is the caller's job.
+    fn sync_settings_into_config(&mut self) {
         self.config.show_cursor = self.show_cursor;
         self.config.fps = self.target_fps;
         self.config.record_bitrate_kbps = self.bitrate_mbps * 1000;
@@ -1368,9 +1385,6 @@ impl ScytheOverlayApp {
         self.config.screenshot_preset = self.screenshot_preset.clone();
         self.config.screenshot_resolution = self.screenshot_resolution.clone();
         self.config.use_monospace_font = self.use_monospace_font;
-        let _ = self.config.save();
-        crate::hyprland_binds::register_hyprland_binds(&self.config);
-        crate::config::ScytheConfig::notify_daemon_reload();
     }
 
     pub fn reset_settings_to_defaults(&mut self) {
@@ -4472,7 +4486,9 @@ mod tests {
 
     #[test]
     fn test_overlay_app_options_synchronization() {
-        let mut app = ScytheOverlayApp::new();
+        // Pure construction: no config file, poller, scan or update check.
+        let (_status_tx, status_rx) = channel::<DaemonStatus>();
+        let mut app = ScytheOverlayApp::from_config(ScytheConfig::default(), status_rx, Vec::new());
         app.restart_replay_on_save = false;
         app.video_quality_mode = "vbr".to_string();
         app.color_range = "full".to_string();
@@ -4481,7 +4497,8 @@ mod tests {
         app.show_replay_notifications = false;
         app.screenshot_resolution = "1080p".to_string();
 
-        app.save_and_apply_settings();
+        // Only the state-to-config copy; no save, hyprctl or daemon reload.
+        app.sync_settings_into_config();
 
         assert!(!app.config.restart_replay_on_save);
         assert_eq!(app.config.video_quality_mode, "vbr");
