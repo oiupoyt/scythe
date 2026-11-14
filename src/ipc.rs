@@ -204,11 +204,7 @@ pub fn query_status_port(port: u16) -> Result<DaemonStatus, Box<dyn std::error::
     stream.write_all(&len_buf)?;
     stream.write_all(&payload)?;
 
-    let mut resp_len_buf = [0u8; 4];
-    stream.read_exact(&mut resp_len_buf)?;
-    let resp_len = u32::from_le_bytes(resp_len_buf) as usize;
-    let mut resp_payload = vec![0u8; resp_len];
-    stream.read_exact(&mut resp_payload)?;
+    let resp_payload = read_frame(&mut stream)?;
     let status = serde_json::from_slice::<DaemonStatus>(&resp_payload)?;
     Ok(status)
 }
@@ -258,15 +254,10 @@ pub fn query_status() -> Result<DaemonStatus, Box<dyn std::error::Error + Send +
                     continue;
                 }
 
-                let mut resp_len_buf = [0u8; 4];
-                if stream.read_exact(&mut resp_len_buf).is_err() {
-                    continue;
-                }
-                let resp_len = u32::from_le_bytes(resp_len_buf) as usize;
-                let mut resp_payload = vec![0u8; resp_len];
-                if stream.read_exact(&mut resp_payload).is_err() {
-                    continue;
-                }
+                let resp_payload = match read_frame(&mut stream) {
+                    Ok(p) => p,
+                    Err(_) => continue,
+                };
                 if let Ok(status) = serde_json::from_slice::<DaemonStatus>(&resp_payload) {
                     return Ok(status);
                 }
@@ -322,8 +313,14 @@ pub const MAX_FRAME_LEN: usize = 64 * 1024;
 pub fn read_frame(stream: &mut impl std::io::Read) -> std::io::Result<Vec<u8>> {
     let mut len_buf = [0u8; 4];
     stream.read_exact(&mut len_buf)?;
-    // Current behaviour: allocate whatever length the peer sent.
     let len = u32::from_le_bytes(len_buf) as usize;
+    // Check before allocating: the length comes from the peer.
+    if len > MAX_FRAME_LEN {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("IPC frame of {} bytes exceeds the {} byte limit", len, MAX_FRAME_LEN),
+        ));
+    }
     let mut payload = vec![0u8; len];
     stream.read_exact(&mut payload)?;
     Ok(payload)
