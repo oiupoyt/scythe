@@ -272,7 +272,12 @@ impl ScytheConfig {
                 return cfg;
         }
         let default_cfg = Self::default();
-        let _ = default_cfg.save();
+        // Only create a config when none exists. A file that exists but
+        // failed to parse (mid-edit, hand-edited typo) must not be replaced
+        // with defaults, or the stream key, folders and hotkeys are lost.
+        if !path.exists() {
+            let _ = default_cfg.save();
+        }
         default_cfg
     }
 
@@ -298,7 +303,7 @@ impl ScytheConfig {
         let legacy = Self::legacy_config_path();
         if let Some(parent) = legacy.parent()
             && parent.exists() {
-                let _ = fs::write(legacy, &json);
+                let _ = write_config_file(&legacy, &json);
         }
 
         self.sync_autostart();
@@ -522,9 +527,40 @@ X-GNOME-Autostart-enabled=true\n";
     }
 }
 
-/// Writes the config JSON to `path`.
+/// Writes the config JSON to `path` atomically, readable only by the user.
+///
+/// The JSON goes to a temporary file in the same directory, is flushed to
+/// disk, and is then renamed over the target. A concurrent reader sees the
+/// old file or the new one, never a truncated one. Writing in place with
+/// fs::write let readers hit an empty file, which load() then replaced with
+/// defaults.
 fn write_config_file(path: &std::path::Path, json: &str) -> std::io::Result<()> {
-    fs::write(path, json)
+    use std::io::Write;
+    let dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("config.json");
+    // Unique per write, so two threads saving at once in one process do
+    // not share a temporary file.
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = dir.join(format!(".{}.{}.{}.tmp", file_name, std::process::id(), seq));
+
+    let mut opts = fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let result = (|| {
+        let mut f = opts.open(&tmp)?;
+        f.write_all(json.as_bytes())?;
+        f.sync_all()?;
+        fs::rename(&tmp, path)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    result
 }
 
 #[cfg(test)]
