@@ -486,16 +486,17 @@ struct PickedDirs {
 
 /// Applies a folder picker result. Returns true if anything changed.
 fn apply_folder_pick(dirs: &mut PickedDirs, target: FolderTarget, picked: String) -> bool {
-    // Current behaviour: every pick goes to the recording folder.
-    let _ = target;
     if picked.is_empty() {
         return false;
     }
-    dirs.output = picked;
+    match target {
+        FolderTarget::Recording => dirs.output = picked,
+        FolderTarget::Screenshot => dirs.screenshot = picked,
+    }
     true
 }
 
-fn pick_folder(current_dir: &str, tx: Sender<String>, is_active: Arc<AtomicBool>) {
+fn pick_folder(current_dir: &str, target: FolderTarget, tx: Sender<(FolderTarget, String)>, is_active: Arc<AtomicBool>) {
     is_active.store(true, Ordering::SeqCst);
     let cur = current_dir.to_string();
     let flag = is_active.clone();
@@ -525,7 +526,7 @@ fn pick_folder(current_dir: &str, tx: Sender<String>, is_active: Arc<AtomicBool>
             }
 
             if let Some(sel) = picked {
-                let _ = tx.send(sel);
+                let _ = tx.send((target, sel));
                 flag.store(false, Ordering::SeqCst);
                 return;
             }
@@ -547,7 +548,7 @@ fn pick_folder(current_dir: &str, tx: Sender<String>, is_active: Arc<AtomicBool>
             if let Ok(out) = cmd.output() {
                 let sel = String::from_utf8_lossy(&out.stdout).trim().to_string();
                 if !sel.is_empty() {
-                    let _ = tx.send(sel);
+                    let _ = tx.send((target, sel));
                 }
             }
             flag.store(false, Ordering::SeqCst);
@@ -572,7 +573,7 @@ fn pick_folder(current_dir: &str, tx: Sender<String>, is_active: Arc<AtomicBool>
             {
                 let sel = String::from_utf8_lossy(&out.stdout).trim().to_string();
                 if !sel.is_empty() {
-                    let _ = tx.send(sel);
+                    let _ = tx.send((target, sel));
                     flag.store(false, Ordering::SeqCst);
                     return;
                 }
@@ -583,7 +584,7 @@ fn pick_folder(current_dir: &str, tx: Sender<String>, is_active: Arc<AtomicBool>
             {
                 let sel = String::from_utf8_lossy(&out.stdout).trim().to_string();
                 if !sel.is_empty() {
-                    let _ = tx.send(sel);
+                    let _ = tx.send((target, sel));
                     flag.store(false, Ordering::SeqCst);
                     return;
                 }
@@ -1130,8 +1131,8 @@ pub struct ScytheOverlayApp {
     clip_duration_sec: f32,
     anim_time: f32,
     status_rx: Receiver<DaemonStatus>,
-    folder_tx: Sender<String>,
-    folder_rx: Receiver<String>,
+    folder_tx: Sender<(FolderTarget, String)>,
+    folder_rx: Receiver<(FolderTarget, String)>,
     folder_picking_active: Arc<AtomicBool>,
     clips: Vec<VideoClipInfo>,
     initial_pos_set: bool,
@@ -1227,7 +1228,7 @@ impl ScytheOverlayApp {
             }
         });
 
-        let (folder_tx, folder_rx) = channel::<String>();
+        let (folder_tx, folder_rx) = channel::<(FolderTarget, String)>();
         let folder_picking_active = Arc::new(AtomicBool::new(false));
         let clips = scan_recordings(&output_dir);
         let fps_input_str = target_fps.to_string();
@@ -1514,13 +1515,26 @@ impl ScytheOverlayApp {
             self.daemon_connected = true;
         }
 
-        while let Ok(new_dir) = self.folder_rx.try_recv() {
-            if !new_dir.is_empty() {
-                self.output_dir = new_dir.clone();
-                self.config.output_directory = new_dir;
-                let _ = self.config.save();
-                async_send_command(Command::ReloadConfig);
-                self.refresh_clips();
+        while let Ok((target, picked)) = self.folder_rx.try_recv() {
+            let mut dirs = PickedDirs { output: self.output_dir.clone(), screenshot: self.screenshot_dir.clone() };
+            if !apply_folder_pick(&mut dirs, target, picked) {
+                continue;
+            }
+            self.output_dir = dirs.output;
+            self.screenshot_dir = dirs.screenshot;
+            match target {
+                FolderTarget::Recording => {
+                    self.config.output_directory = self.output_dir.clone();
+                    let _ = self.config.save();
+                    // The daemon writes recordings, so it needs the new path.
+                    async_send_command(Command::ReloadConfig);
+                    self.refresh_clips();
+                }
+                FolderTarget::Screenshot => {
+                    // Only the screenshot command reads this; no daemon reload.
+                    self.config.screenshot_directory = self.screenshot_dir.clone();
+                    let _ = self.config.save();
+                }
             }
         }
     }
@@ -2409,7 +2423,7 @@ impl ScytheOverlayApp {
                 let edit_w = (ui.available_width() - 80.0 - 60.0 - ui.spacing().item_spacing.x * 2.0).max(60.0);
                 ui.add(egui::TextEdit::singleline(&mut self.output_dir).desired_width(edit_w));
                 if squared_button_sized(ui, "Browse", false, accent, Some(egui::vec2(76.0, 26.0))) {
-                    pick_folder(&self.output_dir, self.folder_tx.clone(), self.folder_picking_active.clone());
+                    pick_folder(&self.output_dir, FolderTarget::Recording, self.folder_tx.clone(), self.folder_picking_active.clone());
                 }
                 if squared_button_sized(ui, "Open", false, accent, Some(egui::vec2(56.0, 26.0))) {
                     open_folder(&ScytheConfig::expand_tilde(&self.output_dir));
@@ -2625,7 +2639,7 @@ impl ScytheOverlayApp {
                 let edit_w = (ui.available_width() - 80.0 - 60.0 - ui.spacing().item_spacing.x * 2.0).max(60.0);
                 ui.add(egui::TextEdit::singleline(&mut self.output_dir).desired_width(edit_w));
                 if squared_button_sized(ui, "Browse", false, accent, Some(egui::vec2(76.0, 26.0))) {
-                    pick_folder(&self.output_dir, self.folder_tx.clone(), self.folder_picking_active.clone());
+                    pick_folder(&self.output_dir, FolderTarget::Recording, self.folder_tx.clone(), self.folder_picking_active.clone());
                 }
                 if squared_button_sized(ui, "Open", false, accent, Some(egui::vec2(56.0, 26.0))) {
                     open_folder(&ScytheConfig::expand_tilde(&self.output_dir));
@@ -2709,7 +2723,7 @@ impl ScytheOverlayApp {
                 let edit_w = (ui.available_width() - 80.0 - 60.0 - ui.spacing().item_spacing.x * 2.0).max(60.0);
                 ui.add(egui::TextEdit::singleline(&mut self.screenshot_dir).desired_width(edit_w));
                 if squared_button_sized(ui, "Browse", false, accent, Some(egui::vec2(76.0, 26.0))) {
-                    pick_folder(&self.screenshot_dir, self.folder_tx.clone(), self.folder_picking_active.clone());
+                    pick_folder(&self.screenshot_dir, FolderTarget::Screenshot, self.folder_tx.clone(), self.folder_picking_active.clone());
                 }
                 if squared_button_sized(ui, "Open", false, accent, Some(egui::vec2(56.0, 26.0))) {
                     open_folder(&ScytheConfig::expand_tilde(&self.screenshot_dir));
