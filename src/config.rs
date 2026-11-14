@@ -582,10 +582,8 @@ mod tests {
     fn test_concurrent_readers_never_see_a_partial_config() {
         let dir = scratch_dir("atomic");
         let path = dir.join("config.json");
-        let mut a = ScytheConfig::default();
-        a.stream_key = "a".repeat(4096);
-        let mut b = ScytheConfig::default();
-        b.stream_key = "b".repeat(4096);
+        let a = ScytheConfig { stream_key: "a".repeat(4096), ..Default::default() };
+        let b = ScytheConfig { stream_key: "b".repeat(4096), ..Default::default() };
         let ja = serde_json::to_string_pretty(&a).unwrap();
         let jb = serde_json::to_string_pretty(&b).unwrap();
         write_config_file(&path, &ja).unwrap();
