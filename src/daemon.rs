@@ -173,10 +173,29 @@ fn daemon_restart_args(current: impl Iterator<Item = String>) -> Vec<String> {
 /// Waits for the recorder thread to confirm that recordings are finalized.
 /// Returns false if it did not answer within `limit`.
 fn wait_for_shutdown_ack(ack: &crossbeam_channel::Receiver<()>, limit: std::time::Duration) -> bool {
-    // Current behaviour: a fixed 350 ms sleep, whatever the recorder is doing.
-    let _ = (ack, limit);
-    std::thread::sleep(std::time::Duration::from_millis(350));
-    true
+    ack.recv_timeout(limit).is_ok()
+}
+
+/// Upper bound on how long shutdown waits for the recorder. The faststart
+/// rewrite of a multi-gigabyte recording can take tens of seconds.
+const SHUTDOWN_FINALIZE_LIMIT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Asks the recorder to finalize everything, waits for it, then exits.
+/// Used by StopDaemon, SIGINT and SIGTERM.
+fn shutdown_daemon(shutdown_tx: &crossbeam_channel::Sender<crossbeam_channel::Sender<()>>, reason: &str) -> ! {
+    println!("{}: finalizing recordings before exit...", reason);
+    crate::hyprland_binds::unregister_hyprland_binds(&crate::config::ScytheConfig::load());
+    let (ack_tx, ack_rx) = crossbeam_channel::bounded::<()>(1);
+    let finalized = shutdown_tx.send(ack_tx).is_ok()
+        && wait_for_shutdown_ack(&ack_rx, SHUTDOWN_FINALIZE_LIMIT);
+    if !finalized {
+        eprintln!("Recorder did not confirm finalize within {:?}; exiting anyway.", SHUTDOWN_FINALIZE_LIMIT);
+    }
+    #[cfg(unix)]
+    let _ = std::fs::remove_file(crate::ipc::get_socket_path());
+    #[cfg(windows)]
+    let _ = std::fs::remove_file(crate::ipc::get_ipc_port_path());
+    std::process::exit(0);
 }
 
 fn mask_stream_url(url: &str) -> String {
@@ -306,6 +325,9 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
 
     let (frame_tx, frame_rx) = bounded::<Frame>(2);
     let (cmd_tx, cmd_rx) = bounded::<Command>(32);
+    // Internal only, not part of the IPC wire protocol: carries the ack
+    // sender the recorder signals once recordings are finalized.
+    let (shutdown_tx, shutdown_rx) = bounded::<crossbeam_channel::Sender<()>>(1);
     let (mux_tx, mux_rx) = bounded::<Vec<Packet>>(4);
     let (audio_tx, audio_rx) = bounded::<Vec<f32>>(500);
 
@@ -358,6 +380,7 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
     };
 
     let cmd_tx_ipc = cmd_tx.clone();
+    let shutdown_tx_ipc = shutdown_tx.clone();
     let is_recording_state_ipc = Arc::clone(&is_recording_state);
     let record_start_state_ipc = Arc::clone(&record_start_state);
     let is_streaming_state_ipc = Arc::clone(&is_streaming_state);
@@ -371,6 +394,7 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
             match stream {
                 Ok(mut stream) => {
                     let cmd_tx_ipc = cmd_tx_ipc.clone();
+                    let shutdown_tx_ipc = shutdown_tx_ipc.clone();
                     let is_recording_state_ipc = Arc::clone(&is_recording_state_ipc);
                     let record_start_state_ipc = Arc::clone(&record_start_state_ipc);
                     let is_streaming_state_ipc = Arc::clone(&is_streaming_state_ipc);
@@ -449,11 +473,7 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
                                             std::thread::spawn(spawn_overlay_once);
                                         },
                                         Command::StopDaemon => {
-                                            println!("StopDaemon requested: Finalizing active recordings...");
-                                            crate::hyprland_binds::unregister_hyprland_binds(&crate::config::ScytheConfig::load());
-                                            let _ = cmd_tx_ipc.send(Command::StopRecording);
-                                            std::thread::sleep(std::time::Duration::from_millis(350));
-                                            std::process::exit(0);
+                                            shutdown_daemon(&shutdown_tx_ipc, "StopDaemon requested");
                                         },
                                         other => {
                                             let _ = cmd_tx_ipc.send(other);
@@ -470,15 +490,30 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
         }
     });
 
-    let cmd_tx_sig = cmd_tx.clone();
+    let shutdown_tx_sig = shutdown_tx.clone();
     tokio::spawn(async move {
-        if tokio::signal::ctrl_c().await.is_ok() {
-            println!("\nReceived shutdown signal. Finalizing recordings...");
-            let _ = cmd_tx_sig.send(Command::StopRecording);
-            tokio::time::sleep(std::time::Duration::from_millis(350)).await;
-            crate::hyprland_binds::unregister_hyprland_binds(&crate::config::ScytheConfig::load());
-            std::process::exit(0);
-        }
+        // SIGTERM is what `systemctl --user stop`, logout and install.sh send.
+        #[cfg(unix)]
+        let reason = {
+            use tokio::signal::unix::{signal, SignalKind};
+            match signal(SignalKind::terminate()) {
+                Ok(mut term) => tokio::select! {
+                    _ = tokio::signal::ctrl_c() => "Received SIGINT",
+                    _ = term.recv() => "Received SIGTERM",
+                },
+                Err(_) => {
+                    let _ = tokio::signal::ctrl_c().await;
+                    "Received SIGINT"
+                }
+            }
+        };
+        #[cfg(not(unix))]
+        let reason = {
+            let _ = tokio::signal::ctrl_c().await;
+            "Received Ctrl+C"
+        };
+        // The wait blocks, so it runs off the async runtime.
+        let _ = tokio::task::spawn_blocking(move || shutdown_daemon(&shutdown_tx_sig, reason)).await;
     });
 
     let session_type = env::var("XDG_SESSION_TYPE").unwrap_or_else(|_| "x11".to_string());
@@ -891,6 +926,23 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
 
         loop {
             crossbeam_channel::select! {
+                recv(shutdown_rx) -> ack_res => {
+                    if let Ok(ack) = ack_res {
+                        if let Some(mut m) = normal_muxer.take() {
+                            match m.finalize() {
+                                Ok(()) => println!("Recording finalized for shutdown."),
+                                Err(e) => eprintln!("Failed to finalize recording on shutdown: {}", e),
+                            }
+                        }
+                        normal_recording = false;
+                        rec_state_clone.store(false, Ordering::SeqCst);
+                        rec_start_clone.store(0, Ordering::SeqCst);
+                        // Dropping the sender lets the stream worker drain and
+                        // write its trailer.
+                        let _ = stream_sender.take();
+                        let _ = ack.send(());
+                    }
+                },
                 recv(cmd_rx) -> cmd_res => {
                     if let Ok(cmd) = cmd_res {
                         match cmd {
