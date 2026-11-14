@@ -157,9 +157,17 @@ impl SegmentStartGate {
 }
 
 /// Arguments for re-launching this daemon after a capture-settings change.
+///
+/// current_exe() resolves the scythe-daemon symlink to the plain `scythe`
+/// binary, so the invocation name no longer selects daemon mode and the
+/// `daemon` subcommand has to be passed explicitly. Mock mode is carried
+/// over; nothing else from the original command line is.
 fn daemon_restart_args(current: impl Iterator<Item = String>) -> Vec<String> {
-    let _ = current.count();
-    Vec::new()
+    let mut out = vec!["daemon".to_string()];
+    if current.into_iter().any(|a| a == "--mock") {
+        out.push("--mock".to_string());
+    }
+    out
 }
 
 fn mask_stream_url(url: &str) -> String {
