@@ -4,8 +4,6 @@ use crate::capture::{Frame, FrameSource};
 /// Permissions for the shared-memory segment holding captured frames.
 const SHM_SEGMENT_MODE: libc::c_int = 0o600;
 
-/// Whether the segment is marked for removal as soon as both sides attach.
-const MARK_SEGMENT_FOR_REMOVAL_AFTER_ATTACH: bool = true;
 
 pub struct X11Capture {
     conn: Connection,
@@ -46,14 +44,12 @@ impl X11Capture {
                     });
                     if conn.check_request(attach_cookie).is_ok() {
                         println!("X11 MIT-SHM shared memory capture initialized (zero socket overhead): {}x{}", width, height);
-                        if MARK_SEGMENT_FOR_REMOVAL_AFTER_ATTACH {
-                            // Both this process and the X server are attached,
-                            // so the segment lives on until both detach. Marking
-                            // it now means the kernel frees it when the daemon
-                            // exits, even through process::exit or a crash,
-                            // where Drop never runs.
-                            libc::shmctl(id, libc::IPC_RMID, std::ptr::null_mut());
-                        }
+                        // Both this process and the X server are attached, so
+                        // the segment lives on until both detach. Marking it
+                        // now means the kernel frees it when the daemon exits,
+                        // even through process::exit or a crash, where Drop
+                        // never runs.
+                        libc::shmctl(id, libc::IPC_RMID, std::ptr::null_mut());
                         (Some(seg), addr, id)
                     } else {
                         libc::shmdt(addr as *const _);
@@ -170,7 +166,17 @@ mod tests {
     /// on the machine read the screen, and write into frames being encoded.
     #[test]
     fn test_shm_segment_is_private_to_the_user() {
-        assert_eq!(SHM_SEGMENT_MODE & 0o077, 0, "shm mode {:o} is open to other users", SHM_SEGMENT_MODE);
+        // Create a segment the way X11Capture does and ask the kernel for
+        // its permissions.
+        unsafe {
+            let id = libc::shmget(libc::IPC_PRIVATE, 4096, libc::IPC_CREAT | SHM_SEGMENT_MODE);
+            assert!(id >= 0, "shmget failed");
+            let mut ds: libc::shmid_ds = std::mem::zeroed();
+            assert_eq!(libc::shmctl(id, libc::IPC_STAT, &mut ds), 0);
+            libc::shmctl(id, libc::IPC_RMID, std::ptr::null_mut());
+            let mode = ds.shm_perm.mode & 0o777;
+            assert_eq!(mode & 0o077, 0, "shm segment mode {:o} is open to other users", mode);
+        }
     }
 
     /// Drop never runs for the capture source: the daemon exits through
@@ -180,7 +186,6 @@ mod tests {
     #[test]
     fn test_shm_segment_is_marked_for_removal_after_attach() {
         let src = include_str!("x11.rs");
-        assert!(MARK_SEGMENT_FOR_REMOVAL_AFTER_ATTACH, "segment is only removed in Drop, which never runs");
         let attach_ok = src.find("if conn.check_request(attach_cookie).is_ok() {").expect("attach check");
         let after = &src[attach_ok..attach_ok + 900];
         assert!(after.contains("IPC_RMID"), "no IPC_RMID on the successful attach path");
