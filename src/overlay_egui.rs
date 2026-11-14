@@ -1339,7 +1339,8 @@ impl ScytheOverlayApp {
     pub fn save_and_apply_settings(&mut self) {
         self.sync_settings_into_config();
         let _ = self.config.save();
-        crate::hyprland_binds::register_hyprland_binds(&self.config);
+        // The daemon re-registers Hyprland binds while handling this reload
+        // when a hotkey changed; running hyprctl here froze the overlay.
         crate::config::ScytheConfig::notify_daemon_reload();
     }
 
