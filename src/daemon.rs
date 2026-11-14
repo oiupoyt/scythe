@@ -9,7 +9,7 @@ use ringbuf::traits::{RingBuffer, Consumer, Observer};
 use crossbeam_channel::bounded;
 use std::thread;
 use std::env;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
