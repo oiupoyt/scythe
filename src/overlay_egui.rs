@@ -4301,6 +4301,20 @@ pub fn run_egui_toast(title: &str, subtitle: &str, icon: crate::overlay::ToastIc
 mod tests {
     use super::*;
 
+    /// Save & Close ran register_hyprland_binds on the UI thread: dozens of
+    /// sequential hyprctl calls (65-73 on the first save, since rules are
+    /// set up once per process and the overlay is a new process each time),
+    /// freezing the overlay. The daemon already re-registers binds when it
+    /// handles the ReloadConfig that Save sends, so the overlay must not run
+    /// hyprctl itself.
+    #[test]
+    fn test_overlay_never_runs_hyprctl_binds_on_the_ui_thread() {
+        let src = include_str!("overlay_egui.rs");
+        let body = &src[..src.find("#[cfg(test)]").unwrap()];
+        let sync_call = ["crate::hyprland_binds::register_hyprland_binds", "(&self.config);"].concat();
+        assert!(!body.contains(&sync_call), "the overlay still registers Hyprland binds synchronously");
+    }
+
     fn mods(ctrl: bool, alt: bool, shift: bool) -> egui::Modifiers {
         egui::Modifiers { alt, ctrl, shift, mac_cmd: false, command: ctrl }
     }
