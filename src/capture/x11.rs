@@ -2,10 +2,10 @@ use xcb::{x, shm, Connection};
 use crate::capture::{Frame, FrameSource};
 
 /// Permissions for the shared-memory segment holding captured frames.
-const SHM_SEGMENT_MODE: libc::c_int = 0o777;
+const SHM_SEGMENT_MODE: libc::c_int = 0o600;
 
 /// Whether the segment is marked for removal as soon as both sides attach.
-const MARK_SEGMENT_FOR_REMOVAL_AFTER_ATTACH: bool = false;
+const MARK_SEGMENT_FOR_REMOVAL_AFTER_ATTACH: bool = true;
 
 pub struct X11Capture {
     conn: Connection,
