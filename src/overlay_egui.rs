@@ -3718,6 +3718,25 @@ fn slider_should_commit(changed: bool, dragging: bool, drag_stopped: bool) -> bo
     drag_stopped || (changed && !dragging)
 }
 
+/// What on screen currently needs regular redraws.
+#[derive(Debug, Clone, Copy)]
+struct RepaintNeeds {
+    animating: bool,
+    capturing_keybind: bool,
+    live_meters_visible: bool,
+    timer_running: bool,
+}
+
+/// Current behaviour: redraw every frame, or every 16 ms otherwise.
+fn repaint_interval(needs: &RepaintNeeds) -> Option<Duration> {
+    if needs.capturing_keybind || needs.animating {
+        Some(Duration::ZERO)
+    } else {
+        let _ = (needs.live_meters_visible, needs.timer_running);
+        Some(Duration::from_millis(16))
+    }
+}
+
 impl eframe::App for ScytheOverlayApp {
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         [0.0, 0.0, 0.0, 0.0]
@@ -4393,6 +4412,57 @@ mod tests {
         let mut dirs = PickedDirs { output: "/rec".into(), screenshot: "/shots".into() };
         apply_folder_pick(&mut dirs, FolderTarget::Screenshot, String::new());
         assert_eq!((dirs.output.as_str(), dirs.screenshot.as_str()), ("/rec", "/shots"));
+    }
+
+    fn idle_scene() -> RepaintNeeds {
+        RepaintNeeds {
+            animating: false,
+            capturing_keybind: false,
+            live_meters_visible: false,
+            timer_running: false,
+        }
+    }
+
+    /// With nothing moving on screen the overlay must not redraw on a frame
+    /// timer. Measured on the old code: 7.2% CPU and 557 wakeups/s idle.
+    /// Daemon status still arrives, so it must wake for that, but no faster
+    /// than the status poll rate.
+    #[test]
+    fn test_idle_overlay_does_not_redraw_at_frame_rate() {
+        let wait = repaint_interval(&idle_scene()).expect("must still wake for daemon status");
+        assert!(wait >= Duration::from_millis(150), "idle redraw every {:?}", wait);
+    }
+
+    /// A notification sliding in, or a keybind being captured, needs every
+    /// frame.
+    #[test]
+    fn test_animation_redraws_every_frame() {
+        let mut s = idle_scene();
+        s.animating = true;
+        assert_eq!(repaint_interval(&s), Some(Duration::ZERO));
+        let mut s = idle_scene();
+        s.capturing_keybind = true;
+        assert_eq!(repaint_interval(&s), Some(Duration::ZERO));
+    }
+
+    /// Live level meters decay smoothly, so they need a steady frame rate,
+    /// but not faster than the display.
+    #[test]
+    fn test_visible_meters_redraw_at_display_rate() {
+        let mut s = idle_scene();
+        s.live_meters_visible = true;
+        let wait = repaint_interval(&s).unwrap();
+        assert!(wait > Duration::ZERO && wait <= Duration::from_millis(17), "meters redraw every {:?}", wait);
+    }
+
+    /// A running recording timer only changes once a second; a 16 ms loop
+    /// for it is wasted work.
+    #[test]
+    fn test_recording_timer_alone_does_not_need_frame_rate() {
+        let mut s = idle_scene();
+        s.timer_running = true;
+        let wait = repaint_interval(&s).unwrap();
+        assert!(wait >= Duration::from_millis(100) && wait <= Duration::from_millis(500), "timer redraw every {:?}", wait);
     }
 
     #[test]
