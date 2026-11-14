@@ -744,6 +744,14 @@ fn pill_button(ui: &mut egui::Ui, text: &str, active: bool, accent: Color32) -> 
 }
 
 // Sleek Modern Switch Toggle
+/// Whether a custom widget should draw its highlight: when the pointer is
+/// over it, or when it holds keyboard focus. Widgets that sense clicks are
+/// focusable and activate with Space or Enter, so a hover-only highlight
+/// leaves keyboard users with no visible position.
+fn is_highlighted(resp: &egui::Response) -> bool {
+    resp.hovered() || resp.has_focus()
+}
+
 fn toggle_switch(ui: &mut egui::Ui, on: &mut bool, accent: Color32) -> egui::Response {
     let desired_size = egui::vec2(38.0, 20.0);
     let (rect, mut response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
@@ -762,6 +770,16 @@ fn toggle_switch(ui: &mut egui::Ui, on: &mut bool, accent: Color32) -> egui::Res
         };
         let stroke = Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 28));
         ui.painter().rect(rect, CornerRadius::ZERO, bg_color, stroke, egui::StrokeKind::Inside);
+        // Hover or keyboard focus draws a ring outside the switch, against
+        // the dark panel, so it stays visible whatever the accent fill is.
+        if is_highlighted(&response) {
+            ui.painter().rect_stroke(
+                rect.expand(2.0),
+                CornerRadius::ZERO,
+                Stroke::new(1.5_f32, Color32::from_rgb(220, 225, 230)),
+                egui::StrokeKind::Outside,
+            );
+        }
         let knob_w = rect.height() - 4.0;
         let knob_x = egui::lerp((rect.left() + 2.0)..=(rect.right() - knob_w - 2.0), how_on);
         let knob_rect = egui::Rect::from_min_size(egui::pos2(knob_x, rect.top() + 2.0), egui::vec2(knob_w, knob_w));
@@ -938,7 +956,7 @@ fn render_gsr_card(
     accent: Color32,
 ) -> bool {
     let resp = ui.allocate_rect(rect, egui::Sense::click());
-    let hovered = resp.hovered();
+    let hovered = is_highlighted(&resp);
     let painter = ui.painter();
 
     // 1. Background fill & outlines
@@ -1015,7 +1033,7 @@ fn render_dropdown_item(
     is_last: bool,
 ) -> bool {
     let resp = ui.allocate_rect(rect, egui::Sense::click());
-    let hovered = resp.hovered();
+    let hovered = is_highlighted(&resp);
     let painter = ui.painter();
 
     let inner_rect = rect.shrink2(Vec2::new(2.0, 1.0));
@@ -1629,7 +1647,7 @@ impl ScytheOverlayApp {
             _ => {
                 let back_rect = egui::Rect::from_min_size(egui::pos2(top_left.x + 12.0, top_left.y + 10.0), Vec2::new(88.0, 28.0));
                 let back_resp = ui.allocate_rect(back_rect, egui::Sense::click());
-                let back_hov = back_resp.hovered();
+                let back_hov = is_highlighted(&back_resp);
 
                 let bg = if back_hov {
                     Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 32)
@@ -1683,7 +1701,7 @@ impl ScytheOverlayApp {
             Vec2::new(close_size, close_size),
         );
         let close_resp = ui.allocate_rect(close_rect, egui::Sense::click());
-        let close_hov = close_resp.hovered();
+        let close_hov = is_highlighted(&close_resp);
 
         let painter = ui.painter();
         if close_hov {
@@ -1834,9 +1852,9 @@ impl ScytheOverlayApp {
 
         // Screenshot auxiliary button
         let sc_resp = ui.allocate_rect(aux_screenshot_rect, egui::Sense::click());
-        let sc_hov = sc_resp.hovered();
+        let sc_hov = is_highlighted(&sc_resp);
         let set_resp = ui.allocate_rect(aux_settings_rect, egui::Sense::click());
-        let set_hov = set_resp.hovered();
+        let set_hov = is_highlighted(&set_resp);
 
         let p = ui.painter();
         if sc_hov {
@@ -2142,7 +2160,7 @@ impl ScytheOverlayApp {
                     for (tab, label) in tabs {
                         let is_active = self.active_settings_tab == tab;
                         let (btn_rect, btn_resp) = ui.allocate_exact_size(egui::vec2(tab_btn_w, tab_btn_h), egui::Sense::click());
-                        let is_hovered = btn_resp.hovered();
+                        let is_hovered = is_highlighted(&btn_resp);
 
                         let bg = if is_active {
                             Color32::from_rgb(28, 34, 42)
@@ -2837,7 +2855,7 @@ impl ScytheOverlayApp {
                     for &(id, name, col) in chunk {
                         let is_sel = self.config.accent_color.to_lowercase() == id;
                         let (rect, resp) = ui.allocate_exact_size(egui::vec2(btn_w, btn_h), egui::Sense::click());
-                        let is_hovered = resp.hovered();
+                        let is_hovered = is_highlighted(&resp);
 
                         let bg = if is_sel {
                             col
