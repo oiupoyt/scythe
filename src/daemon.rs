@@ -214,6 +214,13 @@ fn replay_ring_capacity(config: &crate::config::ScytheConfig) -> usize {
     config.replay_duration_sec as usize * per_sec + 60
 }
 
+/// Whether any global hotkey differs between two configs.
+fn hotkeys_changed(old: &crate::config::ScytheConfig, new: &crate::config::ScytheConfig) -> bool {
+    // Current behaviour: every reload rebinds.
+    let _ = (old, new);
+    true
+}
+
 fn mask_stream_url(url: &str) -> String {
     if let Some((base, key)) = url.rsplit_once('/')
         && key.len() > 4 {
@@ -1440,6 +1447,47 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A config reload re-registered every Hyprland bind on the recorder
+    /// thread: about 32 hyprctl calls, during which nothing was encoded.
+    /// Measured: three reloads during a recording left 217 ms gaps. A
+    /// reload that did not change any hotkey must not touch the binds.
+    #[test]
+    fn test_reload_without_hotkey_change_does_not_rebind() {
+        let a = crate::config::ScytheConfig::default();
+        let b = crate::config::ScytheConfig { mic_volume: 0.3, system_volume: 0.9, ..a.clone() };
+        assert!(!hotkeys_changed(&a, &b), "a volume change triggered a full rebind");
+    }
+
+    #[test]
+    fn test_reload_with_hotkey_change_rebinds() {
+        let a = crate::config::ScytheConfig::default();
+        for edit in [
+            |c: &mut crate::config::ScytheConfig| c.save_hotkey = "Ctrl+F12".into(),
+            |c: &mut crate::config::ScytheConfig| c.menu_hotkey = "Ctrl+F12".into(),
+            |c: &mut crate::config::ScytheConfig| c.record_hotkey = "Ctrl+F12".into(),
+            |c: &mut crate::config::ScytheConfig| c.cursor_hotkey = "Ctrl+F12".into(),
+            |c: &mut crate::config::ScytheConfig| c.screenshot_hotkey = "Ctrl+F12".into(),
+            |c: &mut crate::config::ScytheConfig| c.pause_hotkey = "Ctrl+F12".into(),
+            |c: &mut crate::config::ScytheConfig| c.mute_mic_hotkey = "Ctrl+F12".into(),
+            |c: &mut crate::config::ScytheConfig| c.mute_sys_hotkey = "Ctrl+F12".into(),
+        ] {
+            let mut b = a.clone();
+            edit(&mut b);
+            assert!(hotkeys_changed(&a, &b));
+        }
+    }
+
+    /// Rebinding, when it is needed, must not block the recorder thread.
+    #[test]
+    fn test_reload_never_rebinds_synchronously_on_the_recorder() {
+        let src = include_str!("daemon.rs");
+        let body = &src[..src.find("#[cfg(test)]").unwrap()];
+        let start = body.find("Command::ReloadConfig => {").expect("reload arm");
+        let arm = &body[start..start + 6000];
+        let sync_call = ["crate::hyprland_binds::register_hyprland_binds", "(&config);"].concat();
+        assert!(!arm.contains(&sync_call), "ReloadConfig still rebinds synchronously on the recorder thread");
+    }
 
     fn replay_cfg(fps: u32, secs: u32, low_power: bool) -> crate::config::ScytheConfig {
         crate::config::ScytheConfig {
