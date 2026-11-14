@@ -471,6 +471,9 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
                                             cfg.show_cursor = !cfg.show_cursor;
                                             let _ = cfg.save();
                                             println!("Cursor display toggled to: {}", cfg.show_cursor);
+                                            // show_cursor is a capture setting, so the reload
+                                            // restarts capture with the new value.
+                                            let _ = cmd_tx_ipc.try_send(Command::ReloadConfig);
                                         },
                                         Command::CycleAudioMode => {
                                             let mut cfg = crate::config::ScytheConfig::load();
