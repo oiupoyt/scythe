@@ -880,10 +880,12 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
         let mut next_frame_time = stream_start;
         let mut last_frame_encoded_time = stream_start.checked_sub(target_frame_duration).unwrap_or(stream_start);
 
+        let mut last_encode_error: Option<String> = None;
         macro_rules! handle_packets {
             ($packets_res:expr) => {
                 match $packets_res {
                     Ok(packets) => {
+                        last_encode_error = None;
                         for mut pkt in packets {
                             pkt.set_stream_index(0);
                             if normal_recording {
@@ -935,7 +937,13 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
                         }
                     }
                     Err(e) => {
-                        eprintln!("Video encoding error: {}", e);
+                        // A persistent error (a frame that no longer fits the
+                        // encoder after an output change) repeats every tick;
+                        // report each distinct error once.
+                        if last_encode_error.as_deref() != Some(e.as_str()) {
+                            eprintln!("Video encoding error: {}", e);
+                            last_encode_error = Some(e);
+                        }
                     }
                 }
             };
