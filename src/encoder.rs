@@ -4,6 +4,21 @@ use std::ptr;
 use std::collections::HashMap;
 use crate::capture::Frame;
 
+/// Checks that a raw BGRA frame can be read by an encoder of the given size
+/// without swscale reading outside the frame buffer.
+pub fn check_raw_frame(
+    enc_width: u32,
+    enc_height: u32,
+    frame_width: u32,
+    frame_height: u32,
+    stride: usize,
+    data_len: usize,
+) -> Result<(), String> {
+    // Current behaviour: no check at all.
+    let _ = (enc_width, enc_height, frame_width, frame_height, stride, data_len);
+    Ok(())
+}
+
 pub struct VaapiEncoder {
     codec_ctx: *mut AVCodecContext,
     hw_device_ctx: *mut AVBufferRef,
@@ -1006,6 +1021,41 @@ impl Drop for AudioEncoder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// swscale reads encoder_width * 4 bytes per row, one row per stride,
+    /// for the frame's height. A frame narrower or shorter than the encoder
+    /// (output mode change, Wayland reconnect to another output, the 1080p
+    /// placeholder used when the first frame is slow) made it read past the
+    /// end of the frame buffer.
+    #[test]
+    fn test_frame_smaller_than_encoder_is_rejected() {
+        // Encoder built at 1920x1080, monitor switched to 1280x720.
+        let stride = 1280 * 4;
+        let len = stride * 720;
+        assert!(check_raw_frame(1920, 1080, 1280, 720, stride, len).is_err());
+    }
+
+    #[test]
+    fn test_frame_buffer_shorter_than_stride_times_height_is_rejected() {
+        assert!(check_raw_frame(1920, 1080, 1920, 1080, 1920 * 4, 1920 * 4 * 1000).is_err());
+    }
+
+    #[test]
+    fn test_stride_narrower_than_a_row_is_rejected() {
+        assert!(check_raw_frame(1920, 1080, 1920, 1080, 1280 * 4, 1920 * 4 * 1080).is_err());
+    }
+
+    #[test]
+    fn test_matching_frame_is_accepted() {
+        assert!(check_raw_frame(1920, 1080, 1920, 1080, 1920 * 4, 1920 * 4 * 1080).is_ok());
+    }
+
+    /// Padded rows (stride wider than width * 4) are normal for GPU buffers.
+    #[test]
+    fn test_padded_stride_is_accepted() {
+        let stride = 1920 * 4 + 256;
+        assert!(check_raw_frame(1920, 1080, 1920, 1080, stride, stride * 1080).is_ok());
+    }
 
     /// encode_cached_frame re-sends staged_nv12 whenever has_frame is set.
     /// The direct DMA-BUF path encodes a mapped surface and never writes
