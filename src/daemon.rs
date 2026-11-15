@@ -880,6 +880,95 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
         let mut next_frame_time = stream_start;
         let mut last_frame_encoded_time = stream_start.checked_sub(target_frame_duration).unwrap_or(stream_start);
 
+        // Encodes one captured audio chunk and routes its packets to the
+        // recording, the livestream and the replay ring.
+        macro_rules! process_audio_chunk {
+            ($chunk:expr) => {{
+                let mut audio_chunk: Vec<f32> = $chunk;
+                if audio_muted_clone.load(Ordering::Relaxed) {
+                    for sample in audio_chunk.iter_mut() {
+                        *sample = 0.0;
+                    }
+                }
+                if let Some(enc) = audio_encoder.as_mut()
+                    && let Ok(audio_packets) = enc.encode_pcm(&audio_chunk) {
+                        for mut pkt in audio_packets {
+                            pkt.set_stream_index(1);
+                            if normal_recording && !normal_waiting_keyframe
+                                && let Some(muxer) = normal_muxer.as_mut() {
+                                    let rec_base_video_time_us = unsafe {
+                                        ffmpeg_next::ffi::av_rescale_q(
+                                            rec_base_video_pts,
+                                            video_time_base,
+                                            ffmpeg_next::ffi::AVRational { num: 1, den: 1_000_000 },
+                                        )
+                                    };
+                                    let a_time_us = if let Some(a_tb) = audio_time_base {
+                                        unsafe {
+                                            ffmpeg_next::ffi::av_rescale_q(
+                                                pkt.pts(),
+                                                a_tb,
+                                                ffmpeg_next::ffi::AVRational { num: 1, den: 1_000_000 },
+                                            )
+                                        }
+                                    } else {
+                                        0
+                                    };
+                                    if a_time_us >= rec_base_video_time_us {
+                                        if rec_base_audio_pts < 0 {
+                                            rec_base_audio_pts = pkt.pts();
+                                        }
+                                        let rebased = pkt.rebased(rec_base_audio_pts);
+                                        let _ = muxer.write_packet(&rebased);
+                                    }
+                                }
+                            if let Some(ref tx) = stream_sender
+                                && !stream_waiting_keyframe {
+                                    let stream_base_video_time_us = unsafe {
+                                        ffmpeg_next::ffi::av_rescale_q(
+                                            stream_base_video_pts,
+                                            video_time_base,
+                                            ffmpeg_next::ffi::AVRational { num: 1, den: 1_000_000 },
+                                        )
+                                    };
+                                    let a_time_us = if let Some(a_tb) = audio_time_base {
+                                        unsafe {
+                                            ffmpeg_next::ffi::av_rescale_q(
+                                                pkt.pts(),
+                                                a_tb,
+                                                ffmpeg_next::ffi::AVRational { num: 1, den: 1_000_000 },
+                                            )
+                                        }
+                                    } else {
+                                        0
+                                    };
+                                    if a_time_us >= stream_base_video_time_us {
+                                        if stream_base_audio_pts < 0 {
+                                            stream_base_audio_pts = pkt.pts();
+                                        }
+                                        let rebased = pkt.rebased(stream_base_audio_pts);
+                                        let _ = tx.try_send(rebased);
+                                    }
+                                }
+                            if replay_effective {
+                                ring.push_overwrite(pkt);
+                            }
+                        }
+                    }
+            }};
+        }
+
+        // Writes every chunk already waiting in audio_rx. The recorder can
+        // be blocked in a GPU sync for 100+ ms, so audio for the last
+        // moments of a recording is still queued when Stop arrives.
+        macro_rules! drain_audio {
+            () => {{
+                while let Ok(chunk) = audio_rx.try_recv() {
+                    process_audio_chunk!(chunk);
+                }
+            }};
+        }
+
         let mut last_encode_error: Option<String> = None;
         macro_rules! handle_packets {
             ($packets_res:expr) => {
@@ -953,6 +1042,7 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
             crossbeam_channel::select! {
                 recv(shutdown_rx) -> ack_res => {
                     if let Ok(ack) = ack_res {
+                        drain_audio!();
                         if let Some(mut m) = normal_muxer.take() {
                             match m.finalize() {
                                 Ok(()) => println!("Recording finalized for shutdown."),
@@ -1112,6 +1202,7 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
                                 }
                             },
                             Command::StopRecording => {
+                                drain_audio!();
                                 if let Some(mut m) = normal_muxer.take() {
                                     let _ = m.finalize();
                                     println!("Stopped normal recording.");
@@ -1127,6 +1218,7 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
                             },
                             Command::ToggleRecording => {
                                 if normal_recording {
+                                    drain_audio!();
                                     if let Some(mut m) = normal_muxer.take() {
                                         let _ = m.finalize();
                                         println!("Stopped normal recording.");
@@ -1248,77 +1340,8 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
                     }
                 },
                 recv(audio_rx) -> audio_res => {
-                    if let Ok(mut audio_chunk) = audio_res {
-                        if audio_muted_clone.load(Ordering::Relaxed) {
-                            for sample in audio_chunk.iter_mut() {
-                                *sample = 0.0;
-                            }
-                        }
-                        if let Some(enc) = audio_encoder.as_mut()
-                            && let Ok(audio_packets) = enc.encode_pcm(&audio_chunk) {
-                                for mut pkt in audio_packets {
-                                    pkt.set_stream_index(1);
-                                    if normal_recording && !normal_waiting_keyframe
-                                        && let Some(muxer) = normal_muxer.as_mut() {
-                                            let rec_base_video_time_us = unsafe {
-                                                ffmpeg_next::ffi::av_rescale_q(
-                                                    rec_base_video_pts,
-                                                    video_time_base,
-                                                    ffmpeg_next::ffi::AVRational { num: 1, den: 1_000_000 },
-                                                )
-                                            };
-                                            let a_time_us = if let Some(a_tb) = audio_time_base {
-                                                unsafe {
-                                                    ffmpeg_next::ffi::av_rescale_q(
-                                                        pkt.pts(),
-                                                        a_tb,
-                                                        ffmpeg_next::ffi::AVRational { num: 1, den: 1_000_000 },
-                                                    )
-                                                }
-                                            } else {
-                                                0
-                                            };
-                                            if a_time_us >= rec_base_video_time_us {
-                                                if rec_base_audio_pts < 0 {
-                                                    rec_base_audio_pts = pkt.pts();
-                                                }
-                                                let rebased = pkt.rebased(rec_base_audio_pts);
-                                                let _ = muxer.write_packet(&rebased);
-                                            }
-                                        }
-                                    if let Some(ref tx) = stream_sender
-                                        && !stream_waiting_keyframe {
-                                            let stream_base_video_time_us = unsafe {
-                                                ffmpeg_next::ffi::av_rescale_q(
-                                                    stream_base_video_pts,
-                                                    video_time_base,
-                                                    ffmpeg_next::ffi::AVRational { num: 1, den: 1_000_000 },
-                                                )
-                                            };
-                                            let a_time_us = if let Some(a_tb) = audio_time_base {
-                                                unsafe {
-                                                    ffmpeg_next::ffi::av_rescale_q(
-                                                        pkt.pts(),
-                                                        a_tb,
-                                                        ffmpeg_next::ffi::AVRational { num: 1, den: 1_000_000 },
-                                                    )
-                                                }
-                                            } else {
-                                                0
-                                            };
-                                            if a_time_us >= stream_base_video_time_us {
-                                                if stream_base_audio_pts < 0 {
-                                                    stream_base_audio_pts = pkt.pts();
-                                                }
-                                                let rebased = pkt.rebased(stream_base_audio_pts);
-                                                let _ = tx.try_send(rebased);
-                                            }
-                                        }
-                                    if replay_effective {
-                                        ring.push_overwrite(pkt);
-                                    }
-                                }
-                            }
+                    if let Ok(chunk) = audio_res {
+                        process_audio_chunk!(chunk);
                     }
                 },
                 recv(frame_rx) -> frame_res => {
