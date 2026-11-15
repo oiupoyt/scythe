@@ -1,5 +1,5 @@
 Name:           scythe
-Version:        0.2.22
+Version:        0.2.23
 Release:        1%{?dist}
 Summary:        High-performance GPU hardware screen recorder and instant replay overlay
 
@@ -54,6 +54,16 @@ ln -sf %{_datadir}/applications/scythe.desktop %{buildroot}%{_datadir}/applicati
 %{_datadir}/applications/vrec.desktop
 
 %changelog
+* Sun Nov 15 2026 oiupoyt - 0.2.23-1
+- Recordings no longer freeze on their first frame after the daemon idles
+- Stopping a recording keeps its last moments of audio; replay keeps all
+  of its audio
+- Stop, logout and systemctl stop finalize the recording instead of
+  leaving an unplayable file
+- Updates are verified against published SHA-256 checksums, and the
+  tarball update now replaces the actual binary
+- Config saves are atomic and private; settings changes no longer stall
+  recording or restart the screen-share portal
 * Tue Oct 21 2026 oiupoyt - 0.2.21-1
 - Unified multicall binary: install scythe with the scythe-daemon, scythe-ui
   and vrec-* compatibility symlinks

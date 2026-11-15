@@ -322,22 +322,21 @@ jobs:
           cat artifacts/checksums/SHA256SUMS
           test -s artifacts/checksums/SHA256SUMS
 
+      - name: Assemble release notes
+        # Per-version notes (packaging/release-notes/<tag>.md), if present,
+        # go above the package list shared by every release.
+        run: |
+          notes="packaging/release-notes/${{ github.ref_name }}.md"
+          if [ -f "$notes" ]; then cat "$notes"; echo; fi > release-notes.md
+          cat packaging/release-notes/_packages.md >> release-notes.md
+          cat release-notes.md
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           name: "Scythe ${{ github.ref_name }}"
-          body: |
-            High-performance GPU hardware screen recorder and instant replay overlay for Linux and Windows.
-
-            ### Packages
-            - **Windows**: `scythe-setup.exe` (Official installer with Start Menu & Desktop shortcuts)
-            - **Windows Portable**: `scythe.exe` (Standalone portable launcher)
-            - **Windows Archive**: `scythe-windows-x86_64.zip` (Portable zip archive)
-            - **Universal Linux**: `scythe-x86_64.AppImage`
-            - **Debian / Ubuntu / Mint**: `scythe_*_amd64.deb`
-            - **Fedora / RHEL / openSUSE**: `*.rpm`
-            - **Generic Linux**: `scythe-linux-x86_64.tar.gz`
+          body_path: release-notes.md
           files: |
             artifacts/linux-packages/*
             artifacts/windows-packages/*
