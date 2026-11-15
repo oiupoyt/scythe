@@ -3709,6 +3709,14 @@ fn capture_keybind(key: egui::Key, modifiers: egui::Modifiers) -> KeybindCapture
     KeybindCapture::Bound(parts.join("+"))
 }
 
+/// Whether switching from `from` to `to` leaves the settings panel, so its
+/// buffered edits must be applied first.
+fn leaving_settings_needs_apply(from: ShadowPlayView, to: ShadowPlayView) -> bool {
+    // Current behaviour: only Save & Close applies; every other exit drops.
+    let _ = (from, to);
+    false
+}
+
 /// Whether a slider interaction should be saved and pushed to the daemon.
 ///
 /// A commit saves the config and makes the daemon rebuild audio capture, so
@@ -4301,6 +4309,36 @@ pub fn run_egui_toast(title: &str, subtitle: &str, icon: crate::overlay::ToastIc
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Leaving Settings by Back, Escape or a click outside used to drop the
+    /// edited fields silently, while the panel kept showing them, so the UI
+    /// and the daemon disagreed. Any exit from Settings must apply them.
+    #[test]
+    fn test_leaving_settings_applies_buffered_edits() {
+        for leave_to in [ShadowPlayView::MainHud, ShadowPlayView::Gallery] {
+            assert!(
+                leaving_settings_needs_apply(ShadowPlayView::Settings(SettingsTab::Record), leave_to),
+                "exit to {:?} dropped the edits",
+                leave_to
+            );
+        }
+    }
+
+    /// Moving between settings tabs is not leaving Settings.
+    #[test]
+    fn test_switching_settings_tabs_does_not_apply() {
+        assert!(!leaving_settings_needs_apply(
+            ShadowPlayView::Settings(SettingsTab::Record),
+            ShadowPlayView::Settings(SettingsTab::Replay),
+        ));
+    }
+
+    /// Views that are not Settings have nothing buffered.
+    #[test]
+    fn test_leaving_other_views_does_not_apply() {
+        assert!(!leaving_settings_needs_apply(ShadowPlayView::MainHud, ShadowPlayView::Gallery));
+        assert!(!leaving_settings_needs_apply(ShadowPlayView::Gallery, ShadowPlayView::MainHud));
+    }
 
     /// Save & Close ran register_hyprland_binds on the UI thread: dozens of
     /// sequential hyprctl calls (65-73 on the first save, since rules are
