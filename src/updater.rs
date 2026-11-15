@@ -548,6 +548,37 @@ pub fn open_browser_url(url: &str) {
 mod tests {
     use super::*;
 
+    /// End to end, network-free: a local file:// release with SHA256SUMS
+    /// goes through download_verified exactly as a real update would.
+    #[test]
+    fn test_download_verified_end_to_end_with_local_release() {
+        let dir = std::env::temp_dir().join(format!("scythe_upd_e2e_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let asset_path = dir.join("scythe-linux-x86_64.tar.gz");
+        std::fs::write(&asset_path, b"abc").unwrap();
+        let sums_path = dir.join("SHA256SUMS");
+        let url = |p: &std::path::Path| format!("file://{}", p.display());
+        let asset = ReleaseAsset { name: "scythe-linux-x86_64.tar.gz".into(), browser_download_url: url(&asset_path) };
+        let sums = ReleaseAsset { name: "SHA256SUMS".into(), browser_download_url: url(&sums_path) };
+        let info = ReleaseInfo { version: "9.9.9".into(), assets: vec![asset.clone(), sums.clone()], ..Default::default() };
+
+        std::fs::write(&sums_path, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad  scythe-linux-x86_64.tar.gz\n").unwrap();
+        let dest = dir.join("out.tar.gz");
+        assert!(download_verified(&info, &asset, &dest).is_ok(), "matching release refused");
+        assert_eq!(std::fs::read(&dest).unwrap(), b"abc");
+
+        std::fs::write(&sums_path, "0000000000000000000000000000000000000000000000000000000000000000  scythe-linux-x86_64.tar.gz\n").unwrap();
+        let dest2 = dir.join("out2.tar.gz");
+        let err = download_verified(&info, &asset, &dest2).expect_err("tampered release accepted");
+        assert!(err.contains("Checksum mismatch"), "{}", err);
+        assert!(!dest2.exists(), "rejected download left on disk");
+
+        let no_sums = ReleaseInfo { version: "9.9.9".into(), assets: vec![asset.clone()], ..Default::default() };
+        let err = download_verified(&no_sums, &asset, &dir.join("out3")).expect_err("release without SHA256SUMS accepted");
+        assert!(err.contains("SHA256SUMS"), "{}", err);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// SHA256SUMS as written by `sha256sum` in the release workflow.
     const SUMS: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad  scythe-linux-x86_64.tar.gz\n\
 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  scythe-x86_64.AppImage\n";
