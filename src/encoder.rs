@@ -14,8 +14,20 @@ pub fn check_raw_frame(
     stride: usize,
     data_len: usize,
 ) -> Result<(), String> {
-    // Current behaviour: no check at all.
-    let _ = (enc_width, enc_height, frame_width, frame_height, stride, data_len);
+    if frame_width != enc_width || frame_height != enc_height {
+        return Err(format!(
+            "frame is {}x{} but the encoder was built for {}x{}",
+            frame_width, frame_height, enc_width, enc_height
+        ));
+    }
+    let row_bytes = enc_width as usize * 4;
+    if stride < row_bytes {
+        return Err(format!("frame stride {} is shorter than a {} byte row", stride, row_bytes));
+    }
+    let needed = stride * (frame_height as usize - 1) + row_bytes;
+    if data_len < needed {
+        return Err(format!("frame buffer holds {} bytes, {} are needed", data_len, needed));
+    }
     Ok(())
 }
 
@@ -28,6 +40,8 @@ pub struct VaapiEncoder {
     hw_frame: *mut AVFrame,
     has_frame: bool,
     pub force_idr: bool,
+    width: u32,
+    height: u32,
     #[cfg(unix)]
     dma_mmap_cache: HashMap<i32, (*mut libc::c_void, usize)>,
     #[cfg(unix)]
@@ -243,6 +257,8 @@ impl VaapiEncoder {
                 hw_frame,
                 has_frame: false,
                 force_idr: false,
+                width,
+                height,
                 #[cfg(unix)]
                 dma_mmap_cache: HashMap::new(),
                 #[cfg(unix)]
@@ -295,7 +311,10 @@ impl VaapiEncoder {
         let mut packets = Vec::new();
         unsafe {
             match frame {
-                Frame::Raw { width: _, height, stride: in_stride, data } => {
+                Frame::Raw { width: frame_width, height, stride: in_stride, data } => {
+                    // swscale reads a full encoder-width row per stride; a
+                    // frame that does not fit would be read out of bounds.
+                    check_raw_frame(self.width, self.height, *frame_width, *height, *in_stride as usize, data.len())?;
                     let src_slices: [*const u8; 4] = [data.as_ptr(), ptr::null(), ptr::null(), ptr::null()];
                     let src_strides: [i32; 4] = [*in_stride as i32, 0, 0, 0];
                     sws_scale(
@@ -502,6 +521,8 @@ pub struct WindowsHwEncoder {
     sw_frame: *mut AVFrame,
     pub has_frame: bool,
     pub force_idr: bool,
+    width: u32,
+    height: u32,
 }
 
 #[cfg(target_os = "windows")]
@@ -718,6 +739,8 @@ impl WindowsHwEncoder {
                 sw_frame,
                 has_frame: false,
                 force_idr: false,
+                width,
+                height,
             })
         }
     }
@@ -729,7 +752,8 @@ impl WindowsHwEncoder {
     pub fn encode_frame(&mut self, frame: &Frame, pts: i64) -> Result<Vec<crate::ring::Packet>, String> {
         let mut packets = Vec::new();
         unsafe {
-            if let Frame::Raw { width: _, height, stride, data } = frame {
+            if let Frame::Raw { width: frame_width, height, stride, data } = frame {
+                check_raw_frame(self.width, self.height, *frame_width, *height, *stride as usize, data.len())?;
                 if av_frame_make_writable(self.sw_frame) < 0 {
                     let _ = av_frame_get_buffer(self.sw_frame, 32);
                 }
