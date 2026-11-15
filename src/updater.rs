@@ -156,6 +156,21 @@ pub fn spawn_update_check(status: Arc<Mutex<UpdateStatus>>) {
     });
 }
 
+/// Name of the real executable inside the Linux release tarball.
+const TARBALL_BINARY: &str = "scythe-ui";
+
+/// Finds the SHA-256 published for `asset` in a `sha256sum`-format file.
+fn expected_sha256(sums: &str, asset: &str) -> Option<String> {
+    let _ = (sums, asset);
+    None
+}
+
+/// Checks a downloaded file against its published SHA-256.
+fn verify_sha256(path: &std::path::Path, expected: &str) -> Result<(), String> {
+    let _ = (path, expected);
+    Ok(())
+}
+
 fn download_file(url: &str, dest: &std::path::Path) -> Result<(), String> {
     let dest_str = dest.to_str().ok_or_else(|| "Invalid destination path".to_string())?;
     let mut cmd = std::process::Command::new("curl");
@@ -470,6 +485,51 @@ pub fn open_browser_url(url: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// SHA256SUMS as written by `sha256sum` in the release workflow.
+    const SUMS: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad  scythe-linux-x86_64.tar.gz\n\
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  scythe-x86_64.AppImage\n";
+
+    #[test]
+    fn test_checksum_lookup_finds_the_asset_line() {
+        assert_eq!(
+            expected_sha256(SUMS, "scythe-linux-x86_64.tar.gz").as_deref(),
+            Some("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+        );
+        assert_eq!(expected_sha256(SUMS, "scythe.exe"), None);
+    }
+
+    /// sha256sum marks binary-mode entries with "*name"; both forms count.
+    #[test]
+    fn test_checksum_lookup_accepts_binary_mode_marker() {
+        let sums = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad *scythe.exe\n";
+        assert!(expected_sha256(sums, "scythe.exe").is_some());
+    }
+
+    /// A downloaded file must be refused unless its SHA-256 matches the
+    /// published sum. The updater used to install whatever curl fetched:
+    /// a truncated or swapped asset replaced the user's binary.
+    #[test]
+    fn test_verify_accepts_matching_and_refuses_mismatched_files() {
+        let dir = std::env::temp_dir().join(format!("scythe_sum_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let good = dir.join("good");
+        std::fs::write(&good, b"abc").unwrap();
+        assert!(verify_sha256(&good, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad").is_ok());
+        assert!(verify_sha256(&good, "BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD").is_ok());
+        let bad = dir.join("bad");
+        std::fs::write(&bad, b"abd").unwrap();
+        assert!(verify_sha256(&bad, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad").is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The release tarball holds the real binary as `scythe`; scythe-ui and
+    /// scythe-daemon are symlinks to it. Installing the symlinks copied the
+    /// old binary onto itself, so auto-update never updated anything.
+    #[test]
+    fn test_tarball_install_copies_the_real_binary() {
+        assert_eq!(TARBALL_BINARY, "scythe");
+    }
 
     #[test]
     fn test_version_comparisons() {
