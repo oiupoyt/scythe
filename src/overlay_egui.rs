@@ -1578,6 +1578,12 @@ impl ScytheOverlayApp {
     }
 
     pub fn switch_view(&mut self, view: ShadowPlayView, _ctx: &egui::Context) {
+        // Every way out of Settings (Back, Escape, click outside, Save &
+        // Close) passes through here, so the panel's edits are applied once,
+        // here, instead of being dropped by all exits but one.
+        if leaving_settings_needs_apply(self.current_view, view) {
+            self.save_and_apply_settings();
+        }
         match view {
             ShadowPlayView::ReplaySettings => {
                 self.active_settings_tab = SettingsTab::Replay;
@@ -1702,6 +1708,15 @@ impl ScytheOverlayApp {
         }
 
         if close_resp.clicked() {
+            // The close button is shown inside Settings too; leaving through it
+            // must not drop the panel's edits either.
+            if leaving_settings_needs_apply(self.current_view, ShadowPlayView::MainHud) {
+                self.sync_settings_into_config();
+                let _ = self.config.save();
+                // Sent inline, not from a thread: process::exit below would
+                // kill a background sender before the daemon got the reload.
+                let _ = crate::ipc::send_command(Command::ReloadConfig);
+            }
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             crate::ipc::clean_overlay_pid();
             std::process::exit(0);
@@ -2221,9 +2236,9 @@ impl ScytheOverlayApp {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let done_clicked = squared_button_sized(ui, "Save & Close", true, accent, Some(egui::vec2(95.0, 26.0)));
                     if done_clicked {
-                        self.save_and_apply_settings();
-                        self.show_hud_notification("SETTINGS", "Settings Saved & Applied!", crate::overlay::ToastIcon::Info);
+                        // switch_view applies the edits on the way out.
                         self.switch_view(ShadowPlayView::MainHud, ctx);
+                        self.show_hud_notification("SETTINGS", "Settings Saved & Applied!", crate::overlay::ToastIcon::Info);
                     }
                 });
             });
@@ -3712,9 +3727,7 @@ fn capture_keybind(key: egui::Key, modifiers: egui::Modifiers) -> KeybindCapture
 /// Whether switching from `from` to `to` leaves the settings panel, so its
 /// buffered edits must be applied first.
 fn leaving_settings_needs_apply(from: ShadowPlayView, to: ShadowPlayView) -> bool {
-    // Current behaviour: only Save & Close applies; every other exit drops.
-    let _ = (from, to);
-    false
+    matches!(from, ShadowPlayView::Settings(_)) && !matches!(to, ShadowPlayView::Settings(_))
 }
 
 /// Whether a slider interaction should be saved and pushed to the daemon.
