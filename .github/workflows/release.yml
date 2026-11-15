@@ -299,7 +299,9 @@ jobs:
   publish-release:
     name: Publish GitHub Release
     needs: [build-linux, build-windows]
-    if: always() && !cancelled() && (needs.build-linux.result == 'success' || needs.build-windows.result == 'success')
+    # Publish only for a pushed v* tag. A manual dispatch on a branch still
+    # builds every package as a dry run, but must not create a release.
+    if: always() && !cancelled() && startsWith(github.ref, 'refs/tags/v') && (needs.build-linux.result == 'success' || needs.build-windows.result == 'success')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
