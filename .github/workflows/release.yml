@@ -47,8 +47,12 @@ jobs:
 
       - name: Build Debian Package (.deb)
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          if [ -z "$VERSION" ] || [ "$VERSION" = "main" ]; then
+          # A v* tag names the version; any other ref (a branch dispatch for a
+          # dry run) takes it from Cargo.toml, so a branch name never becomes
+          # a package version.
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME#v}" != "${GITHUB_REF_NAME}" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
             VERSION=$(grep '^version' Cargo.toml | head -n1 | cut -d '"' -f2)
           fi
           echo "Packaging Debian version: ${VERSION}"
@@ -75,8 +79,12 @@ jobs:
 
       - name: Build RPM Package (.rpm)
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          if [ -z "$VERSION" ] || [ "$VERSION" = "main" ]; then
+          # A v* tag names the version; any other ref (a branch dispatch for a
+          # dry run) takes it from Cargo.toml, so a branch name never becomes
+          # a package version.
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME#v}" != "${GITHUB_REF_NAME}" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
             VERSION=$(grep '^version' Cargo.toml | head -n1 | cut -d '"' -f2)
           fi
           echo "Packaging RPM version: ${VERSION}"
