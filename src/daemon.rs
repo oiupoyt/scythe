@@ -1039,6 +1039,11 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
         }
 
         loop {
+            // Encoding a frame can block in a GPU sync for most of a frame
+            // interval, and select! below takes one ready channel at random.
+            // Draining audio first on every pass keeps audio_rx from filling
+            // up and the sound server from dropping samples.
+            drain_audio!();
             crossbeam_channel::select! {
                 recv(shutdown_rx) -> ack_res => {
                     if let Ok(ack) = ack_res {
