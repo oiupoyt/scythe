@@ -1466,6 +1466,28 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
 mod tests {
     use super::*;
 
+    /// Audio waits in audio_rx while the recorder thread is blocked in a
+    /// GPU sync inside encode_frame (stalls of 80-190 ms measured on VAAPI).
+    /// StopRecording finalised the file without draining that queue, so the
+    /// audio already captured for the last moments was never written.
+    /// Measured: 4 s recordings lost 0.07-1.55 s of trailing audio, and a
+    /// tick played 0.4 s before stop was missing from the file.
+    #[test]
+    fn test_stop_recording_drains_queued_audio_first() {
+        let src = include_str!("daemon.rs");
+        let body = &src[..src.find("#[cfg(test)]").unwrap()];
+        for arm in ["Command::StopRecording => {", "Command::ToggleRecording => {"] {
+            let start = body.find(arm).unwrap_or_else(|| panic!("{} missing", arm));
+            let fin = body[start..].find("finalize()").expect("finalize in arm");
+            let before_finalize = &body[start..start + fin];
+            assert!(
+                before_finalize.contains("drain_audio!()"),
+                "{} finalizes without first writing the audio already queued",
+                arm
+            );
+        }
+    }
+
     /// A config reload re-registered every Hyprland bind on the recorder
     /// thread: about 32 hyprctl calls, during which nothing was encoded.
     /// Measured: three reloads during a recording left 217 ms gaps. A
