@@ -1489,6 +1489,22 @@ async fn run_daemon_async() -> Result<(), Box<dyn std::error::Error + Send + Syn
 mod tests {
     use super::*;
 
+    /// The recorder thread spends most of each frame blocked in a GPU sync
+    /// (85% measured on Raven2, about 28 fps). select! services one ready
+    /// channel per pass, chosen at random, so with replay on audio chunks
+    /// arrived faster than they were taken: audio_rx filled, parec blocked,
+    /// and the sound server dropped samples. A 15 s replay held 4 s of
+    /// audio. Audio must be drained on every pass, ahead of video.
+    #[test]
+    fn test_recorder_drains_audio_every_pass() {
+        let src = include_str!("daemon.rs");
+        let body = &src[..src.find("#[cfg(test)]").unwrap()];
+        let sel = body.find("            crossbeam_channel::select! {").expect("recorder select");
+        let loop_start = body[..sel].rfind("        loop {").expect("recorder loop");
+        let between = &body[loop_start..sel];
+        assert!(between.contains("drain_audio!()"), "the recorder loop does not drain audio before waiting on select!");
+    }
+
     /// Audio waits in audio_rx while the recorder thread is blocked in a
     /// GPU sync inside encode_frame (stalls of 80-190 ms measured on VAAPI).
     /// StopRecording finalised the file without draining that queue, so the
