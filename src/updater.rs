@@ -156,18 +156,80 @@ pub fn spawn_update_check(status: Arc<Mutex<UpdateStatus>>) {
     });
 }
 
-/// Name of the real executable inside the Linux release tarball.
-const TARBALL_BINARY: &str = "scythe-ui";
+/// Name of the real executable inside the Linux release tarball. The
+/// scythe-ui and scythe-daemon entries are symlinks to it.
+const TARBALL_BINARY: &str = "scythe";
+
+/// Release asset listing the SHA-256 of every other asset.
+const SUMS_ASSET: &str = "SHA256SUMS";
 
 /// Finds the SHA-256 published for `asset` in a `sha256sum`-format file.
 fn expected_sha256(sums: &str, asset: &str) -> Option<String> {
-    let _ = (sums, asset);
-    None
+    sums.lines().find_map(|line| {
+        let (hash, name) = line.trim().split_once(char::is_whitespace)?;
+        let name = name.trim_start().trim_start_matches('*');
+        (name == asset && hash.len() == 64 && hash.chars().all(|c| c.is_ascii_hexdigit()))
+            .then(|| hash.to_ascii_lowercase())
+    })
+}
+
+/// SHA-256 of a file, computed by the platform's own tool (sha256sum on
+/// Linux, certutil on Windows), the same way downloads use curl.
+fn file_sha256(path: &std::path::Path) -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    let output = {
+        use std::os::windows::process::CommandExt;
+        let mut cmd = std::process::Command::new("certutil");
+        cmd.arg("-hashfile").arg(path).arg("SHA256");
+        cmd.creation_flags(0x08000000);
+        cmd.output()
+    };
+    #[cfg(not(target_os = "windows"))]
+    let output = std::process::Command::new("sha256sum").arg(path).output();
+    let output = output.map_err(|e| format!("Failed to hash {}: {}", path.display(), e))?;
+    if !output.status.success() {
+        return Err(format!("Failed to hash {}", path.display()));
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .find(|w| w.len() == 64 && w.chars().all(|c| c.is_ascii_hexdigit()))
+        .map(|w| w.to_ascii_lowercase())
+        .ok_or_else(|| format!("No SHA-256 in hash output for {}", path.display()))
 }
 
 /// Checks a downloaded file against its published SHA-256.
 fn verify_sha256(path: &std::path::Path, expected: &str) -> Result<(), String> {
-    let _ = (path, expected);
+    let actual = file_sha256(path)?;
+    if actual != expected.to_ascii_lowercase() {
+        return Err(format!(
+            "Checksum mismatch for {}: expected {}, got {}. The download was not installed.",
+            path.file_name().and_then(|n| n.to_str()).unwrap_or("download"),
+            expected,
+            actual
+        ));
+    }
+    Ok(())
+}
+
+/// Downloads `asset` to `dest` and refuses it unless it matches the SHA-256
+/// in the release's SHA256SUMS. A release without SHA256SUMS is refused.
+fn download_verified(info: &ReleaseInfo, asset: &ReleaseAsset, dest: &std::path::Path) -> Result<(), String> {
+    let sums_asset = info
+        .assets
+        .iter()
+        .find(|a| a.name == SUMS_ASSET)
+        .ok_or_else(|| format!("Release v{} has no {}; refusing an unverifiable update", info.version, SUMS_ASSET))?;
+    let sums_path = dest.with_extension("sha256sums");
+    download_file(&sums_asset.browser_download_url, &sums_path)?;
+    let sums = std::fs::read_to_string(&sums_path).map_err(|e| format!("Failed to read {}: {}", SUMS_ASSET, e))?;
+    let _ = std::fs::remove_file(&sums_path);
+    let expected = expected_sha256(&sums, &asset.name)
+        .ok_or_else(|| format!("{} does not list {}; refusing the update", SUMS_ASSET, asset.name))?;
+    download_file(&asset.browser_download_url, dest)?;
+    if let Err(e) = verify_sha256(dest, &expected) {
+        let _ = std::fs::remove_file(dest);
+        return Err(e);
+    }
     Ok(())
 }
 
@@ -250,7 +312,7 @@ fn run_auto_update(info: &ReleaseInfo, status: &Arc<Mutex<UpdateStatus>>) -> Res
 
                 set_progress(&format!("Downloading AppImage ({})...", asset.name));
                 let temp_download = appimage_file.with_extension("download");
-                download_file(&asset.browser_download_url, &temp_download)?;
+                download_verified(info, asset, &temp_download)?;
 
                 #[cfg(unix)]
                 {
@@ -280,7 +342,7 @@ fn run_auto_update(info: &ReleaseInfo, status: &Arc<Mutex<UpdateStatus>>) -> Res
         let archive_path = temp_dir.join("scythe-linux-x86_64.tar.gz");
 
         set_progress(&format!("Downloading {}...", asset.name));
-        download_file(&asset.browser_download_url, &archive_path)?;
+        download_verified(info, asset, &archive_path)?;
 
         set_progress("Extracting binaries...");
         let extract_status = std::process::Command::new("tar")
@@ -306,25 +368,25 @@ fn run_auto_update(info: &ReleaseInfo, status: &Arc<Mutex<UpdateStatus>>) -> Res
 
         set_progress(&format!("Installing binaries into {}...", exe_dir.display()));
 
-        for bin_name in ["scythe-ui", "scythe-daemon"] {
-            let src = extracted_dir.join(bin_name);
-            if src.exists() {
-                let dest = exe_dir.join(bin_name);
-                let dest_new = exe_dir.join(format!("{}.new", bin_name));
-
-                std::fs::copy(&src, &dest_new)
-                    .map_err(|e| format!("Failed to write {}: {}. Check write permissions in {}", bin_name, e, exe_dir.display()))?;
-
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    let _ = std::fs::set_permissions(&dest_new, std::fs::Permissions::from_mode(0o755));
-                }
-
-                std::fs::rename(&dest_new, &dest)
-                    .map_err(|e| format!("Failed to atomically replace {}: {}", bin_name, e))?;
-            }
+        // The tarball's scythe-ui and scythe-daemon are symlinks to the one
+        // real binary. Replace the file the running executable resolves to,
+        // so every name pointing at it picks up the new version.
+        let src = extracted_dir.join(TARBALL_BINARY);
+        if !src.is_file() {
+            let _ = std::fs::remove_dir_all(&temp_dir);
+            return Err(format!("{} not found in the release archive", TARBALL_BINARY));
         }
+        let dest = canonical_exe.clone();
+        let dest_new = dest.with_extension("new");
+        std::fs::copy(&src, &dest_new)
+            .map_err(|e| format!("Failed to write {}: {}. Check write permissions in {}", dest_new.display(), e, exe_dir.display()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&dest_new, std::fs::Permissions::from_mode(0o755));
+        }
+        std::fs::rename(&dest_new, &dest)
+            .map_err(|e| format!("Failed to atomically replace {}: {}", dest.display(), e))?;
 
         // Maintain aliases in ~/.local/bin if installed there
         if exe_dir.ends_with(".local/bin") {
@@ -355,7 +417,7 @@ fn run_auto_update(info: &ReleaseInfo, status: &Arc<Mutex<UpdateStatus>>) -> Res
             let installer_path = temp_dir.join(format!("scythe-setup-v{}.exe", info.version));
 
             set_progress(&format!("Downloading Windows installer ({})...", asset.name));
-            download_file(&asset.browser_download_url, &installer_path)?;
+            download_verified(info, asset, &installer_path)?;
 
             set_progress("Launching installer...");
             let mut cmd = std::process::Command::new(&installer_path);
@@ -374,7 +436,7 @@ fn run_auto_update(info: &ReleaseInfo, status: &Arc<Mutex<UpdateStatus>>) -> Res
             let zip_path = temp_dir.join("scythe-windows-x86_64.zip");
 
             set_progress(&format!("Downloading {}...", asset.name));
-            download_file(&asset.browser_download_url, &zip_path)?;
+            download_verified(info, asset, &zip_path)?;
 
             set_progress("Extracting archive...");
             let tar_out = std::process::Command::new("tar.exe")

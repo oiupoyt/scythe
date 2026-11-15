@@ -311,6 +311,17 @@ jobs:
         with:
           path: artifacts
 
+      - name: Write SHA256SUMS
+        # The in-app updater downloads this file and refuses any asset whose
+        # hash does not match. It is generated here, over the exact files
+        # attached below, so it cannot drift from what users download.
+        run: |
+          mkdir -p artifacts/checksums
+          find artifacts/linux-packages artifacts/windows-packages -maxdepth 1 -type f -print0 2>/dev/null \
+            | sort -z | xargs -0 sha256sum | sed 's|  .*/|  |' > artifacts/checksums/SHA256SUMS
+          cat artifacts/checksums/SHA256SUMS
+          test -s artifacts/checksums/SHA256SUMS
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -330,6 +341,7 @@ jobs:
           files: |
             artifacts/linux-packages/*
             artifacts/windows-packages/*
+            artifacts/checksums/SHA256SUMS
           draft: false
           prerelease: false
           generate_release_notes: false
