@@ -372,7 +372,7 @@ Implemented in [`src/updater.rs`](file:///home/oiupoyt/my%20stuff%20yea/projects
 # Type check all targets
 cargo check --all-targets
 
-# Run the complete unit test suite (86 tests)
+# Run the complete unit test suite (101 tests)
 cargo test
 
 # Strict clippy lint verification

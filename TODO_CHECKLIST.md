@@ -369,15 +369,22 @@ Not part of the repository, fixed on the maintainer's machine:
 
 - `~/.local/bin/hypr-picker-auto` printed the selection on the line after `[SELECTION]`. xdg-desktop-portal-hyprland reads it from the same line, so every ScreenCast request on the system was rejected and the daemon fell back to X11 capture of a black screen. The script now prints `[SELECTION]/screen:eDP-1`; the original is kept as `hypr-picker-auto.bak`.
 
-Open, from the audits (most severe first):
+Fixed in v0.2.23 (2026-11-15), each measured before and after on the maintainer's machine:
 
-- [ ] Audio timestamps count samples while video follows the wall clock, so lost samples and clock drift shift A/V permanently over a long daemon uptime (E-15).
-- [ ] Encoders are never drained at stop, so the last few frames are missing from every recording (E-6).
-- [ ] Frame size is never checked against the encoder size, so a mode change can make swscale read past the frame buffer (E-2, D-6).
-- [ ] Wayland frames carry a borrowed DMA-BUF fd that PipeWire may recycle, and the mmap cache is keyed by fd number (E-3).
-- [ ] The updater installs releases with no checksum or signature (D-8), and the tarball path never updates the `scythe` binary itself (D-7).
-- [ ] Leaving Settings by Back, Escape or click-outside silently drops unsaved edits (O-18).
+- [x] **Recordings lost their last 0.07-1.55 s of audio, and replays most of theirs**: the recorder thread spends about 85% of each frame in a VAAPI GPU sync on Raven2. Audio waiting in `audio_rx` was dropped at stop, and with replay on audio lost the race for `select!`, so parec blocked and the sound server dropped samples (a 15 s replay held 4 s of audio). The recorder now drains queued audio before every `select!` and before finalising. After: every recording and replay holds its full audio, and the A/V offset stays at +43 to +83 ms across 32 minutes of daemon uptime, with no drift.
+- [x] **Leaving Settings dropped edits** (O-18): every exit applies them, including the close button.
+- [x] **Frame size never checked against the encoder** (E-2, D-6): `check_raw_frame` rejects frames that would be read out of bounds. Verified: switching eDP-1 to 1280x720 mid-recording left the daemon running and the file valid.
+- [x] **Updater installed unverified files, and the tarball update did nothing** (D-7, D-8): releases publish `SHA256SUMS`, the updater refuses mismatches and releases without it, and the tarball path replaces the real binary.
+- [x] **Release workflow**: publishes only for v* tags, takes the package version from Cargo.toml on branch dry runs, and puts per-version notes from `packaging/release-notes/` in the release body.
+
+Open (most severe first):
+
+- [ ] Recording throughput is GPU-bound at about 28 fps for 1080p60 on Raven2 (system ffmpeg `h264_vaapi` gets 28 fps on the same chip). Possible gains: async_depth, VPP colour conversion instead of CPU swscale, 720p scaling.
+- [ ] Encoders are never drained at stop (E-6). Measured tail: video ends 20-70 ms before audio.
+- [ ] Wayland frames carry a borrowed DMA-BUF fd that PipeWire may recycle, and the mmap cache is keyed by fd number (E-3). This machine negotiates SHM buffers, so the path does not run here.
+- [ ] Audio pts counts samples, not the wall clock (E-15). Measured stable over 32 minutes, so drift needs a longer or lossier run to show.
 - [ ] Windows: TCP IPC has no authentication (D-10); screenshot paths are spliced into PowerShell (D-9).
+- [ ] Keyboard focus outlines on custom overlay widgets (branch `ui/keyboard-focus-visible`, CI green) await an on-screen check.
 
 ---
 
@@ -389,7 +396,7 @@ Run these commands before any commit or release to verify project health:
 # Type check all platform targets
 cargo check --all-targets
 
-# Run the complete unit test suite (86 tests)
+# Run the complete unit test suite (101 tests)
 cargo test
 
 # Strict zero-warning clippy verification
