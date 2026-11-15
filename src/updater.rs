@@ -558,8 +558,8 @@ mod tests {
         std::fs::write(&asset_path, b"abc").unwrap();
         let sums_path = dir.join("SHA256SUMS");
         let url = |p: &std::path::Path| format!("file://{}", p.display());
-        let asset = ReleaseAsset { name: "scythe-linux-x86_64.tar.gz".into(), browser_download_url: url(&asset_path) };
-        let sums = ReleaseAsset { name: "SHA256SUMS".into(), browser_download_url: url(&sums_path) };
+        let asset = ReleaseAsset { name: "scythe-linux-x86_64.tar.gz".into(), browser_download_url: url(&asset_path), ..Default::default() };
+        let sums = ReleaseAsset { name: "SHA256SUMS".into(), browser_download_url: url(&sums_path), ..Default::default() };
         let info = ReleaseInfo { version: "9.9.9".into(), assets: vec![asset.clone(), sums.clone()], ..Default::default() };
 
         std::fs::write(&sums_path, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad  scythe-linux-x86_64.tar.gz\n").unwrap();
